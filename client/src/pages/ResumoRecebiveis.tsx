@@ -10,7 +10,7 @@
 //
 // Backend: server/resumo-recebiveis-routes.ts
 // ============================================================================
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Wallet, Settings2, Plus, Trash2, Download, Loader2, AlertTriangle, Info, Megaphone, Lock, Unlock,
-  ArrowUpAZ, ArrowDownZA, ChevronsUpDown, Pencil, RefreshCw,
+  ArrowUpAZ, ArrowDownZA, ChevronsUpDown, Pencil, RefreshCw, EyeOff, Eye,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -126,6 +126,12 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
         <p className="mb-2">
           A etiqueta embaixo do nome é a função. <strong>Consolidado</strong> marca a coordenação de
           vendas: meta e faturamento dela são a soma da equipe inteira.
+        </p>
+        <p className="mb-2">
+          O <strong>olho riscado</strong> ao lado do nome tira aquela linha da tabela <strong>e do
+          TOTAL</strong>, para conferir quanto sai sem ela. É só visualização: nada é salvo, some ao
+          recarregar ou ao trocar de mês, e a planilha do Excel e o retrato do fechamento continuam
+          com todo mundo.
         </p>
         <p className="text-muted-foreground">
           Cada colaborador só enxerga a própria linha; o admin vê todas.
@@ -549,6 +555,52 @@ export default function ResumoRecebiveis() {
     });
   }, [colabs, ordem]);
 
+  // ---------------------------------------------------------------------
+  // OCULTAR LINHA (03/nov/2026). Filtro de leitura, não de apuração: serve
+  // para tirar uma linha da conta e ver o TOTAL do resto — "quanto sai sem a
+  // coordenação?", "quanto é só dos externos?".
+  //
+  // De propósito NÃO é salvo em lugar nenhum: some ao trocar de mês ou ao
+  // recarregar, e nem a planilha do Excel nem o retrato do fechamento olham
+  // para isto. Guardar significaria poder fechar um mês com uma linha
+  // escondida por engano e congelar um total menor do que o devido.
+  // ---------------------------------------------------------------------
+  const [ocultas, setOcultas] = useState<Set<string>>(new Set());
+  useEffect(() => { setOcultas(new Set()); }, [ym]);
+  const alternarOculta = (id: string) =>
+    setOcultas((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const visiveis = useMemo(
+    () => colabsOrdenados.filter((c) => !ocultas.has(c.id)), [colabsOrdenados, ocultas]);
+  const nomesOcultos = useMemo(
+    () => colabs.filter((c) => ocultas.has(c.id)).map((c) => c.nome), [colabs, ocultas]);
+
+  // TOTAL do rodapé: sempre somado das linhas VISÍVEIS, com as mesmas duas
+  // regras do servidor — meta e faturamento pulam o consolidador (ele já é a
+  // soma da equipe; contá-lo dobraria), o resto soma todo mundo. Sem nada
+  // oculto, bate número a número com `data.totais`.
+  const totaisVis = useMemo(() => {
+    if (!totais) return null;
+    const soma = (f: (c: Colab) => number) => visiveis.reduce((s, c) => s + (f(c) || 0), 0);
+    const somaBase = (f: (c: Colab) => number) =>
+      visiveis.filter((c) => !c.consolidador).reduce((s, c) => s + (f(c) || 0), 0);
+    return {
+      ...totais,
+      fixoMensal: soma((c) => c.fixoMensal || 0),
+      ajudaCusto: soma((c) => c.ajudaCusto || 0),
+      meta: somaBase((c) => c.meta || 0),
+      faturamento: somaBase((c) => c.faturamento || 0),
+      comissao: soma((c) => c.comissao || 0),
+      descontoTroca: soma((c) => c.descontoTroca || 0),
+      bonus: soma((c) => c.bonus || 0),
+      kmValor: soma((c) => c.kmValor || 0),
+      reembolsos: soma((c) => c.reembolsos?.total || 0),
+      totalMes: soma((c) => c.totalMes || 0),
+      campanhas: Object.fromEntries(
+        campanhas.map((k) => [k.id, soma((c) => c.campanhas?.[k.id] || 0)])),
+    };
+  }, [totais, visiveis, campanhas]);
+
   // Cabeçalho: congelado no topo, clicável para ordenar e com o "i" que explica
   // como a coluna é calculada em cada função.
   const Th = ({ col, ajuda, children, primeira }: {
@@ -693,8 +745,15 @@ export default function ResumoRecebiveis() {
                   {!fechado && new Date(dataUpdatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               )}
-              {totais && (
-                <span>Total a pagar: <strong className="text-foreground">{brl(totais.totalMes)}</strong></span>
+              {totaisVis && (
+                <span>
+                  Total a pagar: <strong className="text-foreground">{brl(totaisVis.totalMes)}</strong>
+                  {ocultas.size > 0 && (
+                    <span className="ml-1 text-amber-700">
+                      (só as {visiveis.length} linhas visíveis)
+                    </span>
+                  )}
+                </span>
               )}
             </span>
           </CardTitle>
@@ -711,6 +770,7 @@ export default function ResumoRecebiveis() {
             </div>
           ) : (
             // Rolagem no container (não na página): é o que faz o cabeçalho congelar.
+            <>
             <div className="overflow-auto max-h-[72vh]">
               <table className="w-full text-sm border-collapse">
                 <thead>
@@ -732,10 +792,20 @@ export default function ResumoRecebiveis() {
                   </tr>
                 </thead>
                 <tbody>
-                  {colabsOrdenados.map((c) => (
-                    <tr key={c.id} className="border-t hover:bg-muted/30" data-testid={`linha-${c.id}`}>
+                  {visiveis.map((c) => (
+                    <tr key={c.id} className="border-t hover:bg-muted/30 group" data-testid={`linha-${c.id}`}>
                       <td className="px-3 py-2 sticky left-0 bg-background">
                         <div className="flex items-center gap-1 font-medium leading-tight">
+                          {/* Ocultar é por linha e some com o TOTAL junto: o botão
+                              fica na própria linha, não num menu, senão ninguém
+                              descobre que existe. */}
+                          <button type="button" onClick={() => alternarOculta(c.id)}
+                            title={`Ocultar ${c.nome} e tirar do TOTAL`}
+                            aria-label={`Ocultar ${c.nome}`}
+                            className="shrink-0 text-muted-foreground/40 hover:text-amber-700 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+                            data-testid={`ocultar-${c.id}`}>
+                            <EyeOff className="h-3.5 w-3.5" />
+                          </button>
                           {c.nome}
                           {/* Linha de grupo: o "i" conta o que está somado ali, já
                               que os nomes deixaram de aparecer. */}
@@ -908,32 +978,39 @@ export default function ResumoRecebiveis() {
                       )}
                     </tr>
                   ))}
-                  {totais && colabs.length > 1 && (
-                    <tr className="bg-emerald-50 font-bold border-t-2">
-                      <td className="px-3 py-2 sticky left-0 bg-emerald-50">TOTAL</td>
-                      <td className="px-3 py-2 text-right">{brl(totais.fixoMensal)}</td>
-                      <td className="px-3 py-2 text-right">{brl(totais.ajudaCusto)}</td>
-                      <td className="px-3 py-2 text-right">{brl(totais.meta)}</td>
+                  {totaisVis && colabs.length > 1 && (
+                    <tr className={`font-bold border-t-2 ${ocultas.size ? "bg-amber-50" : "bg-emerald-50"}`}>
+                      <td className={`px-3 py-2 sticky left-0 ${ocultas.size ? "bg-amber-50" : "bg-emerald-50"}`}>
+                        TOTAL
+                        {ocultas.size > 0 && (
+                          <div className="text-[10px] font-normal text-amber-700 whitespace-nowrap">
+                            {visiveis.length} de {colabs.length} linhas
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">{brl(totaisVis.fixoMensal)}</td>
+                      <td className="px-3 py-2 text-right">{brl(totaisVis.ajudaCusto)}</td>
+                      <td className="px-3 py-2 text-right">{brl(totaisVis.meta)}</td>
                       <td className="px-3 py-2 text-right"
-                        title={totais.faturamentoEmpresa !== undefined
+                        title={totais?.faturamentoEmpresa !== undefined
                           ? `Soma das linhas acima. A empresa faturou ${brl(totais.faturamentoEmpresa)} no mês — é esse total que a coordenação recebe.`
                           : ""}>
-                        {brl(totais.faturamento)}
+                        {brl(totaisVis.faturamento)}
                       </td>
-                      <td className="px-3 py-2 text-right">{brl(totais.comissao)}</td>
+                      <td className="px-3 py-2 text-right">{brl(totaisVis.comissao)}</td>
                       <td className="px-3 py-2 text-right text-red-600">
-                        {totais.descontoTroca ? `−${brl(totais.descontoTroca)}` : brl(0)}
+                        {totaisVis.descontoTroca ? `−${brl(totaisVis.descontoTroca)}` : brl(0)}
                       </td>
                       {campanhas.map((k) => (
-                        <td key={k.id} className="px-3 py-2 text-right">{brl(totais.campanhas?.[k.id] || 0)}</td>
+                        <td key={k.id} className="px-3 py-2 text-right">{brl(totaisVis.campanhas?.[k.id] || 0)}</td>
                       ))}
-                      <td className="px-3 py-2 text-right">{brl(totais.bonus)}</td>
-                      <td className="px-3 py-2 text-right">{brl(totais.kmValor)}</td>
-                      <td className="px-3 py-2 text-right text-emerald-700">{brl(totais.totalMes)}</td>
+                      <td className="px-3 py-2 text-right">{brl(totaisVis.bonus)}</td>
+                      <td className="px-3 py-2 text-right">{brl(totaisVis.kmValor)}</td>
+                      <td className="px-3 py-2 text-right text-emerald-700">{brl(totaisVis.totalMes)}</td>
                       {admin && (
                         <td className="px-3 py-2 text-right font-normal text-muted-foreground"
                           title="Soma dos reembolsos do mês — fora do total a pagar">
-                          {brl(totais.reembolsos ?? null)}
+                          {brl(totaisVis.reembolsos ?? null)}
                         </td>
                       )}
                     </tr>
@@ -941,6 +1018,28 @@ export default function ResumoRecebiveis() {
                 </tbody>
               </table>
             </div>
+            {/* O TOTAL parcial é a parte perigosa do recurso: fora da tabela, e
+                não dentro dela, fica visível mesmo com a lista rolada — ninguém
+                conferir a folha sem perceber que faltam linhas. */}
+            {ocultas.size > 0 && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                data-testid="aviso-ocultas">
+                <EyeOff className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <strong>{ocultas.size} linha{ocultas.size > 1 ? "s ocultas" : " oculta"}</strong>
+                  {" "}— o TOTAL acima soma só as visíveis.
+                </span>
+                <span className="text-amber-700">{nomesOcultos.join(" · ")}</span>
+                <button type="button" className="inline-flex items-center gap-1 font-medium underline hover:no-underline"
+                  onClick={() => setOcultas(new Set())} data-testid="mostrar-todas">
+                  <Eye className="h-3.5 w-3.5" /> Mostrar todas
+                </button>
+                <span className="text-amber-700/80">
+                  Some ao recarregar ou ao trocar de mês; a planilha do Excel continua saindo completa.
+                </span>
+              </div>
+            )}
+            </>
           )}
         </CardContent>
       </Card>
