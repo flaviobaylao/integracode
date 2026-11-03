@@ -2277,7 +2277,7 @@ export default function RotaDoDia() {
                         )}
                         {!r.isOwnerCopy && (r as any).ownerSellerName ? (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#8a6d3b] text-white" title="Vendedor titular da carteira deste cliente">
-                            Vendedor: {(r as any).ownerSellerName}
+                            Vendedor: {(r as any).ownerSellerName}{(r as any).ownerSellerPhone ? ` • ${(r as any).ownerSellerPhone}` : ''}
                           </span>
                         ) : null}
                         {r.inactive && (
@@ -2287,9 +2287,6 @@ export default function RotaDoDia() {
                         )}
                         {repIsExpanded && (<>
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#b89b5e] text-white">Repescagem</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200">
-                          {r.phase === 'telemarketing' ? 'Telemarketing' : 'Externo'}
-                        </span>
                         {typeof r.repescagemCount === 'number' && r.repescagemCount > 0 && (
                           <span
                             className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#9a3b3b] text-white"
