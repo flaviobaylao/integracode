@@ -802,7 +802,7 @@ export default function ResumoRecebiveis() {
                           <button type="button" onClick={() => alternarOculta(c.id)}
                             title={`Ocultar ${c.nome} e tirar do TOTAL`}
                             aria-label={`Ocultar ${c.nome}`}
-                            className="shrink-0 text-muted-foreground/40 hover:text-amber-700 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100"
+                            className="shrink-0 text-muted-foreground/40 hover:text-amber-700 group-hover:text-muted-foreground"
                             data-testid={`ocultar-${c.id}`}>
                             <EyeOff className="h-3.5 w-3.5" />
                           </button>
