@@ -405,7 +405,18 @@ export default function CustomerEditModal({
       }
       createCustomerMutation.mutate(payload);
     } else {
-      // Caso contrário atualiza existente
+      // Caso contrário atualiza existente.
+      // 🔐 Papel com edição LIMITADA (ex.: entrega): o servidor só aceita nome fantasia,
+      // telefone/contato e endereço — envia somente esses campos para não ser recusado. (nov/2026)
+      const _role = String((user as any)?.role || '');
+      const _editaTudo = ['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing'].includes(_role);
+      if (!_editaTudo) {
+        const BASICOS = ['fantasyName', 'phone', 'contact', 'address', 'neighborhood', 'city', 'state', 'zipCode', 'latitude', 'longitude'];
+        const reduzido: any = {};
+        for (const k of BASICOS) if (k in payload) reduzido[k] = payload[k];
+        updateCustomerMutation.mutate(reduzido);
+        return;
+      }
       updateCustomerMutation.mutate(payload);
     }
   };

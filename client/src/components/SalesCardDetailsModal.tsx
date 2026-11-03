@@ -12,6 +12,8 @@ import { useLocation } from "wouter";
 import WhatsAppButton from "./WhatsAppButton";
 import EditablePhoneField from "./EditablePhoneField";
 import { ChangeRequestControl } from "@/components/change-request/ChangeRequestControl";
+import CustomerEditModal from "@/components/CustomerEditModal";
+import { usePermissions } from "@/lib/permissions";
 import { 
   Calendar, 
   Clock, 
@@ -37,7 +39,8 @@ import {
   Loader2,
   Monitor,
   Users,
-  Truck
+  Truck,
+  UserCog
 } from "lucide-react";
 import type { SalesCardWithRelations } from "@shared/schema";
 import CheckInModal from "./CheckInModal";
@@ -53,6 +56,24 @@ interface SalesCardDetailsModalProps {
 }
 
 export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale, customerDebt = 0 }: SalesCardDetailsModalProps) {
+  // ✏️ Editar cadastro do cliente direto do card (nov/2026). O que cada um pode alterar segue o
+  // papel/acessos: o servidor valida (PUT /api/customers/:id) e o modal envia só o permitido.
+  const perms = usePermissions();
+  const podeEditarCadastro = perms.can("Clientes / Carteira", "editar");
+  const [clienteEdicao, setClienteEdicao] = useState<any>(null);
+  const [carregandoCadastro, setCarregandoCadastro] = useState(false);
+  const abrirEdicaoCadastro = async (customerId: string) => {
+    setCarregandoCadastro(true);
+    try {
+      const r = await fetch(`/api/customers/${customerId}`, { credentials: 'include' });
+      if (!r.ok) throw new Error('Falha ao carregar o cadastro');
+      setClienteEdicao(await r.json());
+    } catch (e: any) {
+      toast({ title: 'Erro', description: e?.message || 'Não foi possível abrir o cadastro.', variant: 'destructive' });
+    } finally {
+      setCarregandoCadastro(false);
+    }
+  };
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
@@ -948,6 +969,19 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
         )}
 
         <div className="flex flex-wrap justify-end items-center gap-3 pt-4">
+          {/* ✏️ Editar cadastro do cliente (respeita o que o papel do usuário pode alterar). */}
+          {card?.customer?.id && podeEditarCadastro && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => abrirEdicaoCadastro(String(card.customer!.id))}
+              disabled={carregandoCadastro}
+              data-testid="button-editar-cadastro"
+            >
+              {carregandoCadastro ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <UserCog className="h-4 w-4 mr-2" />}
+              Editar Cadastro
+            </Button>
+          )}
           {/* 📋 Solicitar Alteração — abre a solicitação formal p/ este cliente. */}
           {card?.customer?.id && (
             <ChangeRequestControl
@@ -963,6 +997,19 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           </Button>
         </div>
       </DialogContent>
+
+      {clienteEdicao && (
+        <CustomerEditModal
+          isOpen={!!clienteEdicao}
+          customer={clienteEdicao}
+          onClose={() => {
+            setClienteEdicao(null);
+            queryClient.invalidateQueries({ queryKey: ['/api/sales-cards'] });
+            if (card?.id) queryClient.invalidateQueries({ queryKey: ['/api/sales-cards', card.id] });
+            queryClient.invalidateQueries({ queryKey: ['/api/daily-routes'] });
+          }}
+        />
+      )}
 
       {/* Modal de Check-In com foto */}
       {card && (
