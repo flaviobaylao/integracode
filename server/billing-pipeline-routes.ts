@@ -2679,6 +2679,93 @@ export function registerBillingPipelineRoutes(app: Express) {
     }
   });
 
+  // RECUSAR TROCA (03/nov/2026): num card de TROCA ainda não faturado (Bloqueados, Agendado,
+  // Pedido, A Faturar), o gestor recusa com um motivo. Duas ações: o card vai para a LIXEIRA
+  // (restaurável, como a exclusão) e o vendedor do pedido recebe no WhatsApp que a troca foi
+  // recusada e por quê. O motivo fica registrado no card (data, hora e quem recusou).
+  app.post('/api/billing-pipeline/:id/recusar-troca', authenticateUser, async (req: any, res) => {
+    try {
+      const _u = req.currentUser || req.user;
+      if (!['admin', 'coordinator', 'administrative'].includes(String(_u?.role || ''))) return res.status(403).json({ message: 'Só gestores podem recusar trocas' });
+      const motivo = String(req.body?.motivo ?? '').trim();
+      if (motivo.length < 3) return res.status(400).json({ message: 'Informe o motivo da recusa' });
+      if (motivo.length > 1000) return res.status(400).json({ message: 'Motivo muito longo (máx. 1000 caracteres)' });
+      await ensureLixeiraStage();
+      const quem = (`${_u?.firstName || ''} ${_u?.lastName || ''}`.trim()) || _u?.email || 'Usuário';
+      const _p = paredeBR(agora());
+      const dt = `${_p.slice(8, 10)}/${_p.slice(5, 7)}/${_p.slice(0, 4)} ${_p.slice(11, 16)}`;
+      const entrada = `[${dt} — ${quem}] Troca recusada. Motivo: ${motivo}`;
+      let sellerId: string | null = null; let cliente = 'Cliente'; let valor = 0; let salesCardId: string | null = null; let produtos: any[] = [];
+
+      const item: any = await storage.getBillingPipelineItem(req.params.id);
+      if (item) {
+        if (String(item.operationType || '').toLowerCase() !== 'troca') return res.status(400).json({ message: 'Este card não é de troca' });
+        if (!['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(item.stage || '')) || item.invoiceNumber) {
+          return res.status(409).json({ message: 'A troca já foi faturada ou está em etapa posterior; não dá para recusar por aqui' });
+        }
+        sellerId = item.sellerId || null; cliente = item.customerName || cliente; valor = Number(item.saleValue || 0) || 0;
+        salesCardId = item.salesCardId || null; produtos = Array.isArray(item.products) ? item.products : [];
+        await storage.updateBillingPipelineItem(req.params.id, { notes: (item.notes ? String(item.notes) + '\n' : '') + entrada } as any);
+        await storage.deleteBillingPipelineItem(req.params.id); // soft: vai para a Lixeira
+        try {
+          const { estornarBaixaDeCardSemNf } = await import('./estoque-em-uso.js');
+          await estornarBaixaDeCardSemNf(req.params.id, _u?.email || null);
+        } catch (e: any) { console.error('[RECUSAR-TROCA] estorno da baixa falhou:', e?.message); }
+      } else {
+        const bo = await db.select().from(blockedOrders).where(eq(blockedOrders.id, req.params.id)).limit(1);
+        const order: any = bo[0];
+        if (!order) return res.status(404).json({ message: 'Pedido não encontrado' });
+        if (order.status !== 'blocked') return res.status(409).json({ message: 'Pedido não está bloqueado' });
+        if (String(order.operationType || '').toLowerCase() !== 'troca') return res.status(400).json({ message: 'Este card não é de troca' });
+        const cust: any = await storage.getCustomer(order.customerId).catch(() => null);
+        cliente = cust?.fantasyName || cust?.name || cliente;
+        const seller: any = order.sellerId ? await storage.getUser(order.sellerId).catch(() => null) : null;
+        const sellerName = seller ? ([seller.firstName, seller.lastName].filter(Boolean).join(' ').trim() || null) : null;
+        sellerId = order.sellerId || null; valor = Number(order.totalAmount || 0) || 0; salesCardId = order.salesCardId || null;
+        produtos = Array.isArray(order.products) ? order.products : [];
+        const histJson = JSON.stringify([{ stage: 'lixeira', changedAt: paredeBR(agora()), changedBy: `${_u?.email || 'sistema'} (troca recusada)` }]);
+        await db.execute(sql`
+          INSERT INTO billing_pipeline (sales_card_id, customer_id, customer_name, seller_id, seller_name, stage, sale_value, payment_method, operation_type, products, stage_history, created_by, notes)
+          VALUES (${order.salesCardId}, ${order.customerId}, ${cust?.name || cliente}, ${order.sellerId || null}, ${sellerName},
+                  'lixeira', ${order.totalAmount ?? null}, ${order.paymentMethod || null}, ${order.operationType || null},
+                  ${produtos.length ? JSON.stringify(produtos) : null}::jsonb, ${histJson}::jsonb, ${_u?.email || 'sistema'}, ${entrada})`);
+        await db.delete(blockedOrders).where(eq(blockedOrders.id, req.params.id));
+      }
+      // Registro também nas observações do card de vendas (histórico do cliente).
+      if (salesCardId) {
+        try {
+          const sc: any = await storage.getSalesCard(salesCardId);
+          if (sc) await storage.updateSalesCard(salesCardId, { notes: (sc.notes ? String(sc.notes) + '\n\n' : '') + entrada } as any);
+        } catch { /* não bloqueia */ }
+        try { await logOrderAudit(salesCardId, 'troca_recusada'); } catch { /* auditoria */ }
+      }
+
+      // WhatsApp para o vendedor do pedido.
+      let whatsapp: 'enviado' | 'sem_telefone' | 'falhou' | 'sem_vendedor' = 'sem_vendedor';
+      if (sellerId) {
+        try {
+          const r: any = await db.execute(sql`SELECT phone, first_name FROM users WHERE id = ${sellerId} LIMIT 1`);
+          const u: any = (r.rows || r)[0];
+          const fone = String(u?.phone || '').replace(/\D/g, '');
+          if (fone.length < 10) whatsapp = 'sem_telefone';
+          else {
+            const itens = produtos.slice(0, 8).map((p: any) => `• ${p.quantity} × ${p.name}`).join('\n');
+            const texto = `❌ *Troca recusada*\n\nCliente: *${cliente}*\nValor: R$ ${valor.toFixed(2).replace('.', ',')}\n${itens ? itens + '\n' : ''}\n*Motivo:* ${motivo}\n\nRecusada por ${quem} em ${dt}.`;
+            const { enviarInterno } = await import('./envio-texto');
+            const env = await enviarInterno(fone.startsWith('55') ? fone : '55' + fone, texto);
+            whatsapp = env?.success ? 'enviado' : 'falhou';
+            if (!env?.success) console.warn('[RECUSAR-TROCA] WhatsApp não enviado:', env?.error);
+          }
+        } catch (e: any) { console.error('[RECUSAR-TROCA] WhatsApp falhou:', e?.message || e); whatsapp = 'falhou'; }
+      }
+      console.log(`🚫 [RECUSAR-TROCA] ${cliente} — ${motivo} (por ${quem}; WhatsApp: ${whatsapp})`);
+      res.json({ ok: true, movedTo: 'lixeira', whatsapp });
+    } catch (error: any) {
+      console.error('[RECUSAR-TROCA]', error?.message || error);
+      res.status(500).json({ message: error?.message || 'Falha ao recusar a troca' });
+    }
+  });
+
   app.post('/api/billing-pipeline/:id/note', authenticateUser, async (req: any, res) => {
     try {
       const _u = req.currentUser || req.user;
