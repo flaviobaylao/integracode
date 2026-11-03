@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2, GripVertical, Crosshair } from "lucide-react";
+import { Route, MapPin, Calendar, User, CheckCircle, Clock, AlertCircle, Camera, Navigation, X, RefreshCw, Trash2, Plus, Zap, UtensilsCrossed, Target, Phone, DollarSign, ShoppingCart, FileText, MessageCircle, Eye, EyeOff, XCircle, Info, Copy, ChevronDown, ChevronUp, Loader2, GripVertical, Crosshair, Hand, LockOpen } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from "wouter";
@@ -432,6 +432,19 @@ export default function RotaDoDia() {
     },
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' }),
   });
+  // TODO atendimento de repescagem do TELEMARKETING passa pelo card CAPTURADO: ao clicar em
+  // WhatsApp ou Registrar num card ainda não capturado, ele é capturado primeiro (some para os
+  // demais) e só então a ação segue. Capturado por outro atendente → bloqueia. Admin e vendedor
+  // externo (dono da carteira) seguem sem captura.
+  const comCaptura = (r: any, acao: () => void) => {
+    if (!isTelemarketing || isAdmin || !r?.assignmentId) { acao(); return; }
+    if (r.captured && r.canRelease) { acao(); return; }
+    if (r.captured && !r.canRelease) {
+      toast({ title: 'Cliente já capturado', description: `Este cliente está com ${r.capturedByName || 'outro atendente'}.`, variant: 'destructive' });
+      return;
+    }
+    toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: true }, { onSuccess: () => acao() });
+  };
 
   // Buscar pedidos do dia e débitos para os clientes da rota
   interface CustomerInfoResponse {
@@ -2280,6 +2293,11 @@ export default function RotaDoDia() {
                             Vendedor: {(r as any).ownerSellerName}{(r as any).ownerSellerPhone ? ` • ${(r as any).ownerSellerPhone}` : ''}
                           </span>
                         ) : null}
+                        {r.captured && (
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded text-white ${r.canRelease && r.capturedBy === user?.id ? 'bg-blue-600' : 'bg-gray-600'}`} title="Atendimento capturado — some para os demais telemarketings até liberar, registrar pedido ou às 18h" data-testid={`repescagem-capturado-${r.customerId}`}>
+                            {r.capturedBy === user?.id ? 'Capturado por você' : `Capturado por ${r.capturedByName || 'outro atendente'}`}
+                          </span>
+                        )}
                         {r.inactive && (
                           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-500 text-white" title={`O pedido deste cliente foi colocado por ${r.orderWinnerName || 'outro atendente'}. Este card ficou inativo e não precisa de justificativa.`} data-testid={`repescagem-inativo-${r.customerId}`}>
                             Pedido de {r.orderWinnerName || 'outro'} · inativo
@@ -2363,7 +2381,7 @@ export default function RotaDoDia() {
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-100 dark:hover:bg-green-900"
-                          onClick={(e) => { e.stopPropagation(); openWhatsappCentral(r.customerId, r.phone); }}
+                          onClick={(e) => { e.stopPropagation(); comCaptura(r, () => openWhatsappCentral(r.customerId, r.phone)); }}
                           title="Abrir WhatsApp na Central de Atendimento"
                           data-testid={`button-repescagem-central-${r.customerId}`}
                         >
@@ -2372,21 +2390,22 @@ export default function RotaDoDia() {
                       )}
                       {r.assignmentId && (
                         <Button
-                          size="icon" variant="ghost"
-                          className={`h-8 w-8 ${r.captured ? (r.canRelease ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950' : 'text-gray-400 cursor-not-allowed') : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950'}`}
+                          size="sm" variant="outline"
+                          className={`h-8 px-2.5 gap-1 text-xs font-semibold ${r.captured ? (r.canRelease ? 'border-orange-400 text-orange-700 hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-950' : 'border-gray-300 text-gray-500 cursor-not-allowed') : 'border-blue-500 text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950'}`}
                           onClick={(e) => { e.stopPropagation(); if (r.captured && !r.canRelease) return; toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: !r.captured }); }}
                           disabled={toggleCaptureMutation.isPending || (r.captured && !r.canRelease)}
                           title={r.captured ? (r.canRelease ? 'Capturado por você — clique para liberar' : `Capturado por ${r.capturedByName || 'outro atendente'}`) : 'Capturar atendimento (fica só com você; some para os demais até liberar, registrar pedido ou às 18h)'}
                           data-testid={`button-repescagem-capture-${r.customerId}`}
                         >
-                          <Target className="h-4 w-4" />
+                          {r.captured ? (r.canRelease ? <LockOpen className="h-3.5 w-3.5" /> : <Hand className="h-3.5 w-3.5" />) : <Hand className="h-3.5 w-3.5" />}
+                          {r.captured ? (r.canRelease ? 'Liberar' : 'Capturado') : 'Capturar'}
                         </Button>
                       )}
                       {r.customerId && (
                         <Button
                           size="icon" variant="ghost"
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
-                          onClick={(e) => { e.stopPropagation(); setVirtualServiceCustomer({ id: r.customerId, name: r.customerName }); }}
+                          onClick={(e) => { e.stopPropagation(); comCaptura(r, () => setVirtualServiceCustomer({ id: r.customerId, name: r.customerName })); }}
                           title="Registrar Pedido/Atendimento"
                           data-testid={`button-repescagem-registro-${r.customerId}`}
                         >
