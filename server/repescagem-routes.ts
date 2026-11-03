@@ -2349,10 +2349,12 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // Nome do VENDEDOR TITULAR (dono da carteira) de cada cliente — p/ o card do HABILITADO
       // mostrar "Vendedor: <titular>". Resolve por id direto OU pelo código omie do vendedor. (set/2026)
       const ownerNameBySellerId = new Map<string, string>();
+      const ownerPhoneBySellerId = new Map<string, string>();
       try {
         const _own: any = await db.execute(sql`
           SELECT DISTINCT c.seller_id AS sid,
-                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))), '') AS nm
+                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))), '') AS nm,
+                 NULLIF(TRIM(COALESCE(u.phone,'')), '') AS ph
           FROM customers c
           LEFT JOIN users u ON (u.id = c.seller_id
                              OR u.omie_vendor_code = c.seller_id
@@ -2362,6 +2364,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         `);
         for (const row of ((_own.rows || []) as any[])) {
           if (row.sid && row.nm) ownerNameBySellerId.set(String(row.sid), String(row.nm));
+          if (row.sid && row.ph) ownerPhoneBySellerId.set(String(row.sid), String(row.ph));
         }
       } catch (e) { console.warn('[route-overlay][owner-name]', (e as any)?.message); }
 
@@ -2398,6 +2401,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
           repescagemWindowMonths: per === 'mensal' ? 3 : 2,
           phase: r.phase, isVirtualClient: !!c?.virtualService,
           ownerSellerName: (c?.sellerId ? (ownerNameBySellerId.get(String(c.sellerId)) || null) : null),
+          ownerSellerPhone: (c?.sellerId ? (ownerPhoneBySellerId.get(String(c.sellerId)) || null) : null),
           assignedUserId: r.assignedUserId,
           // DONO da carteira (vendedor de cadastro) do cliente. isOwner = este sellerId é o dono.
           // Regra de fechamento: SOMENTE o vendedor de cadastro justifica repescagem não atendida;
