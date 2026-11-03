@@ -129,9 +129,10 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
         </p>
         <p className="mb-2">
           O <strong>olho riscado</strong> ao lado do nome tira aquela linha da tabela <strong>e do
-          TOTAL</strong>, para conferir quanto sai sem ela. É só visualização: nada é salvo, some ao
-          recarregar ou ao trocar de mês, e a planilha do Excel e o retrato do fechamento continuam
-          com todo mundo.
+          TOTAL</strong>, para conferir quanto sai sem ela. Nada é salvo: some ao recarregar ou ao
+          trocar de mês, e o retrato congelado do fechamento continua com todo mundo. O{" "}
+          <strong>Excel acompanha a tela</strong> — exporta só as linhas visíveis, com o TOTAL
+          refeito e o arquivo marcado como parcial.
         </p>
         <p className="text-muted-foreground">
           Cada colaborador só enxerga a própria linha; o admin vê todas.
@@ -643,8 +644,13 @@ export default function ResumoRecebiveis() {
   // O arquivo é gerado no servidor: a lib do front não escreve congelamento de
   // painel. Lá vai com largura 10, cabeçalho em negrito e congelado e quebra
   // automática de texto.
+  // A planilha sai com as mesmas linhas da tela: o que foi ocultado não vai no
+  // arquivo nem no TOTAL dele. Arquivo e tela com totais diferentes é a receita
+  // para assinar pagamento pelo número errado.
   const exportarXls = () => {
-    window.location.href = `/api/resumo-recebiveis/xlsx?ym=${ym}`;
+    const ocultar = ocultas.size
+      ? `&ocultar=${encodeURIComponent(Array.from(ocultas).join(","))}` : "";
+    window.location.href = `/api/resumo-recebiveis/xlsx?ym=${ym}${ocultar}`;
   };
 
   return (
@@ -703,8 +709,12 @@ export default function ResumoRecebiveis() {
               <Settings2 className="h-4 w-4 mr-1" /> Configurações
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={exportarXls} disabled={!colabs.length}>
-            <Download className="h-4 w-4 mr-1" /> Excel
+          <Button variant="outline" size="sm" onClick={exportarXls} disabled={!colabs.length}
+            className={ocultas.size ? "text-amber-700 border-amber-300 hover:bg-amber-50" : ""}
+            title={ocultas.size
+              ? `Exporta as ${visiveis.length} linhas visíveis, sem as ${ocultas.size} ocultas`
+              : "Exporta a planilha do mês"}>
+            <Download className="h-4 w-4 mr-1" /> {ocultas.size ? "Excel (parcial)" : "Excel"}
           </Button>
           <BackToDashboardButton />
         </div>
@@ -1035,7 +1045,8 @@ export default function ResumoRecebiveis() {
                   <Eye className="h-3.5 w-3.5" /> Mostrar todas
                 </button>
                 <span className="text-amber-700/80">
-                  Some ao recarregar ou ao trocar de mês; a planilha do Excel continua saindo completa.
+                  Some ao recarregar ou ao trocar de mês. O Excel sai com estas mesmas linhas,
+                  marcado como parcial.
                 </span>
               </div>
             )}
