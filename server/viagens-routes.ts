@@ -5,6 +5,7 @@ import { authenticateUser } from "./authMiddleware";
 import multer from "multer";
 import { dataCalendario } from "@shared/tempo";
 import { validarPix, normalizarPix } from "./pix-util";
+import { salvarDadosPagamento } from "./favoritos-pagamento";
 
 // ===========================================================================
 // VIAGENS COM ADIANTAMENTO (27/out/2026)
@@ -309,6 +310,7 @@ export function registerViagens(app: Express) {
           ${instancia}, ${forma}, ${favNome}, ${favDoc || null}, ${forma === "pix" ? pixTipo : null}, ${forma === "pix" ? normalizarPix(pixTipo, pixChave) : null}, ${forma === "pix" ? (pixTitular || null) : null},
           ${forma === "transferencia" || forma === "pix" ? (banco || null) : null}, ${forma === "transferencia" ? agencia : null}, ${forma === "transferencia" ? conta : null}, ${forma === "transferencia" ? tipoConta : null}, ${vOu}, ${vencimento}::date)
         RETURNING *`))[0];
+      await salvarDadosPagamento(vendedorId, { favorecidoNome: favNome, favorecidoDoc: favDoc, forma, instancia, pixTipo, pixChave: forma === "pix" ? normalizarPix(pixTipo, pixChave) : "", pixTitular, banco, agencia, conta, tipoConta });
       const cod = "VG-" + String(ins.numero).padStart(4, "0");
       await evento(ins.id, nomeDe(u), `Solicitação enviada: ${cidade}-${uf}, ${fmtData(ini)} a ${fmtData(fim)}, km previsto ${km.toLocaleString("pt-BR")} km, sugerido ${fmtBRL(tot)}.`);
       await chamado(["flavio", "cinthia"], `Viagem com adiantamento ${cod} — aprovar`,

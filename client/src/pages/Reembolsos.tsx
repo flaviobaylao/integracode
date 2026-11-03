@@ -6,7 +6,7 @@
 // no Contas a Pagar (Financeiro, 1 clique) → Pagamento (quando a conta é baixada).
 // O formulário já pede os campos que a Conta a Pagar exige. Servidor: /api/reembolsos/*.
 // -----------------------------------------------------------------------------
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, ArrowLeft, FileText, Camera, Paperclip } from "lucide-react";
 import { PIX_TIPOS, PIX_REGRA } from "@/lib/pix";
+import { useFavoritosPagamento, SeletorFavorito, type FavoritoPagamento } from "@/lib/favoritosPagamento";
 
 type Reembolso = {
   id: string; numero: number; codigo: string; solicitanteId: string; solicitanteNome: string;
@@ -168,6 +169,20 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
   const refArq = useRef<HTMLInputElement>(null), refCam = useRef<HTMLInputElement>(null);
+  // Dados de pagamento salvos (último pedido do dono preenche sozinho; dá para trocar)
+  const [favId, setFavId] = useState<string | null>(null);
+  const aplicarFav = (f: FavoritoPagamento) => {
+    setFavId(f.id); setFavNome(f.favorecidoNome || ""); setFavDoc(f.favorecidoDoc || "");
+    if (f.forma) setForma(f.forma); if (f.instancia) setInstancia(f.instancia);
+    setPixTipo(f.pixTipo || "CPF"); setPixChave(f.pixChave || ""); setPixTitular(f.pixTitular || "");
+    setBanco(f.banco || ""); setAgencia(f.agencia || ""); setConta(f.conta || ""); setTipoConta(f.tipoConta || "Corrente");
+  };
+  const limparFav = (nome: string, doc: string) => {
+    setFavId(null); setFavNome(nome); setFavDoc(doc); setPixChave(""); setPixTitular(""); setBanco(""); setAgencia(""); setConta("");
+  };
+  const favQ = useFavoritosPagamento(null);
+  const favAplicado = useRef(false);
+  useEffect(() => { const l = favQ.data; if (!favAplicado.current && l && l.length) { favAplicado.current = true; aplicarFav(l[0]); } }, [favQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const total = useMemo(() => itens.reduce((a, i) => a + (Number(String(i.valor).replace(",", ".")) || 0), 0), [itens]);
   const setItem = (k: number, p: Partial<Item>) => setItens(itens.map((x, i) => (i === k ? { ...x, ...p } : x)));
 
@@ -276,6 +291,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">4. Como você quer receber</CardTitle></CardHeader>
         <CardContent className="grid gap-3">
+          <SeletorFavorito lista={favQ.data || []} atualId={favId} onEscolher={aplicarFav} onLimpar={() => limparFav("", "")} />
           <div className="flex gap-2 flex-wrap">
             {Object.entries(FORMA_LABEL).map(([k, l]) => (
               <button key={k} onClick={() => setForma(k)} className={`h-10 px-4 rounded-full border text-sm font-semibold ${forma === k ? "bg-green-700 text-white border-green-700" : "bg-white"}`}>{l}</button>

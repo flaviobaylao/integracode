@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Paperclip, Trash2, ArrowLeft, FileText } from "lucide-react";
 import { CIDADES_GO_DF_COORDS as CIDADES_GO_DF } from "@/lib/cidadesGoDfCoords";
 import { PIX_TIPOS, PIX_REGRA } from "@/lib/pix";
+import { useFavoritosPagamento, SeletorFavorito, type FavoritoPagamento } from "@/lib/favoritosPagamento";
 
 type Viagem = {
   id: string; numero: number; codigo: string; vendedorId: string; vendedorNome: string; cidade: string; uf: string;
@@ -152,6 +153,26 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
   const [pixChave, setPixChave] = useState("");
   const [pixTitular, setPixTitular] = useState("");
   const [banco, setBanco] = useState(""); const [agencia, setAgencia] = useState(""); const [conta, setConta] = useState(""); const [tipoConta, setTipoConta] = useState("Corrente");
+  // Dados de pagamento salvos (último pedido do dono preenche sozinho; dá para trocar)
+  const [favId, setFavId] = useState<string | null>(null);
+  const aplicarFav = (f: FavoritoPagamento) => {
+    setFavId(f.id); setFavNome(f.favorecidoNome || ""); setFavDoc(f.favorecidoDoc || "");
+    if (f.forma) setForma(f.forma); if (f.instancia) setInstancia(f.instancia);
+    setPixTipo(f.pixTipo || "CPF"); setPixChave(f.pixChave || ""); setPixTitular(f.pixTitular || "");
+    setBanco(f.banco || ""); setAgencia(f.agencia || ""); setConta(f.conta || ""); setTipoConta(f.tipoConta || "Corrente");
+  };
+  const limparFav = (nome: string, doc: string) => {
+    setFavId(null); setFavNome(nome); setFavDoc(doc); setPixChave(""); setPixTitular(""); setBanco(""); setAgencia(""); setConta("");
+  };
+  // dados salvos do VENDEDOR da viagem (admin pedindo por outro vendedor vê os dele)
+  const favQ = useFavoritosPagamento(vendedorId === cfg.me.id ? null : vendedorId);
+  const favAplicadoPara = useState<{ v: string | null }>({ v: null })[0];
+  useEffect(() => {
+    const l = favQ.data;
+    if (!l || favAplicadoPara.v === vendedorId) return;
+    favAplicadoPara.v = vendedorId;
+    if (l.length) aplicarFav(l[0]); else limparFav(nomeVend(vendedorId), vendedorId === cfg.me.id ? (cfg.me.cpf || "") : "");
+  }, [favQ.data, vendedorId]); // eslint-disable-line react-hooks/exhaustive-deps
   const c = CIDADES_GO_DF.find((x) => x[0] === cidade);
   const { data: est } = useQuery<{ casa: { lat: number; lon: number } | null; historicoIdaVolta: number[] }>({
     queryKey: ["/api/viagens/estimativa", vendedorId, cidade],
@@ -260,6 +281,7 @@ function NovaViagem({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () => v
               </div>
               <div className="rounded-lg border p-3 grid gap-3">
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Para o Contas a Pagar · como receber o adiantamento</div>
+                <SeletorFavorito lista={favQ.data || []} atualId={favId} onEscolher={aplicarFav} onLimpar={() => limparFav(nomeVend(vendedorId), "")} />
                 <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
                   <label className="grid gap-1 text-sm font-medium">Empresa (instância) *
                     <select className={selCls} value={instancia} onChange={(e) => setInstancia(e.target.value)} data-testid="select-instancia">

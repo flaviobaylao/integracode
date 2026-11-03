@@ -5,6 +5,7 @@ import { authenticateUser } from "./authMiddleware";
 import multer from "multer";
 import { dataCalendario } from "@shared/tempo";
 import { validarPix, normalizarPix } from "./pix-util";
+import { salvarDadosPagamento } from "./favoritos-pagamento";
 
 // ===========================================================================
 // REEMBOLSO DE DESPESAS (28/out/2026) — módulo do grupo Chamados.
@@ -268,6 +269,7 @@ export function registerReembolsos(app: Express) {
         VALUES (${String(u.id)}, ${nomeDe(u)}, ${descricao}, ${dataDespesa}::date, ${total}, ${vencimento}::date, ${forma}, ${instancia}, ${chartAccountId || null},
           ${favNome}, ${favDoc || null}, ${pixTipo || null}, ${pixChave ? normalizarPix(pixTipo, pixChave) : null}, ${pixTitular || null}, ${banco || null}, ${agencia || null}, ${conta || null}, ${tipoConta || null}, ${String(b.obs || "").slice(0, 2000) || null})
         RETURNING *`))[0];
+      await salvarDadosPagamento(String(u.id), { favorecidoNome: favNome, favorecidoDoc: favDoc, forma, instancia, pixTipo, pixChave: pixChave ? normalizarPix(pixTipo, pixChave) : "", pixTitular, banco, agencia, conta, tipoConta });
       let ordem = 0;
       for (const i of itens) {
         await db.execute(sql`INSERT INTO reembolso_itens (reembolso_id, descricao, data, valor, ordem)
