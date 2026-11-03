@@ -52,6 +52,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <ul className="list-disc pl-5 space-y-1">
                 <li>Segue <b>periodicidade e dia de rota</b>, o mesmo raciocínio do Resumo de Visitas (ciclos/bolinhas).</li>
                 <li>Cai <b>somente quando a última visita agendada NÃO foi feita</b> (bolinha vermelha — sem check-in, sem atendimento virtual e sem pedido). <b>Se a visita foi feita — com ou sem pedido</b> (bolinha amarela ou verde) — o cliente <b>não cai</b>. A visita conta como feita pelo check-in do card (mesma fonte do Resumo de Visitas), check-in na rota, atendimento virtual ou pedido.</li>
+                <li><b>Semana de atendimento do cadastro:</b> quando o cliente tem semana definida (1ª, 2ª, 3ª, 4ª, última, 1ª e 3ª, 2ª e 4ª), o dia de rota considerado é <b>exatamente o da rota real</b> — semanas do mês contadas pela segunda-feira. Ex.: cliente mensal da <b>3ª semana</b> visitado na segunda 19/10 cai em 20/10 se não for atendido. Sem semana definida ("toda semana"), vale o calendário pela periodicidade.</li>
                 <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha estiver vermelha.</li>
                 <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar vermelha.</li>
                 <li><b>Permanece</b> enquanto a última bolinha estiver vermelha. <b>Assim que houver pedido (venda) OU qualquer registro de atendimento — do vendedor ou do atendente</b> (check-in na rota/card, check-in da agenda, atendimento virtual/resgate, visita concluída ou repescagem marcada como atendida), com ou sem venda, o cliente <b>sai da lista</b> na hora e <b>não cai no dia seguinte</b>; entra em um novo ciclo e só volta se a próxima visita ficar vermelha.</li>
@@ -100,8 +101,9 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
             <div>
               <p className="font-semibold mb-1">Captura de atendimento (telemarketing)</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>Cada cliente em repescagem tem o botão <b>"Capturar"</b>. Ao capturar, o cliente <b>fica com você</b> (é reatribuído a você) e <b>some da lista dos demais telemarketings</b>, evitando dois atendentes ligarem para o mesmo cliente.</li>
-                <li>O cliente <b>volta a aparecer para os demais</b> quando o capturador: clica em <b>Liberar</b>, <b>registra um pedido</b> (o cliente sai da repescagem), ou <b>automaticamente às 18h</b> (encerramento do dia).</li>
+                <li>Cada cliente em repescagem tem o botão <b>"Capturar"</b> — no <b>card de repescagem da Rota do Dia</b> e na tela de Repescagem. Ao capturar, o cliente <b>fica com você</b> (é reatribuído a você), ganha o selo <b>"Capturado por você"</b> e <b>some da lista dos demais telemarketings</b>, evitando dois atendentes ligarem para o mesmo cliente.</li>
+                <li><b>Todo atendimento do telemarketing é feito pelo card capturado:</b> ao clicar em WhatsApp ou em Registrar Pedido/Atendimento num card ainda não capturado, ele é <b>capturado automaticamente</b> antes. Cliente capturado por outro atendente fica bloqueado.</li>
+                <li>O cliente <b>volta a aparecer para os demais</b> quando o capturador: clica em <b>Liberar</b>, <b>registra um pedido</b> (o cliente sai da repescagem), ou <b>automaticamente às 18h</b> (encerramento do dia — rotina agendada às 18:00).</li>
                 <li>O <b>capturador</b> continua vendo o cliente (com o botão Liberar); o <b>admin vê tudo</b>, com o selo "capturado por…", e pode liberar.</li>
                 <li><b>Sem trava/redistribuição automática</b> no sorteio: o cliente só fica preso a um atendente quando é capturado.</li>
               </ul>
@@ -116,6 +118,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Automação</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Job diário às <b>00:10 (horário de Brasília)</b>: gera as rotas do dia e roda a distribuição da repescagem, capturando o dia anterior inteiro — todos os dias.</li>
+                <li>Job diário às <b>18:00 (horário de Brasília)</b>: libera todas as capturas de atendimento do dia.</li>
               </ul>
             </div>
           </div>
