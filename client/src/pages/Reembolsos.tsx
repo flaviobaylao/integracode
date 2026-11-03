@@ -21,7 +21,8 @@ type Reembolso = {
   id: string; numero: number; codigo: string; solicitanteId: string; solicitanteNome: string;
   descricao: string; dataDespesa: string; valor: number; vencimento: string; forma: string; instancia: string | null; chartAccountId: string | null;
   favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string; pixTitular?: string; banco: string; agencia: string; conta: string; tipoConta: string;
-  obs: string; status: string; aprovadorNome: string | null; autoaprovado?: boolean; valorAprovado: number | null; motivoRecusa: string | null;
+  obs: string; status: string; aprovadorNome: string | null; autoaprovado?: boolean;
+  encaminhadoParaNome?: string | null; encaminhadoPorNome?: string | null; encaminhadoEm?: string | null; valorAprovado: number | null; motivoRecusa: string | null;
   payableId: string | null; lancadoNome: string | null; lancadoEm: string | null; pagoEm: string | null; createdAt: string;
 };
 type Detalhe = Reembolso & {
@@ -32,7 +33,7 @@ type Detalhe = Reembolso & {
   payable: { id: string; titulo: string; status: string; valor: number; vencimento: string } | null;
 };
 type Cfg = {
-  me: { id: string; nome: string; cpf: string }; aprovador: boolean; financeiro: boolean;
+  me: { id: string; nome: string; cpf: string }; aprovador: boolean; financeiro: boolean; encaminharPara?: { key: string; nome: string }[];
   categorias: { id: string; code: string; name: string }[]; instancias: string[];
 };
 
@@ -325,6 +326,7 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
   const [busy, setBusy] = useState(false);
   const [aj, setAj] = useState<{ valor?: string; categoria?: string; vencimento?: string; instancia?: string }>({});
   const [motivo, setMotivo] = useState("");
+  const [recado, setRecado] = useState("");
   if (isLoading || !r) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
   const atual = etapa ?? etapaDe(r.status);
   const acao = async (fn: () => Promise<any>, ok: string) => {
@@ -443,13 +445,29 @@ function DetalheReembolso({ id, cfg, onBack, recarregar, erro }: { id: string; c
           {atual === 1 && (<>
             <div className="rounded-lg border p-3"><Resumo /></div>
             <Comprovantes />
+{r.encaminhadoParaNome && r.status === "aguardando" && (
+              <p className="text-sm rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-blue-900">↪ Encaminhado por <b>{r.encaminhadoPorNome}</b> para <b>{r.encaminhadoParaNome}</b> aprovar{r.encaminhadoEm ? ` em ${new Date(String(r.encaminhadoEm).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(r.encaminhadoEm)) ? "" : "Z")).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}.</p>
+            )}
             {r.status === "aguardando" ? (cfg.aprovador ? (
               <div className="grid gap-3">
                 {Ajustes({ comValor: true, comCategoria: false })}
                 {souSolicitante && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">Este pedido é seu. Você pode aprovar, mas a aprovação fica registrada como <b>autoaprovação</b> no histórico e na auditoria.</p>}
                 <div className="flex gap-2 flex-wrap items-center">
-                  <Button disabled={busy} data-testid="button-aprovar" onClick={() => { if (souSolicitante && !window.confirm(`Autoaprovar o seu próprio pedido ${r.codigo}?\nFica registrado como AUTOAPROVADO para auditoria.`)) return; acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/aprovar`, { valorAprovado: String(val).replace(",", "."), vencimento: venc, instancia: inst }), "Aprovado e enviado ao Financeiro"); }}>{souSolicitante ? "Autoaprovar e enviar ao Financeiro" : "Aprovar e enviar ao Financeiro"}</Button>
+                  <Button disabled={busy} data-testid="button-aprovar" onClick={() => { if (souSolicitante && !window.confirm(`Autoaprovar o seu próprio pedido ${r.codigo}?\nFica registrado como AUTOAPROVADO para auditoria.`)) return; acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/aprovar`, { valorAprovado: String(val).replace(",", "."), vencimento: venc, instancia: inst }), "Aprovado e enviado para pagamento"); }}>{souSolicitante ? "Autoaprovar e enviar para pagamento" : "Aprovar e enviar para pagamento"}</Button>
                 </div>
+                {(cfg.encaminharPara || []).length > 0 && (
+                  <div className="grid gap-2 rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+                    <span className="text-sm font-semibold">Ou encaminhar para outro aprovador</span>
+                    <Input value={recado} onChange={(e) => setRecado(e.target.value)} placeholder="Recado (opcional) — ex.: confere o valor da hospedagem?" data-testid="input-recado-encaminhar" />
+                    <div className="flex gap-2 flex-wrap">
+                      {(cfg.encaminharPara || []).map((d) => (
+                        <Button key={d.key} variant="outline" className="border-blue-300 text-blue-800" disabled={busy} data-testid={`button-encaminhar-${d.key}`}
+                          onClick={() => acao(() => apiRequest("POST", `/api/reembolsos/${r.id}/encaminhar`, { para: d.key, recado: recado.trim() }), `Encaminhado para ${d.nome}`)}>
+                          ↪ Enviar para {d.nome} aprovar e enviar para pagamento</Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="grid gap-2 rounded-lg border border-red-200 bg-red-50/40 p-3">
                   <Campo label="Motivo da recusa" obrig dica="Obrigatório para recusar. O solicitante vê este motivo.">
                     <textarea className="min-h-[64px] rounded-md border bg-background px-3 py-2 text-sm" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ex.: comprovante ilegível, compra não autorizada…" data-testid="input-motivo-recusa" />

@@ -24,6 +24,7 @@ type Viagem = {
   valorAprovado: number | null; obs: string; status: string; aprovadorNome: string | null; motivoRecusa: string | null;
   kmReal: number | null; valorKmReal: number | null; valorDespesas: number | null; valorReal: number | null; saldo: number | null;
   createdAt: string;
+  encaminhadoParaNome?: string | null; encaminhadoPorNome?: string | null; encaminhadoEm?: string | null;
   instancia: string | null; forma: string | null; favorecidoNome: string; favorecidoDoc: string; pixTipo: string; pixChave: string; pixTitular?: string;
   banco: string; agencia: string; conta: string; tipoConta: string; chartAccountId: string | null; payableId: string | null; lancadoNome: string | null;
 };
@@ -35,7 +36,7 @@ type Detalhe = Viagem & {
   categoriaNome: string | null;
   payable: { id: string; titulo: string; status: string; valor: number; vencimento: string } | null;
 };
-type Cfg = { admin: boolean; financeiro: boolean; me: { id: string; nome: string; cpf: string }; vendedores: { id: string; nome: string }[]; tarifa: Record<string, number>; alimPadrao: number; hospPadrao: number;
+type Cfg = { admin: boolean; financeiro: boolean; encaminharPara?: { key: string; nome: string }[]; me: { id: string; nome: string; cpf: string }; vendedores: { id: string; nome: string }[]; tarifa: Record<string, number>; alimPadrao: number; hospPadrao: number;
   instancias: string[]; categorias: { id: string; code: string; name: string }[] };
 const FORMA_LABEL: Record<string, string> = { pix: "PIX", transferencia: "Transferência bancária", dinheiro: "Dinheiro (Caixinha)" };
 const selCls = "h-10 w-full min-w-0 rounded-md border bg-background px-3 text-sm";
@@ -324,6 +325,7 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
   const [aba, setAba] = useState<"resumo" | "km">("resumo");
   const [apr, setApr] = useState<{ tarifa: number; alim: number; hosp: number; outros: number; valor: number | null }>({ tarifa: 0, alim: 0, hosp: 0, outros: 0, valor: null });
   const [motivo, setMotivo] = useState("");
+  const [recado, setRecado] = useState("");
   const [confirmar, setConfirmar] = useState<string | null>(null);
   const [lan, setLan] = useState<{ cat: string; venc: string; inst: string }>({ cat: "", venc: "", inst: "" });
   useEffect(() => { if (v) setApr({ tarifa: v.tarifa, alim: v.alimDia, hosp: v.hospNoite, outros: v.valorOutros || 0, valor: null }); }, [v?.id, v?.status]);
@@ -398,6 +400,9 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
 
           {atual === 1 && (<>
             <div className="rounded-lg border p-3"><Resumo /></div>
+{v.encaminhadoParaNome && v.status === "aguardando" && (
+              <p className="text-sm rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-blue-900">↪ Encaminhado por <b>{v.encaminhadoPorNome}</b> para <b>{v.encaminhadoParaNome}</b> aprovar{v.encaminhadoEm ? ` em ${new Date(String(v.encaminhadoEm).replace(" ", "T") + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(v.encaminhadoEm)) ? "" : "Z")).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}.</p>
+            )}
             {v.status === "aguardando" ? (cfg.admin ? (
               <div className="grid gap-3">
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -408,10 +413,23 @@ function DetalheViagem({ id, cfg, onBack, recarregar, erro }: { id: string; cfg:
                   <label className="grid gap-1 text-sm font-medium">Valor aprovado<Input type="number" step="0.01" value={valorApr} onChange={(e) => setApr({ ...apr, valor: Number(e.target.value) || 0 })} /></label>
                 </div>
                 <div className="flex gap-2 flex-wrap items-center">
-                  <Button disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/aprovar`, { tarifa: apr.tarifa, alimDia: apr.alim, hospNoite: apr.hosp, outros: apr.outros, valorAprovado: valorApr }), "Aprovado e enviado ao Financeiro")}>Aprovar e enviar ao Financeiro</Button>
+                  <Button disabled={busy} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/aprovar`, { tarifa: apr.tarifa, alimDia: apr.alim, hospNoite: apr.hosp, outros: apr.outros, valorAprovado: valorApr }), "Aprovado e enviado para pagamento")} data-testid="button-aprovar">Aprovar e enviar para pagamento</Button>
                   <Input className="w-72" placeholder="Motivo da recusa (obrigatório)" value={motivo} onChange={(e) => setMotivo(e.target.value)} data-testid="input-motivo-recusa" />
                   <Button variant="outline" className="text-red-700" disabled={busy || motivo.trim().length < 3} onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/recusar`, { motivo: motivo.trim() }), "Solicitação recusada")}>Recusar</Button>
                 </div>
+                {(cfg.encaminharPara || []).length > 0 && (
+                  <div className="grid gap-2 rounded-lg border border-blue-200 bg-blue-50/40 p-3">
+                    <span className="text-sm font-semibold">Ou encaminhar para outro aprovador</span>
+                    <Input value={recado} onChange={(e) => setRecado(e.target.value)} placeholder="Recado (opcional) — ex.: confere o valor da hospedagem?" data-testid="input-recado-encaminhar" />
+                    <div className="flex gap-2 flex-wrap">
+                      {(cfg.encaminharPara || []).map((d) => (
+                        <Button key={d.key} variant="outline" className="border-blue-300 text-blue-800" disabled={busy} data-testid={`button-encaminhar-${d.key}`}
+                          onClick={() => acao(() => apiRequest("POST", `/api/viagens/${v.id}/encaminhar`, { para: d.key, recado: recado.trim() }), `Encaminhado para ${d.nome}`)}>
+                          ↪ Enviar para {d.nome} aprovar e enviar para pagamento</Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : <p className="text-sm text-muted-foreground">Aguardando aprovação de um Admin ou Adm.</p>) : (
               <p className="text-sm">{v.status === "recusado" ? `Recusado por ${v.aprovadorNome}.` : `Aprovado por ${v.aprovadorNome}: ${BRL(v.valorAprovado)}.`}</p>

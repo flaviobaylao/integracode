@@ -63,7 +63,8 @@ function ensure(): Promise<void> {
       )`);
       for (const col of ["instancia varchar", "forma varchar", "favorecido_nome varchar", "favorecido_doc varchar", "pix_tipo varchar", "pix_chave varchar",
         "banco varchar", "agencia varchar", "conta varchar", "tipo_conta varchar", "chart_account_id varchar", "payable_id varchar",
-        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp", "valor_outros numeric", "vencimento date", "pix_titular varchar"]) {
+        "lancado_por varchar", "lancado_nome varchar", "lancado_em timestamp", "valor_outros numeric", "vencimento date", "pix_titular varchar",
+        "encaminhado_para varchar", "encaminhado_para_nome varchar", "encaminhado_por_nome varchar", "encaminhado_em timestamp"]) {
         await db.execute(sql.raw(`ALTER TABLE viagens ADD COLUMN IF NOT EXISTS ${col}`));
       }
       await db.execute(sql`CREATE TABLE IF NOT EXISTS viagem_despesas (
@@ -101,6 +102,15 @@ async function chamado(destinos: string[], assunto: string, descricao: string, a
 }
 const APP_URL = process.env.APP_URL || "https://integracode-production.up.railway.app";
 
+// Aprovadores para quem dá para encaminhar (Flávio e Cinthia, menos o próprio usuário)
+const DESTINOS_APROVACAO = ["flavio", "cinthia"];
+async function outrosAprovadores(u: any): Promise<{ key: string; nome: string }[]> {
+  try {
+    const { getDestinos } = await import("./chamados-routes");
+    return (await getDestinos()).filter((d) => DESTINOS_APROVACAO.includes(d.key) && d.userIds.length && !d.userIds.includes(String(u.id)))
+      .map((d) => ({ key: d.key, nome: d.nome }));
+  } catch { return []; }
+}
 async function fecharChamados(id: string, etapa: string, texto: string, u: any) {
   try {
     const { encerrarChamadosVinculados } = await import("./chamados-routes");
@@ -141,6 +151,7 @@ function saida(v: any) {
     saldo: v.saldo == null ? null : num(v.saldo), prestadoEm: v.prestado_em, encerradoEm: v.encerrado_em, createdAt: v.created_at,
     instancia: v.instancia || null, forma: v.forma || null, favorecidoNome: v.favorecido_nome || v.vendedor_nome, favorecidoDoc: v.favorecido_doc || "",
     pixTipo: v.pix_tipo || "", pixChave: v.pix_chave || "", pixTitular: v.pix_titular || "", banco: v.banco || "", agencia: v.agencia || "", conta: v.conta || "", tipoConta: v.tipo_conta || "",
+    encaminhadoPara: v.encaminhado_para || null, encaminhadoParaNome: v.encaminhado_para_nome || null, encaminhadoPorNome: v.encaminhado_por_nome || null, encaminhadoEm: v.encaminhado_em || null,
     chartAccountId: v.chart_account_id || null, payableId: v.payable_id || null, lancadoNome: v.lancado_nome || null, lancadoEm: v.lancado_em || null,
   };
 }
@@ -206,7 +217,7 @@ export function registerViagens(app: Express) {
       } catch {}
     }
     const eu = rows(await db.execute(sql`SELECT * FROM users WHERE id = ${String(u.id)}`))[0] || {};
-    res.json({ admin: isAdm(u), financeiro: ehFinanceiro(u), me: { id: String(u.id), nome: nomeDe(u), cpf: eu.cpf || "" }, vendedores: vend.map((x) => ({ id: String(x.id), nome: x.nome })),
+    res.json({ admin: isAdm(u), financeiro: ehFinanceiro(u), encaminharPara: isAdm(u) ? await outrosAprovadores(u) : [], me: { id: String(u.id), nome: nomeDe(u), cpf: eu.cpf || "" }, vendedores: vend.map((x) => ({ id: String(x.id), nome: x.nome })),
       tarifa: TARIFA, alimPadrao: ALIM_PADRAO, hospPadrao: HOSP_PADRAO,
       instancias: INSTANCIAS, categorias: categorias.map((c) => ({ id: String(c.id), code: c.code, name: c.name })) });
   });
@@ -329,6 +340,33 @@ export function registerViagens(app: Express) {
     await fecharChamados(v.id, "aprovar", `✅ Aprovado — ${fmtBRL(valor)}`, u);
     await chamado(["lanucy"], `Viagem ${cod} — pagar adiantamento`,
       `Aprovado por ${nomeDe(u)}: pagar ${fmtBRL(valor)} a ${v.favorecido_nome || v.vendedor_nome} até ${fmtData(v.vencimento || v.data_ini)} (viagem a ${v.cidade}-${v.uf}).\nReceber por: ${dadosPagamento(v)}${v.instancia ? ` · empresa ${v.instancia}` : ""}\nLance no Contas a Pagar com 1 clique (ou anexe o comprovante e marque como pago) em: ${APP_URL}/viagens?id=${v.id}`, u);
+    res.json(saida(await carregar(v.id)));
+  });
+
+  // Encaminhar a aprovação para outro aprovador (ex.: Cinthia -> Flávio). Continua aguardando.
+  app.post("/api/viagens/:id/encaminhar", authenticateUser, async (req, res) => {
+    const u = await guard(req, res); if (!u) return;
+    if (!isAdm(u)) return res.status(403).json({ message: "Só Admin ou Adm encaminha aprovação" });
+    const v = await carregar(req.params.id);
+    if (!v || v.status !== "aguardando") return res.status(400).json({ message: "Viagem não está aguardando aprovação" });
+    const para = String(req.body?.para || "");
+    const alvo = (await outrosAprovadores(u)).find((d) => d.key === para);
+    if (!alvo) return res.status(400).json({ message: "Escolha para quem encaminhar" });
+    const recado = String(req.body?.recado || "").trim().slice(0, 1000);
+    const cod = "VG-" + String(v.numero).padStart(4, "0");
+    await db.execute(sql`UPDATE viagens SET encaminhado_para = ${alvo.key}, encaminhado_para_nome = ${alvo.nome}, encaminhado_por_nome = ${nomeDe(u)}, encaminhado_em = now(), updated_at = now() WHERE id = ${v.id}`);
+    await evento(v.id, nomeDe(u), `↪ Encaminhado para ${alvo.nome} aprovar${recado ? `: "${recado}"` : "."}`);
+    try {
+      const { encaminharAprovacaoVinculada, getDestinos } = await import("./chamados-routes");
+      const meus = (await getDestinos()).filter((d) => d.userIds.includes(String(u.id))).map((d) => d.key);
+      await encaminharAprovacaoVinculada({
+        modulo: "viagens", id: v.id, paraKey: alvo.key, deKeys: meus,
+        assunto: `Viagem com adiantamento ${cod} — aprovar (encaminhado por ${nomeDe(u)})`,
+        descricao: `${v.vendedor_nome} pediu adiantamento para ${v.cidade}-${v.uf}, de ${fmtData(v.data_ini)} a ${fmtData(v.data_fim)}.\nTotal sugerido: ${fmtBRL(num(v.valor_sugerido))}\n\nAprove ou recuse em: ${APP_URL}/viagens?id=${v.id}`,
+        texto: `↪ ${nomeDe(u)} encaminhou para ${alvo.nome} aprovar e enviar para pagamento.${recado ? `\nRecado: ${recado}` : ""}`,
+        autor: { id: String(u.id), nome: nomeDe(u), role: String(u.role || "") },
+      });
+    } catch (e: any) { console.warn("[viagens] encaminhar chamado:", e?.message || e); }
     res.json(saida(await carregar(v.id)));
   });
 

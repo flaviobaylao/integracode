@@ -61,6 +61,10 @@ function ensure(): Promise<void> {
       )`);
       await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS autoaprovado boolean NOT NULL DEFAULT false`);
       await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS pix_titular varchar`);
+      await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS encaminhado_para varchar`);
+      await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS encaminhado_para_nome varchar`);
+      await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS encaminhado_por_nome varchar`);
+      await db.execute(sql`ALTER TABLE reembolsos ADD COLUMN IF NOT EXISTS encaminhado_em timestamp`);
       await db.execute(sql`CREATE TABLE IF NOT EXISTS reembolso_itens (
         id varchar PRIMARY KEY DEFAULT gen_random_uuid()::text,
         reembolso_id varchar NOT NULL, descricao varchar NOT NULL, data date, valor numeric NOT NULL DEFAULT 0, ordem integer NOT NULL DEFAULT 0
@@ -90,6 +94,15 @@ async function chamado(destinos: string[], assunto: string, descricao: string, a
     const { abrirChamadoSistema } = await import("./chamados-routes");
     await abrirChamadoSistema({ destinoKeys: destinos, assunto, descricao, autor: autor ? { id: String(autor.id), nome: nomeDe(autor), role: String(autor.role || "") } : null });
   } catch (e: any) { console.warn("[reembolsos] chamado falhou:", e?.message || e); }
+}
+// Aprovadores para quem dá para encaminhar (todos os destinos de aprovação, menos o próprio usuário)
+const DESTINOS_APROVACAO = ["flavio", "elbber", "cinthia"];
+async function outrosAprovadores(u: any): Promise<{ key: string; nome: string }[]> {
+  try {
+    const { getDestinos } = await import("./chamados-routes");
+    return (await getDestinos()).filter((d) => DESTINOS_APROVACAO.includes(d.key) && d.userIds.length && !d.userIds.includes(String(u.id)))
+      .map((d) => ({ key: d.key, nome: d.nome }));
+  } catch { return []; }
 }
 async function fecharChamados(id: string, etapa: string, texto: string, u: any) {
   try {
@@ -132,7 +145,8 @@ function saida(r: any) {
     favorecidoNome: r.favorecido_nome, favorecidoDoc: r.favorecido_doc || "",
     pixTipo: r.pix_tipo || "", pixChave: r.pix_chave || "", pixTitular: r.pix_titular || "", banco: r.banco || "", agencia: r.agencia || "", conta: r.conta || "", tipoConta: r.tipo_conta || "",
     obs: r.obs || "", status: r.status,
-    aprovadorNome: r.aprovador_nome, autoaprovado: !!r.autoaprovado, aprovadoEm: r.aprovado_em, valorAprovado: r.valor_aprovado == null ? null : num(r.valor_aprovado), motivoRecusa: r.motivo_recusa,
+    aprovadorNome: r.aprovador_nome, autoaprovado: !!r.autoaprovado,
+    encaminhadoPara: r.encaminhado_para || null, encaminhadoParaNome: r.encaminhado_para_nome || null, encaminhadoPorNome: r.encaminhado_por_nome || null, encaminhadoEm: r.encaminhado_em || null, aprovadoEm: r.aprovado_em, valorAprovado: r.valor_aprovado == null ? null : num(r.valor_aprovado), motivoRecusa: r.motivo_recusa,
     payableId: r.payable_id, lancadoNome: r.lancado_nome, lancadoEm: r.lancado_em, pagoEm: r.pago_em, createdAt: r.created_at,
   };
 }
@@ -175,7 +189,7 @@ export function registerReembolsos(app: Express) {
     const eu = rows(await db.execute(sql`SELECT * FROM users WHERE id = ${String(u.id)}`))[0] || {};
     res.json({
       me: { id: String(u.id), nome: nomeDe(u), cpf: eu.cpf || eu.document || "" },
-      aprovador: ehAprovador(u), financeiro: ehFinanceiro(u),
+      aprovador: ehAprovador(u), financeiro: ehFinanceiro(u), encaminharPara: await outrosAprovadores(u),
       categorias, instancias: INSTANCIAS,
     });
   });
@@ -297,6 +311,33 @@ export function registerReembolsos(app: Express) {
     await fecharChamados(r.id, "aprovar", `✅ Aprovado — ${fmtBRL(valor)}${auto ? " (autoaprovado)" : ""}`, u);
     await chamado(["lanucy"], `Reembolso ${cod} — lançar no Contas a Pagar`,
       `${auto ? "⚠ Autoaprovado (o próprio solicitante aprovou). " : ""}Aprovado por ${nomeDe(u)}: reembolsar ${fmtBRL(valor)} a ${r.favorecido_nome} até ${fmtData(venc)}.\n${dadosPagamento(r)}\nComprovantes no pedido.\n\nLance com 1 clique em: ${APP_URL}/reembolsos?id=${r.id}`, u);
+    res.json(saida(await carregar(r.id)));
+  });
+
+  // Encaminhar a aprovação para outro aprovador (ex.: Cinthia -> Flávio). Continua aguardando.
+  app.post("/api/reembolsos/:id/encaminhar", authenticateUser, async (req, res) => {
+    const u = await guard(req, res); if (!u) return;
+    if (!ehAprovador(u)) return res.status(403).json({ message: "Só Admin encaminha aprovação" });
+    const r = await carregar(req.params.id);
+    if (!r || r.status !== "aguardando") return res.status(400).json({ message: "Reembolso não está aguardando aprovação" });
+    const para = String(req.body?.para || "");
+    const alvo = (await outrosAprovadores(u)).find((d) => d.key === para);
+    if (!alvo) return res.status(400).json({ message: "Escolha para quem encaminhar" });
+    const recado = String(req.body?.recado || "").trim().slice(0, 1000);
+    const cod = codigo(r.numero);
+    await db.execute(sql`UPDATE reembolsos SET encaminhado_para = ${alvo.key}, encaminhado_para_nome = ${alvo.nome}, encaminhado_por_nome = ${nomeDe(u)}, encaminhado_em = now(), updated_at = now() WHERE id = ${r.id}`);
+    await evento(r.id, nomeDe(u), `↪ Encaminhado para ${alvo.nome} aprovar${recado ? `: "${recado}"` : "."}`);
+    try {
+      const { encaminharAprovacaoVinculada, getDestinos } = await import("./chamados-routes");
+      const meus = (await getDestinos()).filter((d) => d.userIds.includes(String(u.id))).map((d) => d.key);
+      await encaminharAprovacaoVinculada({
+        modulo: "reembolsos", id: r.id, paraKey: alvo.key, deKeys: meus,
+        assunto: `Reembolso ${cod} — aprovar ${fmtBRL(num(r.valor))} (encaminhado por ${nomeDe(u)})`,
+        descricao: `${r.solicitante_nome} pediu reembolso de ${fmtBRL(num(r.valor))}: ${r.descricao}\nReceber por: ${dadosPagamento(r)} · até ${fmtData(dia(r.vencimento))}\n\nAprove ou recuse em: ${APP_URL}/reembolsos?id=${r.id}`,
+        texto: `↪ ${nomeDe(u)} encaminhou para ${alvo.nome} aprovar e enviar para pagamento.${recado ? `\nRecado: ${recado}` : ""}`,
+        autor: { id: String(u.id), nome: nomeDe(u), role: String(u.role || "") },
+      });
+    } catch (e: any) { console.warn("[reembolsos] encaminhar chamado:", e?.message || e); }
     res.json(saida(await carregar(r.id)));
   });
 

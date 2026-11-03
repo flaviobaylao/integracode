@@ -283,12 +283,14 @@ export async function encerrarChamadosVinculados(opts: {
   assuntoContem: string;           // identifica a etapa (ex.: "aprovar", "lançar", "pagar")
   texto: string;                   // resposta automática
   autor: { id: string; nome: string };
+  destinoKeys?: string[];          // opcional: só os chamados destes destinos
 }): Promise<number> {
   try {
     await ensureTables();
     const link = `%/${opts.modulo}?id=${opts.id}%`;
-    const abertos = rows(await db.execute(sql`SELECT id, numero, autor_id, destino_key, assunto FROM chamados
+    let abertos = rows(await db.execute(sql`SELECT id, numero, autor_id, destino_key, assunto FROM chamados
       WHERE descricao LIKE ${link} AND assunto ILIKE ${"%" + opts.assuntoContem + "%"} AND status NOT IN ('solucionado','cancelado')`));
+    if (opts.destinoKeys) abertos = abertos.filter((c) => opts.destinoKeys!.includes(String(c.destino_key)));
     if (!abertos.length) return 0;
     const avisados = new Set<string>();
     for (const c of abertos) {
@@ -309,6 +311,39 @@ export async function encerrarChamadosVinculados(opts: {
     }
     return abertos.length;
   } catch (e: any) { console.warn("[chamados] encerrar vinculados:", e?.message || e); return 0; }
+}
+
+// ---------- encaminhar aprovação para outro aprovador (03/nov/2026) ----------
+// Quem está aprovando (ex.: Cinthia) passa a decisão para outro aprovador (ex.: Flávio):
+// o chamado de aprovação de quem encaminhou é finalizado com "↪ Encaminhado para ...";
+// o do destinatário recebe o recado (ou é aberto, se não existir) e ele é avisado.
+export async function encaminharAprovacaoVinculada(opts: {
+  modulo: "reembolsos" | "viagens";
+  id: string;
+  paraKey: string;
+  deKeys: string[];                // destinos de quem encaminhou (seus chamados são fechados)
+  assunto: string;                 // assunto do chamado novo (deve conter "aprovar")
+  descricao: string;               // deve conter o link do módulo
+  texto: string;                   // recado
+  autor: { id: string; nome: string; role?: string };
+}): Promise<void> {
+  await ensureTables();
+  const destinos = await getDestinos();
+  const para = destinos.find((d) => d.key === opts.paraKey);
+  if (!para) throw new Error("Destino de aprovação não encontrado");
+  if (opts.deKeys.length) {
+    await encerrarChamadosVinculados({ modulo: opts.modulo, id: opts.id, assuntoContem: "aprovar", texto: opts.texto, autor: opts.autor, destinoKeys: opts.deKeys.filter((k) => k !== opts.paraKey) });
+  }
+  const link = `%/${opts.modulo}?id=${opts.id}%`;
+  const ex = rows(await db.execute(sql`SELECT id, numero FROM chamados WHERE descricao LIKE ${link} AND assunto ILIKE '%aprovar%'
+    AND destino_key = ${opts.paraKey} AND status NOT IN ('solucionado','cancelado') ORDER BY created_at DESC LIMIT 1`))[0];
+  if (ex) {
+    await inserirMsg(String(ex.id), opts.autor.id, opts.autor.nome, "publica", "autor", opts.paraKey, opts.texto);
+    await db.execute(sql`UPDATE chamados SET prioridade = CASE WHEN prioridade = 'Baixa' THEN 'Normal' ELSE prioridade END, updated_at = now() WHERE id = ${String(ex.id)}`);
+    avisarBg(para.userIds.filter((x) => x !== opts.autor.id), `↪ ${numeroFmt(ex.numero)} — ${opts.assunto}\n${opts.texto}\n\nAbra no Integra: ${APP_URL}/chamados?id=${ex.id}`);
+  } else {
+    await abrirChamadoSistema({ destinoKeys: [opts.paraKey], assunto: opts.assunto, descricao: `${opts.texto}\n\n${opts.descricao}`, autor: { id: opts.autor.id, nome: opts.autor.nome, role: opts.autor.role } });
+  }
 }
 
 // ---------- cobrança (27/out/2026) ----------
