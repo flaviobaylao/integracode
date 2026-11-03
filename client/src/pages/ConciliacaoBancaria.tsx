@@ -20,7 +20,7 @@ type Statement = {
 type Item = {
   id: string; transaction_date: string; amount: string; type: string;
   description: string; document: string; origin_name?: string | null; origin_document?: string | null; reconciliation_status: string | null;
-  matched_at: string | null; notes: string | null;
+  matched_at: string | null; notes: string | null; observacao_conciliacao?: string | null;
   is_mirror?: boolean; mirror_from?: string | null;
   reconciliation_group_id?: string | null;
 };
@@ -295,6 +295,7 @@ export default function ConciliacaoBancaria() {
   // sintetico com a SOMA (o carrinho e as travas funcionam iguais).
   const [modalGroup, setModalGroup] = useState<Item[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [obsConc, setObsConc] = useState("");
   const [tab, setTab] = useState<"sug" | "search" | "novo">("sug");
   const [novo, setNovo] = useState<any>({});
   const [searchQ, setSearchQ] = useState("");
@@ -614,7 +615,7 @@ export default function ConciliacaoBancaria() {
 
   // ---- modal de conciliação (carrinho) ----
   const openModal = (it: Item) => {
-    setModalItem(it); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
+    setModalItem(it); setCart([]); setObsConc(""); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
   };
   // Abre o modal com os lancamentos SELECIONADOS somados (2 a 20, todos pendentes,
   // mesmo sentido). O titulo e baixado uma unica vez pelo total; cada lancamento
@@ -632,9 +633,9 @@ export default function ConciliacaoBancaria() {
       id: "__grupo__", transaction_date: ordenados[ordenados.length - 1].transaction_date, amount: groupSum.toFixed(2),
       type: ordenados[0].type, description: `${ordenados.length} lançamentos em conjunto`, document: "", reconciliation_status: "pending", matched_at: null, notes: null,
     };
-    setModalGroup(ordenados); setModalItem(sint); setCart([]); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
+    setModalGroup(ordenados); setModalItem(sint); setCart([]); setObsConc(""); setTab("sug"); setSearchQ(""); setSearchResults([]); setCartCatSug(null);
   };
-  const closeModal = () => { setModalItem(null); setModalGroup([]); setCart([]); setCartCatSug(null); };
+  const closeModal = () => { setModalItem(null); setModalGroup([]); setCart([]); setCartCatSug(null); setObsConc(""); };
   const isGroupModal = modalGroup.length >= 2;
   // Sugestoes do conjunto = uniao das sugestoes de cada lancamento (sem repetir titulo)
   const groupSuggestion = useMemo(() => {
@@ -689,7 +690,7 @@ export default function ConciliacaoBancaria() {
       if (!window.confirm(`Conciliar EM CONJUNTO ${modalGroup.length} lançamentos (total ${fmtMoney(itemAmt)}) com ${cart.length} título(s)? O título é baixado uma única vez pelo total; os lançamentos ficam vinculados como um conjunto.`)) return;
       setBusy(modalItem.id);
       try {
-        await post(`/api/reconciliation/items/reconcile-group`, { by: me, itemIds: modalGroup.map((g) => g.id), titles: titlesBody });
+        await post(`/api/reconciliation/items/reconcile-group`, { by: me, itemIds: modalGroup.map((g) => g.id), titles: titlesBody, observacao: obsConc.trim() || null });
         closeModal();
         setSelectedIds(new Set());
         await refresh();
@@ -703,6 +704,7 @@ export default function ConciliacaoBancaria() {
       await post(`/api/reconciliation/items/${modalItem.id}/reconcile`, {
         by: me,
         titles: titlesBody,
+        observacao: obsConc.trim() || null,
       });
       closeModal();
       await refresh();
@@ -742,9 +744,21 @@ export default function ConciliacaoBancaria() {
         by: me, tipo: novo.tipo, name: novo.name, document: novo.document, customerId: novo.customerId || null,
         amount: amt, issueDate: novo.issueDate || null, dueDate: novo.dueDate || null,
         description: novo.description, category: novo.category || null, chartAccountId: novo.chartAccountId || null, omieInstanceId: novo.omieInstanceId || null,
+        observacao: obsConc.trim() || null,
       });
       closeModal(); await refresh();
     } catch (e: any) { alert("Erro ao criar/conciliar: " + e.message); }
+    finally { setBusy(""); }
+  };
+
+  // Editar/limpar a observacao de um lancamento ja conciliado.
+  const editarObs = async (it: Item) => {
+    const atual = it.observacao_conciliacao || "";
+    const nova = window.prompt("Observação da conciliação (deixe em branco para apagar):", atual);
+    if (nova === null || nova.trim() === atual.trim()) return;
+    setBusy(it.id);
+    try { await post(`/api/reconciliation/items/${it.id}/observacao`, { by: me, observacao: nova.trim() || null }); await refresh(); }
+    catch (e: any) { alert("Erro ao salvar observação: " + e.message); }
     finally { setBusy(""); }
   };
 
@@ -1047,6 +1061,14 @@ export default function ConciliacaoBancaria() {
                             )}
                             {ms.length === 0 && !sg && !cielo.sugPorItem[it.id] && st === "pending" && <span className="text-xs text-gray-300">sem sugestão</span>}
                             {st === "ignored" && it.notes && <span className="text-[11px] text-gray-400">{it.notes.split("|")[0]}</span>}
+                            {st === "reconciled" && (it.observacao_conciliacao ? (
+                              <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 mt-0.5 whitespace-pre-wrap" data-testid="obs-conciliacao-linha">
+                                📝 {it.observacao_conciliacao}
+                                <button onClick={() => editarObs(it)} className="ml-1 text-amber-600 hover:underline">editar</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => editarObs(it)} className="block text-[11px] text-gray-400 hover:text-gray-600 mt-0.5">📝 + observação</button>
+                            ))}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
                             {it.is_mirror ? (
@@ -1391,7 +1413,20 @@ export default function ConciliacaoBancaria() {
               )}
             </div>
 
-            <div className="px-5 py-3 border-t flex items-center justify-between">
+            <div className="px-5 pt-3 border-t">
+              <label className="block text-xs text-gray-600 mb-1">📝 Observações da conciliação <span className="text-gray-400">(opcional — fica gravada no lançamento e sai no relatório)</span></label>
+              <textarea
+                value={obsConc}
+                onChange={(e) => setObsConc(e.target.value.slice(0, 2000))}
+                rows={2}
+                maxLength={2000}
+                placeholder="Ex.: cliente pagou 2 NFs num PIX só; diferença de R$ 0,90 combinada com o vendedor…"
+                className="w-full border rounded px-3 py-1.5 text-sm resize-y"
+                data-testid="obs-conciliacao"
+              />
+            </div>
+
+            <div className="px-5 py-3 flex items-center justify-between">
               <span className="text-xs text-gray-500">{modalItem.type === "C" ? "Recebimento (títulos a receber)" : "Pagamento (títulos a pagar)"}</span>
               <div className="flex gap-2">
                 <button onClick={closeModal} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>

@@ -86,6 +86,9 @@ export function registerReconciliation(app: Express) {
   async function ensureGroupColumns() {
     if (__groupColsReady) return;
     try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS reconciliation_group_id text`); } catch {}
+    // Observacao livre digitada pelo usuario no modal de conciliacao (03/11/2026).
+    // Separada de 'notes', que e o rastro automatico do sistema.
+    try { await db.execute(sql`ALTER TABLE bank_statement_items ADD COLUMN IF NOT EXISTS observacao_conciliacao text`); } catch {}
     try { await db.execute(sql`ALTER TABLE bank_statement_item_matches ADD COLUMN IF NOT EXISTS group_id text`); } catch {}
     try { await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsi_recon_group ON bank_statement_items (reconciliation_group_id) WHERE reconciliation_group_id IS NOT NULL`); } catch {}
     try { await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_bsim_group ON bank_statement_item_matches (group_id) WHERE group_id IS NOT NULL`); } catch {}
@@ -329,7 +332,7 @@ export function registerReconciliation(app: Express) {
         SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
                i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
                i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes, i.reconciliation_group_id, s.file_name, fa.name AS account_name
+               i.match_confidence, i.notes, i.observacao_conciliacao, i.reconciliation_group_id, s.file_name, fa.name AS account_name
         FROM bank_statement_items i
         JOIN bank_statements s ON s.id = i.statement_id
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
@@ -378,7 +381,7 @@ export function registerReconciliation(app: Express) {
         SELECT i.id, i.transaction_date, i.amount, i.type, i.description, i.document,
                i.balance_after, i.origin_name, i.origin_document, i.reconciliation_status,
                i.matched_receivable_id, i.matched_payable_id, i.matched_at, i.matched_by,
-               i.match_confidence, i.notes, i.reconciliation_group_id, s.file_name, fa.name AS account_name
+               i.match_confidence, i.notes, i.observacao_conciliacao, i.reconciliation_group_id, s.file_name, fa.name AS account_name
         FROM bank_statement_items i
         JOIN bank_statements s ON s.id = i.statement_id
         LEFT JOIN financial_accounts fa ON fa.id = s.financial_account_id
@@ -429,6 +432,7 @@ export function registerReconciliation(app: Express) {
                COALESCE(c.matched_by, i.matched_by) AS matched_by,
                COALESCE(c.match_confidence, i.match_confidence) AS match_confidence,
                i.notes,
+               COALESCE(NULLIF(i.observacao_conciliacao, ''), c.observacao_conciliacao) AS observacao_conciliacao,
                COALESCE(c.reconciliation_group_id, i.reconciliation_group_id) AS reconciliation_group_id,
                (i.mirror_of IS NOT NULL) AS is_mirror,
                cs.file_name AS mirror_from,
@@ -961,9 +965,15 @@ export function registerReconciliation(app: Express) {
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
+  const obsDoBody = (b: any): string | null => {
+    const t = String(b?.observacao ?? "").trim();
+    return t ? t.slice(0, 2000) : null;
+  };
   app.post("/api/reconciliation/items/:id/reconcile", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
+      await ensureGroupColumns();
       const id = req.params.id;
+      const observacao = obsDoBody(req.body);
       const by = (req.body?.by || "conciliacao-2.0").toString();
       const dryRun = !!req.body?.dryRun;
       const titles: any[] = Array.isArray(req.body?.titles) ? req.body.titles : [];
@@ -1181,10 +1191,11 @@ export function registerReconciliation(app: Express) {
       await db.execute(sql`
         UPDATE bank_statement_items
         SET reconciliation_status = 'reconciled', matched_receivable_id = ${firstRecv}, matched_payable_id = ${firstPay},
-            matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}
+            matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note},
+            observacao_conciliacao = ${observacao}
         WHERE id = ${id}`);
       if (cpInfo) await evolvePattern(item, cpInfo, item.s_instance || null, by);
-      await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId, instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: plan, counterpart: cpInfo || null, by, details: { kind, results, valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null } });
+      await logReconAudit({ action: "reconcile", itemId: id, statementId: item.statement_id || null, accountId, instanceId: item.s_instance || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: plan, counterpart: cpInfo || null, by, details: { kind, results, valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null, observacao } });
       res.json({ ok: true, status: "reconciled", kind, results, baixados, vinculados });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
@@ -1221,6 +1232,7 @@ export function registerReconciliation(app: Express) {
       await ensureMirrorColumn();
       await ensureGroupColumns();
       const by = (req.body?.by || "conciliacao-2.0").toString();
+      const observacao = obsDoBody(req.body);
       const dryRun = !!req.body?.dryRun;
       const itemIds: string[] = Array.isArray(req.body?.itemIds) ? Array.from(new Set(req.body.itemIds.map((x: any) => String(x)).filter(Boolean))) : [];
       const titles: any[] = Array.isArray(req.body?.titles) ? req.body.titles : [];
@@ -1441,11 +1453,12 @@ export function registerReconciliation(app: Express) {
       await db.execute(sql`
         UPDATE bank_statement_items
         SET reconciliation_status = 'reconciled', matched_receivable_id = ${firstRecv}, matched_payable_id = ${firstPay},
-            matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}, reconciliation_group_id = ${groupId}
+            matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note}, reconciliation_group_id = ${groupId},
+            observacao_conciliacao = ${observacao}
         WHERE id IN (${inList(itemIds)})`);
       if (cpInfo) { for (const it of itensRaw) await evolvePattern(it, cpInfo, it.s_instance || null, by); }
       for (const it of itensRaw) {
-        await logReconAudit({ action: "reconcile_group", itemId: String(it.id), statementId: it.statement_id || null, accountId: it.s_account || null, instanceId: it.s_instance || null, amount: money(it.amount), itemType: it.type || null, transactionDate: it.transaction_date || null, description: it.description || "", titles: plan, counterpart: cpInfo || null, by, details: { groupId, itemIds, results, fatias: fatias.filter((f) => f.itemId === String(it.id)), valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null } });
+        await logReconAudit({ action: "reconcile_group", itemId: String(it.id), statementId: it.statement_id || null, accountId: it.s_account || null, instanceId: it.s_instance || null, amount: money(it.amount), itemType: it.type || null, transactionDate: it.transaction_date || null, description: it.description || "", titles: plan, counterpart: cpInfo || null, by, details: { groupId, itemIds, observacao, results, fatias: fatias.filter((f) => f.itemId === String(it.id)), valorExtrato, totalTitulos, diferenca: difExtrato, motivoDiferenca: motivoDif || null } });
       }
       res.json({ ok: true, status: "reconciled", kind: "manual_grupo", groupId, itens: itemIds.length, results, baixados, vinculados, fatias });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
@@ -1543,9 +1556,11 @@ export function registerReconciliation(app: Express) {
   // com os dados do lancamento do banco e JA concilia (da baixa) contra o item do extrato.
   app.post("/api/reconciliation/items/:id/create-and-reconcile", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
     try {
+      await ensureGroupColumns();
       const id = req.params.id;
       const b = req.body || {};
       const by = (b.by || "conciliacao-2.0").toString();
+      const observacao = obsDoBody(b);
       const tipo = (b.tipo === "receber" || b.tipo === "receivable") ? "receber" : "pagar";
       const amount = Number(b.amount || 0);
       if (!(amount > 0)) return res.status(400).json({ error: "valor invalido" });
@@ -1640,7 +1655,8 @@ export function registerReconciliation(app: Express) {
       await db.execute(sql`
         UPDATE bank_statement_items SET reconciliation_status = 'reconciled',
           matched_receivable_id = ${kind === "receivable" ? titleId : null}, matched_payable_id = ${kind === "payable" ? titleId : null},
-          matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note} WHERE id = ${id}`);
+          matched_at = now(), matched_by = ${by}, match_confidence = 100, notes = ${note},
+          observacao_conciliacao = ${observacao} WHERE id = ${id}`);
       try { await evolvePattern(item, { type: kind === "receivable" ? "customer" : "supplier", id: kind === "receivable" ? createdCustomerId : null, name, document: doc || null, category }, instanceId, by); } catch {}
       res.json({ ok: true, status: "reconciled", created: { kind, id: titleId }, supplier: supplierInfo });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
@@ -1728,7 +1744,7 @@ export function registerReconciliation(app: Express) {
         UPDATE bank_statement_items
         SET reconciliation_status = CASE WHEN mirror_of IS NOT NULL THEN 'mirror' ELSE 'pending' END,
             matched_receivable_id = null, matched_payable_id = null, matched_at = null,
-            matched_by = ${by}, match_confidence = null, notes = null, reconciliation_group_id = null
+            matched_by = ${by}, match_confidence = null, notes = null, reconciliation_group_id = null, observacao_conciliacao = null
         WHERE id IN (${inList(ids)})`);
     });
     for (const it of itens) {
@@ -1869,7 +1885,7 @@ export function registerReconciliation(app: Express) {
           UPDATE bank_statement_items
           SET reconciliation_status = ${ehEspelho ? 'mirror' : 'pending'},
               matched_receivable_id = null, matched_payable_id = null, matched_at = null,
-              matched_by = ${by}, match_confidence = null, notes = null
+              matched_by = ${by}, match_confidence = null, notes = null, observacao_conciliacao = null
           WHERE id = ${id}`);
       });
       try { await cieloAoDesfazer(id, by); } catch {}
@@ -1905,6 +1921,26 @@ export function registerReconciliation(app: Express) {
         ORDER BY abs(i.amount::numeric - m.soma) DESC LIMIT ${limit}`));
       const total = Number(linhas.reduce((acc: number, r: any) => acc + Math.abs(Number(r.diferenca || 0)), 0).toFixed(2));
       res.json({ somenteLeitura: true, itens: linhas.length, somaDiferencas: total, linhas });
+    } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
+  });
+
+  // Editar/limpar a observacao de um lancamento ja conciliado (03/11/2026).
+  // Em conjunto, vale para todos os lancamentos do mesmo grupo.
+  app.post("/api/reconciliation/items/:id/observacao", authenticateUser, requireRole(FIN_ROLES), async (req, res) => {
+    try {
+      await ensureGroupColumns();
+      const id = req.params.id;
+      const by = (req.body?.by || "conciliacao-2.0").toString();
+      const observacao = obsDoBody(req.body);
+      const item = rowsOf(await db.execute(sql`SELECT id, reconciliation_group_id, statement_id, amount, type, transaction_date, description FROM bank_statement_items WHERE id = ${id}`))[0];
+      if (!item) return res.status(404).json({ error: "item nao encontrado" });
+      if (item.reconciliation_group_id) {
+        await db.execute(sql`UPDATE bank_statement_items SET observacao_conciliacao = ${observacao} WHERE reconciliation_group_id = ${item.reconciliation_group_id}`);
+      } else {
+        await db.execute(sql`UPDATE bank_statement_items SET observacao_conciliacao = ${observacao} WHERE id = ${id}`);
+      }
+      try { await logReconAudit({ action: "observacao", itemId: id, statementId: item.statement_id || null, amount: money(item.amount), itemType: item.type || null, transactionDate: item.transaction_date || null, description: item.description || "", titles: [], by, details: { observacao, grupo: item.reconciliation_group_id || null } }); } catch {}
+      res.json({ ok: true, observacao });
     } catch (e: any) { res.status(500).json({ error: String(e?.message || e) }); }
   });
 
@@ -3919,6 +3955,7 @@ export function registerReconciliation(app: Express) {
     try {
       await ensureMirrorColumn();
       await ensureRawColumn();
+      await ensureGroupColumns();
       const accountId = (req.query.accountId as string) || null;
       const instanceId = (req.query.instanceId as string) || null;
       if (!accountId) return res.status(400).json({ error: "informe a conta bancaria (accountId)" });
@@ -4076,7 +4113,7 @@ export function registerReconciliation(app: Express) {
         SELECT i.id, to_char(i.transaction_date::date, 'YYYY-MM-DD') AS data, i.amount, i.type,
                i.description, i.document, i.origin_name, i.origin_document,
                COALESCE(i.reconciliation_status, 'pending') AS status,
-               i.matched_at, i.matched_by, i.notes,
+               i.matched_at, i.matched_by, i.notes, i.observacao_conciliacao,
                s.file_name, s.id AS statement_id, fa.name AS account_name
         FROM bank_statement_items i
         JOIN bank_statements s ON s.id = i.statement_id
@@ -4146,7 +4183,7 @@ export function registerReconciliation(app: Express) {
           hora: det.hora || "", diaBanco: det.dia || "",
           descricao: i.description, docBanco: i.document,
           status: i.status, conciliadoEm: i.matched_at, conciliadoPor: i.matched_by,
-          observacao: i.notes, arquivo: i.file_name, conta: i.account_name,
+          observacao: i.notes, observacaoConciliacao: i.observacao_conciliacao || null, arquivo: i.file_name, conta: i.account_name,
           titulos,
           categoria: titulos.map((t: any) => t.categoria).filter(Boolean)[0] || null,
         };

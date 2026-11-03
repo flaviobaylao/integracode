@@ -273,7 +273,7 @@ export default function RelatorioConciliacao(props: {
     Categoria: (i.titulos || []).map((t: any) => t.categoria).filter(Boolean).join(" | "),
     Juros: brlNum((i.titulos || []).reduce((a: number, t: any) => a + Number(t.juros || 0), 0)),
     Desconto: brlNum((i.titulos || []).reduce((a: number, t: any) => a + Number(t.desconto || 0), 0)),
-    Extrato: i.arquivo || "", Observação: i.observacao || "",
+    Extrato: i.arquivo || "", "Obs. da conciliação": i.observacaoConciliacao || "", Observação: i.observacao || "",
   }));
   const linhasTitulos = (lista: any[], rotulo: string) => lista.map((t: any) => ({
     "Data no banco": dt(t._data), [rotulo]: t.nome || "", "CPF/CNPJ": fmtDoc(t.documento),
