@@ -215,6 +215,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     sellerId: customers.sellerId,
     weekdays: customers.weekdays,
     periodicity: customers.visitPeriodicity,
+    semanaAtendimento: customers.semanaAtendimento,
     serviceStartDate: customers.serviceStartDate,
     omieClientCode: customers.omieClientCode,
     isActive: customers.isActive,
@@ -276,7 +277,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   // (semanal = todo dia da semana marcado; quinzenal = semana de indice par; mensal = 1a
   // ocorrencia do dia no mes). Antes usava intervalo de ~14/28 dias a partir do inicio da janela,
   // o que divergia do Resumo de Visitas para quinzenal/mensal.
-  function getScheduledDates(weekdays: string[], periodicity: string, startStr: string, endStr: string): string[] {
+  function getScheduledDates(weekdays: string[], periodicity: string, startStr: string, endStr: string, semana?: any): string[] {
     const dows = parseDowsCycle(weekdays as any);
     if (dows.length === 0) return [];
     const dates: string[] = [];
@@ -284,7 +285,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const end = new Date(endStr + 'T12:00:00Z');
     while (current <= end) {
       const ds = current.toISOString().split('T')[0];
-      if (isPlannedCycle(ds, dows, periodicity)) dates.push(ds);
+      if (isPlannedCycle(ds, dows, periodicity, semana)) dates.push(ds);
       current.setUTCDate(current.getUTCDate() + 1);
     }
     return dates;
@@ -292,7 +293,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   const scheduledByCustomer = new Map<string, Set<string>>();
   for (const c of cs) {
     const wd = parseWeekdays(c.weekdays);
-    const dates = getScheduledDates(wd, c.periodicity || 'semanal', startDate, endDate);
+    const dates = getScheduledDates(wd, c.periodicity || 'semanal', startDate, endDate, (c as any).semanaAtendimento);
     if (dates.length > 0) scheduledByCustomer.set(c.id, new Set(dates));
   }
   // 2c) DIA DE ROTA REAL (23/out/2026, pedido do Flavio): a data da agenda (visit_agenda) e o dia
@@ -567,7 +568,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     // visita. Assim que houver venda (ultima bolinha verde), sai. Sem regra por atendimento e sem
     // sair por tempo: enquanto a ultima bolinha estiver vermelha, permanece. =====
     const n = cyclesToShow(c.periodicity || 'semanal');
-    const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n);
+    const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n, (c as any).semanaAtendimento);
     const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
     if (!ev.falls || !ev.lastRedAnchor) continue;
 
@@ -586,7 +587,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
         const eow = new Date(td); eow.setUTCDate(td.getUTCDate() + toSun);
         let upcomingThisWeek = false;
         for (let d = new Date(td); d <= eow; d.setUTCDate(d.getUTCDate() + 1)) {
-          if (isPlannedCycle(isoU(d), dows, c.periodicity || 'semanal')) { upcomingThisWeek = true; break; }
+          if (isPlannedCycle(isoU(d), dows, c.periodicity || 'semanal', (c as any).semanaAtendimento)) { upcomingThisWeek = true; break; }
         }
         if (upcomingThisWeek) continue; // dentro da semana da proxima visita -> nao cai ainda
       }
@@ -631,7 +632,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       const d = mkU(todayStr);
       for (let i = 0; i < 40; i++) {
         const ds = isoU(d);
-        if (isPlannedCycle(ds, dows, c.periodicity || 'semanal')) { nextPlanned = ds; break; }
+        if (isPlannedCycle(ds, dows, c.periodicity || 'semanal', (c as any).semanaAtendimento)) { nextPlanned = ds; break; }
         d.setUTCDate(d.getUTCDate() + 1);
       }
       if (nextPlanned) {
@@ -1635,14 +1636,14 @@ async function resetStaleLocks(today: string): Promise<void> {
 // CAPTURA DE ATENDIMENTO (substitui a trava): a captura usa as colunas locked/locked_by/locked_date.
 // Libera automaticamente: capturas de dias anteriores sempre; as de hoje às 18h (BRT).
 // Depois de liberada, o cliente volta a aparecer para os demais telemarketings.
-async function releaseExpiredCaptures(): Promise<void> {
+async function releaseExpiredCaptures(opts?: { endOfDay?: boolean }): Promise<void> {
   try {
     await ensureRepescagemLockCol();
     const today = brTodayStr();
     const now = new Date();
     const localBR = new Date(now.getTime() + (-180 - now.getTimezoneOffset()) * 60000);
     const hourBR = localBR.getUTCHours();
-    if (hourBR >= 18) {
+    if (opts?.endOfDay || hourBR >= 18) {
       // Após 18h: libera TODAS as capturas (encerramento do dia).
       await db.execute(sql`UPDATE repescagem_assignments SET locked = false, locked_by = null, locked_date = null, updated_at = now() WHERE locked = true`);
     } else {
@@ -2946,6 +2947,13 @@ export function registerRepescagemRoutes(app: Express, opts: {
   });
 }
 
+
+// Exportado para o agendador (scheduler.ts): às 18:00 (BRT) libera TODAS as capturas de
+// atendimento do dia (encerramento do dia) — o cliente volta a aparecer para os demais
+// telemarketings sem depender de alguém abrir a tela.
+export async function releaseRepescagemCapturesEndOfDay(): Promise<void> {
+  await releaseExpiredCaptures({ endOfDay: true });
+}
 
 // Exportado para o agendador (scheduler.ts): roda a distribuicao/sorteio da repescagem
 // para uma data especifica (ex.: o dia seguinte), programando a rota daquele dia.

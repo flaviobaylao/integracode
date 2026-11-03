@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
-import { computeCyclesDisplay, cyclesToShow } from "./repescagem-cycles";
+import { computeCyclesDisplay, cyclesToShow, isPlanned as isPlannedShared } from "./repescagem-cycles";
 
 /** PJ/PF pelo documento; cai no customer_type quando o documento nao ajuda.
  *  MESMA regra do classificaTipo de server/carteira-routes.ts — as duas telas
@@ -39,6 +39,7 @@ export function registerVisitSummary(app: Express) {
                c.name AS razao_social,
                c.city, c.neighborhood,
                c.visit_periodicity AS periodicity, c.weekdays, c.segmento_principal AS segmento,
+               COALESCE(NULLIF(to_jsonb(c) ->> 'semana_atendimento',''),'toda') AS semana,
                COALESCE(c.is_active, false) AS cad_ativo,
                NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS documento,
                c.customer_type,
@@ -109,7 +110,8 @@ export function registerVisitSummary(app: Express) {
       const DOW: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
       const parseDows = (w: any): number[] => { let arr: any = w; try { if (typeof w === 'string') arr = JSON.parse(w); } catch (e) { arr = []; } if (!Array.isArray(arr)) return []; const out: number[] = []; for (const x of arr) { const k = String(x).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 3); if (DOW[k] !== undefined) out.push(DOW[k]); } return out; };
       const firstDowOfMonth = (dt: Date, dow: number): number => { const first = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), 1)); const shift = (dow - first.getUTCDay() + 7) % 7; return 1 + shift; };
-      const isPlanned = (dateStr: string, dows: number[], periodicity: string): boolean => { const dt = new Date(dateStr + 'T12:00:00Z'); const dow = dt.getUTCDay(); if (!dows.includes(dow)) return false; const p = String(periodicity || 'semanal').toLowerCase(); if (p.indexOf('quinz') >= 0) { const weekIdx = Math.floor(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()) / (7 * 864e5)); return weekIdx % 2 === 0; } if (p.indexOf('mens') >= 0) return dt.getUTCDate() === firstDowOfMonth(dt, dow); if (p.indexOf('bime') >= 0) return dt.getUTCDate() === firstDowOfMonth(dt, dow) && (dt.getUTCMonth() % 2 === 0); return true; };
+      // Mesma regra do gatilho da repescagem (inclui a semana de atendimento do cadastro).
+      const isPlanned = (dateStr: string, dows: number[], periodicity: string, semana?: any): boolean => isPlannedShared(dateStr, dows, periodicity, semana);
       const rows = clients.map((cl: any) => {
         const cid = cl.customer_id;
         const dows = parseDows(cl.weekdays);
@@ -119,7 +121,7 @@ export function registerVisitSummary(app: Express) {
         const vm = virtMap.get(cid);
         const cells = new Map<string, Cell>();
         const ensure = (d: string): Cell => { let c = cells.get(d); if (!c) { c = { isScheduled: false, hasVisit: false, hasOrder: false, hasVirtualAttendance: false, orderValue: 0, orderSellerName: '' }; cells.set(d, c); } return c; };
-        for (const d of allDates) { if (isPlanned(d, dows, cl.periodicity)) ensure(d).isScheduled = true; }
+        for (const d of allDates) { if (isPlanned(d, dows, cl.periodicity, cl.semana)) ensure(d).isScheduled = true; }
         if (ci) for (const d of ci) ensure(d).hasVisit = true;
         if (om) for (const [d, o] of om) { const c = ensure(d); c.hasOrder = o.n > 0; c.orderValue = o.v; c.orderSellerName = o.s || ''; }
         if (vm) for (const d of vm) ensure(d).hasVirtualAttendance = true;
@@ -127,7 +129,7 @@ export function registerVisitSummary(app: Express) {
         // Efetividade em vendas: bolinhas por ciclo (Semanal 4 / Quinzenal 2 / Mensal 1).
         // Verde = pedido; amarelo = atendido sem pedido; vermelho = nada; sem cor = a visita
         // do ciclo corrente ainda nao chegou. O gatilho da repescagem continua no computeCycles.
-        const cycles = computeCyclesDisplay(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), attDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'));
+        const cycles = computeCyclesDisplay(dows, cl.periodicity || 'semanal', saleDatesByCustomer.get(cid) || new Set<string>(), attDatesByCustomer.get(cid) || new Set<string>(), todayStr, cyclesToShow(cl.periodicity || 'semanal'), cl.semana);
         return { customerId: cid, customerName: cl.customer_name || '-', razaoSocial: cl.razao_social || '', sellerName: (cl.seller_name && cl.seller_name.trim()) || bpSellerMap.get(cid) || 'Sem vendedor', city: cl.city || '', neighborhood: cl.neighborhood || '', periodicity: cl.periodicity || '', weekdays: cl.weekdays || '[]', segmento: cl.segmento || '', documento: cl.documento || '', cadastroAtivo: cl.cad_ativo === true, tipoPessoa: classificaTipoPessoa(cl.documento, cl.customer_type), cycles, visits };
       });
 

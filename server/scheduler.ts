@@ -534,6 +534,19 @@ cron.schedule('10 0 * * *', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// 🎯 CAPTURA DE ATENDIMENTO (repescagem): às 18:00 (BRT) encerra o dia e libera TODAS as
+// capturas — os clientes voltam a aparecer para os demais telemarketings na hora, sem depender
+// de alguém abrir a tela (antes só liberava no próximo carregamento depois das 18h).
+cron.schedule('0 18 * * *', async () => {
+  try {
+    const { releaseRepescagemCapturesEndOfDay } = await import('./repescagem-routes');
+    await releaseRepescagemCapturesEndOfDay();
+    console.log('🔓 [REPESCAGEM-18H] Capturas de atendimento liberadas (encerramento do dia).');
+  } catch (e: any) {
+    console.error('❌ [REPESCAGEM-18H] falha ao liberar capturas:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // DESATIVADO: Sistema migrado para cards permanentes + order_history
 // Geração automática de agenda de visitas REMOVIDA após migração para cards permanentes
 // A geração de visitas agora usa visit_schedule_history em vez de sales_cards

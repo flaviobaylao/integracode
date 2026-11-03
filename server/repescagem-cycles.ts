@@ -41,11 +41,43 @@ const firstDowOfMonth = (dt: Date, dow: number): number => {
   return 1 + shift;
 };
 
+// ============================================================================
+// SEMANA DE ATENDIMENTO (customers.semana_atendimento) — nov/2026.
+// A rota real (visitScheduleService/datasPelaRegra) usa a "semana do mês" do cadastro
+// quando ela não é 'toda': o cliente é visitado nas semanas da regra, contadas pela
+// SEGUNDA-FEIRA (a semana pertence ao mês da segunda dela), e a periodicidade deixa de
+// mandar no calendário. Antes, a repescagem ignorava isso (mensal = 1ª ocorrência do dia no
+// mês; quinzenal = semana par fixa) e divergia da rota: cliente "3ª semana" visitado dia
+// 19/10 não ficava vermelho (Jhonatan). Agora isPlanned espelha a rota quando há regra.
+// Sem regra ('toda') o comportamento anterior é mantido.
+// ============================================================================
+const SEMANA_OCORRENCIAS: Record<string, (number | 'ultima')[]> = {
+  impar: [1, 3], par: [2, 4], '1': [1], '2': [2], '3': [3], '4': [4], ultima: ['ultima'],
+};
+export function normSemanaAtendimento(v: any): string {
+  const s = String(v ?? '').trim().toLowerCase();
+  return SEMANA_OCORRENCIAS[s] ? s : 'toda';
+}
+// n = qual segunda-feira do mês abre a semana da data; ultima = é a última semana do mês.
+function semanaDoMesUTC(dt: Date): { n: number; ultima: boolean } {
+  const mon = new Date(dt);
+  mon.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+  const lastDay = new Date(Date.UTC(mon.getUTCFullYear(), mon.getUTCMonth() + 1, 0)).getUTCDate();
+  return { n: Math.floor((mon.getUTCDate() - 1) / 7) + 1, ultima: mon.getUTCDate() + 7 > lastDay };
+}
+
 // Mesma logica do Resumo de Visitas: uma data e "agendada" para o cliente?
-export function isPlanned(dateStr: string, dows: number[], periodicity: string): boolean {
+// semana = customers.semana_atendimento (opcional; 'toda'/vazio = sem regra de semana).
+export function isPlanned(dateStr: string, dows: number[], periodicity: string, semana?: any): boolean {
   const dt = mkUTC(dateStr);
   const dow = dt.getUTCDay();
   if (!dows.includes(dow)) return false;
+  const sem = normSemanaAtendimento(semana);
+  if (sem !== 'toda') {
+    if (dow < 1 || dow > 5) return false; // a regra da rota só usa dias úteis
+    const w = semanaDoMesUTC(dt);
+    return SEMANA_OCORRENCIAS[sem].some((o) => (o === 'ultima' ? w.ultima : o === w.n));
+  }
   const p = String(periodicity || 'semanal').toLowerCase();
   if (p.indexOf('quinz') >= 0) {
     const weekIdx = Math.floor(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()) / (7 * 864e5));
@@ -91,15 +123,16 @@ export type Cycle = { anchor: string; start: string; end: string; green: boolean
 
 // Retorna os ultimos N ciclos (mais antigo -> mais recente) do cliente ate hoje.
 // saleDates = Set de datas 'YYYY-MM-DD' de VENDAS reais do cliente.
-export function computeCycles(dows: number[], periodicity: string, saleDates: Set<string>, todayStr: string, n: number): Cycle[] {
+export function computeCycles(dows: number[], periodicity: string, saleDates: Set<string>, todayStr: string, n: number, semana?: any): Cycle[] {
   if (dows.length === 0) return [];
   const periodDays = CYCLE_PERIODICITY_DAYS[String(periodicity || 'semanal').toLowerCase()] || 7;
-  const lookbackDays = n * periodDays + 21; // folga
+  // Com regra de semana as visitas podem ficar mais espaçadas (ex.: 1x/mês): amplia a janela.
+  const lookbackDays = (normSemanaAtendimento(semana) !== 'toda' ? n * 35 : n * periodDays) + 21; // folga
   const startScan = iso(new Date(mkUTC(todayStr).getTime() - lookbackDays * 864e5));
   // Ancoras agendadas passadas (<= hoje)
   const anchors: string[] = [];
   { const d = mkUTC(startScan); const end = mkUTC(todayStr);
-    while (d <= end) { const ds = iso(d); if (isPlanned(ds, dows, periodicity)) anchors.push(ds); d.setUTCDate(d.getUTCDate() + 1); } }
+    while (d <= end) { const ds = iso(d); if (isPlanned(ds, dows, periodicity, semana)) anchors.push(ds); d.setUTCDate(d.getUTCDate() + 1); } }
   const lastN = anchors.slice(-n);
   return lastN.map(anchor => {
     const { start, end } = cycleWindow(anchor, periodicity);
@@ -128,15 +161,17 @@ export function computeCyclesDisplay(
   attendanceDates: Set<string>,
   todayStr: string,
   n: number,
+  semana?: any,
 ): Cycle[] {
   if (dows.length === 0) return [];
   const periodDays = CYCLE_PERIODICITY_DAYS[String(periodicity || 'semanal').toLowerCase()] || 7;
-  const lookbackDays = n * periodDays + 21; // folga
+  // Com regra de semana as visitas podem ficar mais espaçadas (ex.: 1x/mês): amplia a janela.
+  const lookbackDays = (normSemanaAtendimento(semana) !== 'toda' ? n * 35 : n * periodDays) + 21; // folga
   const startScan = iso(new Date(mkUTC(todayStr).getTime() - lookbackDays * 864e5));
-  const endScan = iso(new Date(mkUTC(todayStr).getTime() + 21 * 864e5)); // alcanca a ancora do ciclo corrente
+  const endScan = iso(new Date(mkUTC(todayStr).getTime() + (normSemanaAtendimento(semana) !== 'toda' ? 35 : 21) * 864e5)); // alcanca a ancora do ciclo corrente
   const anchors: string[] = [];
   { const d = mkUTC(startScan); const end = mkUTC(endScan);
-    while (d <= end) { const ds = iso(d); if (isPlanned(ds, dows, periodicity)) anchors.push(ds); d.setUTCDate(d.getUTCDate() + 1); } }
+    while (d <= end) { const ds = iso(d); if (isPlanned(ds, dows, periodicity, semana)) anchors.push(ds); d.setUTCDate(d.getUTCDate() + 1); } }
   // So ciclos cuja JANELA ja comecou (start <= hoje). Isso inclui o ciclo corrente mesmo
   // quando o dia da visita e mais adiante na semana/mes, e exclui os ciclos seguintes.
   const emCurso = anchors.filter((a) => cycleWindow(a, periodicity).start <= todayStr);
