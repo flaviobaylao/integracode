@@ -1158,6 +1158,13 @@ export function registerResumoRecebiveisRoutes(app: Express) {
   // escreve congelamento de painel. Colunas com largura 10, cabeçalho em
   // negrito e congelado, quebra automática de texto em todas as células.
   // Respeita o mesmo acesso da tela: vendedor exporta só a própria linha.
+  //
+  // `ocultar` (03/nov/2026) traz os ids que o admin escondeu na tela: a planilha
+  // sai com as MESMAS linhas que ele está vendo, e o TOTAL é refeito só com
+  // elas. O que o olho conferiu é o que vai para o arquivo — planilha e tela
+  // divergirem é como se assina pagamento errado. O arquivo sai marcado como
+  // parcial, no nome e numa linha de rodapé, para ninguém confundir depois com
+  // a folha inteira do mês.
   // -------------------------------------------------------------------------
   app.get("/api/resumo-recebiveis/xlsx", authenticateUser, async (req: any, res) => {
     try {
@@ -1171,9 +1178,41 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       const dados: any = f.rows?.[0]?.dados || (await montarResumo(ym));
       const campanhas: any[] = dados.campanhas || [];
       let colaboradores: any[] = dados.colaboradores || [];
-      const totais = admin ? dados.totais : null;
+      let totais = admin ? dados.totais : null;
       // Igual à tela: o colaborador exporta a própria linha, da lista nominal.
       if (!admin) colaboradores = (dados.nominais || colaboradores).filter((c: any) => c.id === eu.id);
+
+      // Linhas que o admin ocultou na tela. Fora do fluxo do colaborador: ele já
+      // exporta só a própria linha e não tem o que esconder.
+      const ocultos = new Set(
+        String(req.query?.ocultar || "").split(",").map((s) => s.trim()).filter(Boolean));
+      const ocultadas = admin
+        ? colaboradores.filter((c: any) => ocultos.has(String(c.id))).map((c: any) => c.nome)
+        : [];
+      if (ocultadas.length) {
+        colaboradores = colaboradores.filter((c: any) => !ocultos.has(String(c.id)));
+        // TOTAL refeito com as mesmas duas regras da apuração: meta e faturamento
+        // pulam o consolidador (ele já é a soma da equipe), o resto soma todos.
+        const soma = (fn: (c: any) => number) => colaboradores.reduce((s, c) => s + (fn(c) || 0), 0);
+        const base = (fn: (c: any) => number) => colaboradores
+          .filter((c: any) => !c.consolidador).reduce((s, c) => s + (fn(c) || 0), 0);
+        totais = {
+          ...totais,
+          fixoMensal: soma((c) => c.fixoMensal || 0),
+          ajudaCusto: soma((c) => c.ajudaCusto || 0),
+          meta: base((c) => c.meta || 0),
+          faturamento: base((c) => c.faturamento || 0),
+          comissao: soma((c) => c.comissao || 0),
+          descontoTroca: soma((c) => c.descontoTroca || 0),
+          bonus: soma((c) => c.bonus || 0),
+          kmRodado: soma((c) => c.kmRodado || 0),
+          kmValor: soma((c) => c.kmValor || 0),
+          reembolsos: soma((c) => c.reembolsos?.total || 0),
+          totalMes: soma((c) => c.totalMes || 0),
+          campanhas: Object.fromEntries(
+            campanhas.map((k: any) => [k.id, soma((c) => c.campanhas?.[k.id] || 0)])),
+        };
+      }
 
       const PAPEL: Record<string, string> = {
         vendedor: "Externo", telemarketing: "Interno",
@@ -1221,10 +1260,17 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       }
 
       const colKmRodado = cab.indexOf("Km rodado") + 1;
-      const ultima = ws.rowCount;
+      // Guardado ANTES do rodapé de linhas ocultas: é esta que leva o negrito.
+      const linhaTotal = ws.rowCount;
+      // Sem este carimbo o arquivo circula como se fosse a folha inteira do mês.
+      if (ocultadas.length) {
+        ws.addRow([]);
+        ws.addRow([`Exportação parcial — ${ocultadas.length} linha${ocultadas.length > 1 ? "s" : ""} `
+          + `oculta${ocultadas.length > 1 ? "s" : ""} na tela e fora do TOTAL: ${ocultadas.join(", ")}.`]);
+      }
       ws.eachRow((row, i) => {
         row.alignment = { wrapText: true, vertical: "middle" };
-        row.font = { size: 10, bold: i === 1 || (!!totais && colaboradores.length > 1 && i === ultima) };
+        row.font = { size: 10, bold: i === 1 || (!!totais && colaboradores.length > 1 && i === linhaTotal) };
         row.eachCell((cell, col) => {
           cell.alignment = { wrapText: true, vertical: "middle", horizontal: col <= 2 ? "left" : "right" };
           // Km rodado é distância, não dinheiro. (Era cab.length - 1, que com a
@@ -1244,7 +1290,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
       const buf = await wb.xlsx.writeBuffer();
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      res.setHeader("Content-Disposition", `attachment; filename="resumo-recebiveis-${ym}.xlsx"`);
+      res.setHeader("Content-Disposition",
+        `attachment; filename="resumo-recebiveis-${ym}${ocultadas.length ? "-parcial" : ""}.xlsx"`);
       res.setHeader("Content-Length", String((buf as ArrayBuffer).byteLength));
       res.end(Buffer.from(buf as ArrayBuffer));
     } catch (e: any) {
