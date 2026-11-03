@@ -130,7 +130,7 @@ export default function Reembolsos() {
               <table className="w-full text-sm">
                 <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground border-b">
                   <th className="text-left p-3">Pedido</th><th className="text-left p-3">Solicitante</th><th className="text-left p-3">Descrição</th>
-                  <th className="text-left p-3">Pagar até</th><th className="text-right p-3">Valor</th><th className="text-left p-3">Situação</th>
+                  <th className="text-left p-3">Pagar até</th><th className="text-right p-3">Valor</th><th className="text-left p-3">Aprovador</th><th className="text-left p-3">Situação</th>
                 </tr></thead>
                 <tbody>{vis.map((r) => (
                   <tr key={r.id} className={`border-b last:border-0 hover:bg-muted/40 cursor-pointer ${minhaVez(r) ? "bg-amber-50" : ""}`} onClick={() => setSel(r.id)} data-testid={`reembolso-${r.codigo}`}>
@@ -139,6 +139,10 @@ export default function Reembolsos() {
                     <td className="p-3 max-w-[320px] truncate">{r.descricao}</td>
                     <td className="p-3 whitespace-nowrap">{DT(r.vencimento)}</td>
                     <td className="p-3 text-right tabular-nums">{BRL(r.valorAprovado ?? r.valor)}</td>
+                    <td className="p-3 whitespace-nowrap">{r.status === "aguardando"
+                      ? (r.encaminhadoParaNome ? <span className="text-blue-800" title={`Encaminhado por ${r.encaminhadoPorNome || ""}`}>↪ {r.encaminhadoParaNome} <span className="text-[11px] text-muted-foreground">(encaminhado)</span></span> : <span className="text-muted-foreground">—</span>)
+                      : r.status === "cancelado" || !r.aprovadorNome ? <span className="text-muted-foreground">—</span>
+                      : <>{r.aprovadorNome}{r.status === "recusado" && <span className="text-[11px] text-red-700"> (recusou)</span>}</>}</td>
                     <td className="p-3"><Pill status={r.status} />{r.autoaprovado && <span className="ml-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-900" title="Aprovado pelo próprio solicitante">auto</span>}</td>
                   </tr>
                 ))}</tbody>

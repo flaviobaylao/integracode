@@ -109,7 +109,7 @@ export default function Viagens() {
               <table className="w-full text-sm">
                 <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground border-b">
                   <th className="text-left p-3">Viagem</th><th className="text-left p-3">Vendedor</th><th className="text-left p-3">Destino</th><th className="text-left p-3">Período</th>
-                  <th className="text-right p-3">Adiantamento</th><th className="text-right p-3">Saldo</th><th className="text-left p-3">Situação</th>
+                  <th className="text-right p-3">Adiantamento</th><th className="text-right p-3">Saldo</th><th className="text-left p-3">Aprovador</th><th className="text-left p-3">Situação</th>
                 </tr></thead>
                 <tbody>{lista.map((v) => (
                   <tr key={v.id} className="border-b last:border-0 hover:bg-muted/40 cursor-pointer" onClick={() => setSel(v.id)}>
@@ -117,6 +117,10 @@ export default function Viagens() {
                     <td className="p-3 whitespace-nowrap">{DT(v.dataIni)} a {DT(v.dataFim)}</td>
                     <td className="p-3 text-right tabular-nums">{BRL(v.valorAprovado ?? v.valorSugerido)}</td>
                     <td className={`p-3 text-right tabular-nums ${v.saldo == null ? "text-muted-foreground" : v.saldo > 0 ? "text-amber-700" : v.saldo < 0 ? "text-blue-700" : ""}`}>{v.saldo == null ? "—" : (v.saldo > 0 ? "receber " : v.saldo < 0 ? "devolver " : "") + BRL(Math.abs(v.saldo))}</td>
+                    <td className="p-3 whitespace-nowrap">{v.status === "aguardando"
+                      ? (v.encaminhadoParaNome ? <span className="text-blue-800" title={`Encaminhado por ${v.encaminhadoPorNome || ""}`}>↪ {v.encaminhadoParaNome} <span className="text-[11px] text-muted-foreground">(encaminhado)</span></span> : <span className="text-muted-foreground">—</span>)
+                      : v.status === "cancelado" || !v.aprovadorNome ? <span className="text-muted-foreground">—</span>
+                      : <>{v.aprovadorNome}{v.status === "recusado" && <span className="text-[11px] text-red-700"> (recusou)</span>}</>}</td>
                     <td className="p-3"><Pill status={v.status} /></td>
                   </tr>
                 ))}</tbody>
