@@ -85,6 +85,23 @@ export function ensureTrocaSchema(): Promise<void> {
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_do_vendedor boolean",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS acao_cliente varchar",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS origem varchar",
+        // 02/11/2026: o desconto só conta quando a NF de troca é FATURADA.
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_troca_id varchar",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_troca_numero varchar",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS faturado_em timestamptz",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS vendedor_regra varchar",
+        // Histórico de mudança de carteira (rezoneamento): gravado por gatilho em customers.seller_id.
+        "CREATE TABLE IF NOT EXISTS customer_seller_changes (id bigserial PRIMARY KEY, customer_id varchar NOT NULL, old_seller_id varchar, new_seller_id varchar, changed_at timestamptz NOT NULL DEFAULT now())",
+        "CREATE INDEX IF NOT EXISTS idx_customer_seller_changes ON customer_seller_changes (customer_id, changed_at)",
+        `CREATE OR REPLACE FUNCTION fn_log_customer_seller_change() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.seller_id IS DISTINCT FROM OLD.seller_id THEN
+             INSERT INTO customer_seller_changes (customer_id, old_seller_id, new_seller_id) VALUES (NEW.id, OLD.seller_id, NEW.seller_id);
+           END IF;
+           RETURN NEW;
+         END $$ LANGUAGE plpgsql`,
+        "DROP TRIGGER IF EXISTS trg_customer_seller_changes ON customers",
+        "CREATE TRIGGER trg_customer_seller_changes AFTER UPDATE OF seller_id ON customers FOR EACH ROW EXECUTE FUNCTION fn_log_customer_seller_change()",
         "CREATE TABLE IF NOT EXISTS troca_migracoes (nome varchar PRIMARY KEY, feito_em timestamptz DEFAULT now(), resultado text)",
       ]) await db.execute(sql.raw(ix)).catch(() => {});
       await recalcularRegraRegistrante().catch((e) => console.error("[TROCA] recalculo:", e?.message || e));
@@ -110,9 +127,11 @@ export async function descontosTrocaPorVendedor(ym: string): Promise<Record<stri
   const out: Record<string, number> = {};
   try {
     await ensureTrocaSchema();
+    await sincronizarFaturamentoTrocas();
     const r: any = await db.execute(sql`
       SELECT nf_seller_id, COALESCE(SUM(desconto), 0) AS total
       FROM troca_registros WHERE ym = ${ym} AND motivo = 'vencido' AND nf_seller_id IS NOT NULL
+        AND faturado_em IS NOT NULL AND COALESCE(origem, '') <> 'backfill'
       GROUP BY nf_seller_id`);
     for (const row of r.rows || []) out[String(row.nf_seller_id)] = n(row.total);
   } catch (e: any) {
@@ -167,9 +186,61 @@ async function chavesDoUsuario(userId: string): Promise<{ chaves: string[]; nome
  * vendeu para o cliente, usa a última NF do cliente (de qualquer vendedor) só para o preço,
  * e o percentual do próprio registrante no mês da troca.
  */
-async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: string | null) {
+/**
+ * QUEM RECEBE O DESCONTO (Flavio, 02/11/2026):
+ *  - Base: quem registrou o pedido de troca (regra de 26/10).
+ *  - Delegação: se quem registrou atendia o cliente por delegação de carteira, o desconto
+ *    vai para o DONO da carteira (titular da delegação).
+ *  - Rezoneamento: se o cliente mudou de carteira e o vendedor apurado é o NOVO dono, o
+ *    desconto fica com ele só se já houver pedido FATURADO para ele depois do rezoneamento;
+ *    senão vai para o vendedor ANTERIOR.
+ *  `quando` = momento de referência (faturamento da NF de troca; na prévia, agora).
+ */
+async function resolverVendedorDesconto(customerId: string | null, registranteId: string | null, cardSellerId: string | null, quando: Date): Promise<{ sellerId: string | null; regra: string }> {
+  let sellerId = registranteId || cardSellerId || null;
+  let regra = "registrou a troca";
+  if (!sellerId || !customerId) return { sellerId, regra };
+  const iso = quando.toISOString();
+  try {
+    const d: any = await db.execute(sql`
+      SELECT d.from_user_id FROM delegation_customers dc JOIN delegations d ON d.id = dc.delegation_id
+      WHERE dc.customer_id = ${customerId} AND dc.to_user_id = ${sellerId}
+        AND d.status::text <> 'revogada' AND d.from_user_id IS NOT NULL
+        AND d.starts_at <= ${iso}::timestamptz AND d.ends_at >= ${iso}::timestamptz
+      ORDER BY d.starts_at DESC LIMIT 1`);
+    const dono = d.rows?.[0]?.from_user_id;
+    if (dono && String(dono) !== String(sellerId)) { sellerId = String(dono); regra = "dono da carteira (delegação)"; }
+  } catch (e: any) { console.warn("[TROCA] delegacao:", e?.message || e); }
+  try {
+    const z: any = await db.execute(sql`
+      SELECT old_seller_id, new_seller_id, changed_at FROM customer_seller_changes
+      WHERE customer_id = ${customerId} AND changed_at <= ${iso}::timestamptz
+      ORDER BY changed_at DESC LIMIT 1`);
+    const mud = z.rows?.[0];
+    if (mud && mud.old_seller_id && mud.new_seller_id && String(mud.new_seller_id) === String(sellerId)) {
+      const { chaves } = await chavesDoUsuario(String(mud.new_seller_id));
+      const esc = (v: string) => String(v).replace(/'/g, "''");
+      const f: any = await db.execute(sql.raw(`
+        SELECT 1 FROM (
+          SELECT ${vendedorImplantou("fi")} AS seller_key
+          FROM ${nfVendaFrom("fi")}
+          WHERE ${nfVendaWhere("fi")}
+            AND fi.customer_id = '${esc(customerId)}'
+            AND (${nfData("fi")}) >= '${new Date(mud.changed_at).toISOString()}'::timestamptz
+            AND (${nfData("fi")}) <= '${iso}'::timestamptz
+        ) x WHERE x.seller_key IN (${chaves.map((k) => `'${esc(k)}'`).join(",") || "''"}) LIMIT 1`));
+      if (f.rows?.length) regra = regra + " · rezoneado, já faturou ao cliente";
+      else { sellerId = String(mud.old_seller_id); regra = "vendedor anterior (rezoneado sem faturamento do novo)"; }
+    }
+  } catch (e: any) { console.warn("[TROCA] rezoneamento:", e?.message || e); }
+  return { sellerId, regra };
+}
+
+async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: string | null, quando: Date = new Date()) {
   const produtos: any[] = Array.isArray(card.products) ? card.products : [];
-  const vendedorId = registranteId || (card.seller_id ? String(card.seller_id) : null);
+  const resolvido = await resolverVendedorDesconto(card.customer_id ? String(card.customer_id) : null, registranteId,
+    card.seller_id ? String(card.seller_id) : null, quando);
+  const vendedorId = resolvido.sellerId;
   const { chaves, nome: vendedorNome } = vendedorId ? await chavesDoUsuario(vendedorId) : { chaves: [] as string[], nome: null };
 
   const esc = (v: string) => String(v).replace(/'/g, "''");
@@ -234,6 +305,7 @@ async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: stri
     nfNumero: nf?.invoice_number != null ? String(nf.invoice_number) : null,
     nfData: nf?.data ? String(nf.data) : null,
     nfDoVendedor,
+    vendedorRegra: resolvido.regra,
     // nf_seller_* = vendedor DESCONTADO (quem registrou a troca)
     nfSellerId: vendedorId,
     nfSellerName: vendedorNome,
@@ -531,7 +603,77 @@ export async function recorrenciaPorCards(cardIds: string[]): Promise<Map<string
   return out;
 }
 
+/**
+ * O desconto da troca por vencimento só conta quando a NF de TROCA é faturada (02/11/2026).
+ * Liga cada registro de vencido à NF-e de troca autorizada do pedido (card ou card-filho),
+ * recalcula na data do faturamento (vendedor por delegação/rezoneamento, NF de referência e %)
+ * e lança no mês do faturamento. NF cancelada depois tira o desconto. Idempotente.
+ */
+let ultimoSync = 0;
+let syncEmAndamento: Promise<void> | null = null;
+export function sincronizarFaturamentoTrocas(forcar = false): Promise<void> {
+  if (syncEmAndamento) return syncEmAndamento;
+  if (!forcar && Date.now() - ultimoSync < 60000) return Promise.resolve();
+  syncEmAndamento = (async () => {
+    try {
+      const regs: any = await db.execute(sql`
+        SELECT id, sales_card_id, customer_id, card_seller_id, created_by, itens, created_at, nf_troca_id, faturado_em
+        FROM troca_registros
+        WHERE motivo = 'vencido' AND COALESCE(origem, '') <> 'backfill' AND created_at >= now() - interval '180 days'`);
+      for (const reg of (regs.rows || []) as any[]) {
+        try {
+          const nf: any = await db.execute(sql.raw(`
+            SELECT fi.id, fi.invoice_number, (${nfData("fi")}) AS dt
+            FROM fiscal_invoices fi
+            WHERE fi.status = 'authorized' AND COALESCE(fi.operation_type,'saida') <> 'entrada'
+              AND UPPER(COALESCE(fi.nature_of_operation,'')) LIKE '%TROCA%'
+              AND (fi.sales_card_id = '${String(reg.sales_card_id).replace(/'/g, "''")}'
+                   OR fi.sales_card_id IN (SELECT id FROM sales_cards WHERE parent_card_id = '${String(reg.sales_card_id).replace(/'/g, "''")}'
+                        AND created_at BETWEEN '${new Date(reg.created_at).toISOString()}'::timestamptz - interval '1 hour'
+                                           AND '${new Date(reg.created_at).toISOString()}'::timestamptz + interval '3 days'))
+              AND COALESCE(fi.emission_date, fi.authorization_date, fi.created_at) >= '${new Date(reg.created_at).toISOString()}'::timestamptz - interval '1 day'
+            ORDER BY COALESCE(fi.emission_date, fi.authorization_date, fi.created_at) ASC LIMIT 1`));
+          const x = nf.rows?.[0];
+          if (!x) {
+            if (reg.faturado_em) {
+              await db.execute(sql`UPDATE troca_registros SET faturado_em = NULL, nf_troca_id = NULL, nf_troca_numero = NULL,
+                ym = to_char(created_at AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM'), updated_at = now() WHERE id = ${reg.id}`);
+              console.log(`[TROCA] NF de troca não está mais autorizada — desconto retirado (${reg.id})`);
+            }
+            continue;
+          }
+          if (reg.nf_troca_id && String(reg.nf_troca_id) === String(x.id) && reg.faturado_em) continue;
+          const quando = new Date(x.dt);
+          const calc = await calcularTroca(
+            { customer_id: reg.customer_id, seller_id: reg.card_seller_id, products: Array.isArray(reg.itens) ? reg.itens : [] },
+            "vencido", reg.created_by && reg.created_by !== "backfill" ? String(reg.created_by) : null, quando);
+          await db.execute(sql`
+            UPDATE troca_registros SET
+              valor_troca = ${calc.valorTroca}, itens = ${JSON.stringify(calc.itens)}::jsonb, nf_id = ${calc.nfId},
+              nf_numero = ${calc.nfNumero}, nf_data = ${calc.nfData}, nf_seller_id = ${calc.nfSellerId},
+              nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct}, desconto = ${calc.desconto},
+              nf_do_vendedor = ${calc.nfDoVendedor}, vendedor_regra = ${calc.vendedorRegra},
+              nf_troca_id = ${x.id}, nf_troca_numero = ${x.invoice_number != null ? String(x.invoice_number) : null},
+              faturado_em = ${quando.toISOString()}::timestamptz, ym = ${ymBrasil(quando)}, regra_versao = 3, updated_at = now()
+            WHERE id = ${reg.id}`);
+          console.log(`[TROCA] desconto lançado no faturamento da NF ${x.invoice_number}: ${calc.nfSellerName} R$ ${calc.desconto} (${calc.vendedorRegra})`);
+        } catch (e: any) {
+          console.error("[TROCA] sync faturamento", reg.id, e?.message || e);
+        }
+      }
+    } catch (e: any) {
+      console.error("[TROCA] sync faturamento:", e?.message || e);
+    } finally {
+      ultimoSync = Date.now();
+      syncEmAndamento = null;
+    }
+  })();
+  return syncEmAndamento;
+}
+
 export function registerTrocaRegistrosRoutes(app: Express) {
+  // Liga os descontos de vencido ao faturamento da NF de troca a cada 10 minutos.
+  setInterval(() => { ensureTrocaSchema().then(() => sincronizarFaturamentoTrocas(true)).catch((e) => console.error("[TROCA] sync:", e?.message || e)); }, 10 * 60000);
   // Garante o esquema (e o registro retroativo das trocas do pipeline) logo após o boot.
   setTimeout(() => { ensureTrocaSchema().catch((e) => console.error("[TROCA] schema no boot:", e?.message || e)); }, 20000);
   // Grava o motivo da troca do card (chamado pelo card de vendas ao finalizar).
@@ -657,6 +799,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
   app.get("/api/trocas/descontos", authenticateUser, async (req: any, res) => {
     try {
       await ensureTrocaSchema();
+      await sincronizarFaturamentoTrocas();
       const ym = /^\d{4}-\d{2}$/.test(String(req.query?.ym || "")) ? String(req.query.ym) : ymBrasil();
       const soVencido = String(req.query?.todos || "") !== "1";
       const equipe = podeVerEquipe(req);
@@ -664,7 +807,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       const r: any = await db.execute(sql`
         SELECT id, sales_card_id, customer_id, customer_name, motivo, categoria, temperatura_c, valor_troca, itens,
                nf_numero, to_char(nf_data, 'YYYY-MM-DD') AS nf_data, nf_seller_id, nf_seller_name,
-               comissao_pct, desconto, ym, created_at
+               comissao_pct, desconto, ym, created_at, faturado_em, nf_troca_numero, vendedor_regra
         FROM troca_registros
         WHERE ym = ${ym} AND COALESCE(origem, '') <> 'backfill'
           AND (${soVencido} = false OR motivo = 'vencido')
@@ -686,10 +829,14 @@ export function registerTrocaRegistrosRoutes(app: Express) {
         comissaoPct: n(x.comissao_pct),
         desconto: n(x.desconto),
         data: x.created_at,
+        faturado: !!x.faturado_em,
+        faturadoEm: x.faturado_em,
+        nfTroca: x.nf_troca_numero,
+        vendedorRegra: x.vendedor_regra || null,
       }));
       const porVendedor: Record<string, { vendedorId: string; vendedor: string; trocas: number; valorTroca: number; desconto: number }> = {};
       for (const x of registros) {
-        if (x.motivo !== "vencido") continue;
+        if (x.motivo !== "vencido" || !x.faturado) continue; // só conta depois do faturamento da NF de troca
         const k = x.vendedorId || "sem-vendedor";
         const v = (porVendedor[k] = porVendedor[k] || { vendedorId: k, vendedor: x.vendedor || "Sem vendedor", trocas: 0, valorTroca: 0, desconto: 0 });
         v.trocas++;

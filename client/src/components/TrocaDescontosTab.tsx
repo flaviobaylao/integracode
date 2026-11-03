@@ -32,6 +32,7 @@ interface Registro {
   id: string; salesCardId: string; cliente: string | null; motivo: string; categoria: string;
   temperatura: number | null; valorTroca: number; nfNumero: string | null; nfData: string | null;
   vendedorId: string | null; vendedor: string | null; comissaoPct: number; desconto: number; data: string;
+  faturado?: boolean; nfTroca?: string | null; vendedorRegra?: string | null;
 }
 interface Resp {
   ym: string; registros: Registro[];
@@ -68,8 +69,9 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
             <div>
               <CardTitle className="text-lg">Descontos por troca</CardTitle>
               <CardDescription>
-                Troca por vencimento: a comissão sobre o valor trocado é descontada de quem registrou o pedido de troca, pelo preço
-                e % da última NF que esse vendedor faturou ao cliente, no mês da troca. Trocas por qualidade não geram desconto.
+                Troca por vencimento: o desconto só é lançado quando a NF de troca é faturada, no mês do faturamento. Vai para quem
+                registrou a troca; em delegação, para o dono da carteira; em rezoneamento, para o novo vendedor se ele já faturou ao
+                cliente, senão para o anterior. Valor e % pela última NF desse vendedor ao cliente. Trocas por qualidade não descontam.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -155,10 +157,11 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                   <TableHead>Cliente</TableHead>
                   <TableHead>Motivo</TableHead>
                   <TableHead>Última NF</TableHead>
-                  <TableHead>Vendedor (registrou a troca)</TableHead>
+                  <TableHead>Vendedor descontado</TableHead>
                   <TableHead className="text-right">Valor da troca</TableHead>
                   <TableHead className="text-right">% comissão</TableHead>
                   <TableHead className="text-right">Desconto</TableHead>
+                  <TableHead>Situação</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -171,10 +174,11 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                       {r.temperatura != null && <span className="ml-1 text-xs text-muted-foreground">{String(r.temperatura).replace('.', ',')} °C</span>}
                     </TableCell>
                     <TableCell>{r.nfNumero ? `NF ${r.nfNumero} · ${dataBR(r.nfData)}` : <span className="text-muted-foreground">sem NF</span>}</TableCell>
-                    <TableCell>{r.vendedor || '—'}</TableCell>
+                    <TableCell>{r.vendedor || '—'}{r.vendedorRegra && <div className="text-[11px] text-muted-foreground">{r.vendedorRegra}</div>}</TableCell>
                     <TableCell className="text-right">{brl(r.valorTroca)}</TableCell>
                     <TableCell className="text-right">{r.motivo === 'vencido' ? `${r.comissaoPct.toFixed(2).replace('.', ',')}%` : '—'}</TableCell>
-                    <TableCell className="text-right font-medium text-red-700">{r.desconto > 0 ? `− ${brl(r.desconto)}` : '—'}</TableCell>
+                    <TableCell className={`text-right font-medium ${r.faturado ? 'text-red-700' : 'text-muted-foreground'}`}>{r.desconto > 0 ? `− ${brl(r.desconto)}` : '—'}</TableCell>
+                    <TableCell className="text-xs">{r.motivo !== 'vencido' ? '—' : r.faturado ? <span className="text-green-700 font-semibold">Faturada{r.nfTroca ? ` · NF ${r.nfTroca}` : ''}</span> : <span className="text-amber-700">Aguardando faturamento</span>}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -185,6 +189,7 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                     <TableCell className="text-right">{brl(totalValor)}</TableCell>
                     <TableCell />
                     <TableCell className="text-right text-red-700">− {brl(totalDesconto)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">só faturadas</TableCell>
                   </TableRow>
                 </TableFooter>
               )}

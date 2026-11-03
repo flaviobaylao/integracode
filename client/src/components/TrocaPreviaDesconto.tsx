@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 
 interface Previa {
   valorTroca: number; pct: number; desconto: number;
-  nfNumero: string | null; nfData: string | null; nfSellerName: string | null; nfDoVendedor?: boolean;
+  nfNumero: string | null; nfData: string | null; nfSellerName: string | null; nfDoVendedor?: boolean; vendedorRegra?: string;
   itens: Array<{ produto: string; quantidade: number; precoUnit: number; fontePreco: string }>;
 }
 
@@ -38,7 +38,7 @@ export default function TrocaPreviaDesconto({ cardId, products }: { cardId?: str
         {isFetching && <Loader2 className="h-4 w-4 animate-spin text-red-600" />}
       </div>
       <p className="text-xs text-gray-700">
-        Troca por vencimento. A comissão sobre o valor trocado será descontada da comissão do mês, no fechamento.
+        Troca por vencimento. O desconto é lançado na comissão do mês em que a NF de troca for faturada.
       </p>
       {itens.length === 0 ? (
         <p className="text-xs text-gray-500">Adicione os produtos da troca para calcular o desconto.</p>
@@ -46,10 +46,10 @@ export default function TrocaPreviaDesconto({ cardId, products }: { cardId?: str
         <p className="text-xs text-red-600">Não foi possível calcular a prévia agora. O desconto será calculado ao finalizar.</p>
       ) : data ? (
         <div className="text-sm divide-y">
-          {data.nfSellerName && <div className="flex justify-between py-1"><span className="text-gray-600">Vendedor descontado</span><span className="font-medium">{data.nfSellerName}</span></div>}
-          <div className="flex justify-between py-1"><span className="text-gray-600">{data.nfDoVendedor ? 'Sua última NF para o cliente' : 'Última NF do cliente (outro vendedor)'}</span><span className="font-medium">{data.nfNumero ? `NF ${data.nfNumero} · ${dataBR(data.nfData)}` : 'sem NF (preço do card)'}</span></div>
+          {data.nfSellerName && <div className="flex justify-between py-1"><span className="text-gray-600">Vendedor descontado</span><span className="font-medium text-right">{data.nfSellerName}{data.vendedorRegra && data.vendedorRegra !== 'registrou a troca' ? <span className="block text-[11px] text-gray-500 font-normal">{data.vendedorRegra}</span> : null}</span></div>}
+          <div className="flex justify-between py-1"><span className="text-gray-600">{data.nfDoVendedor ? 'Última NF deste vendedor ao cliente' : 'Última NF do cliente (outro vendedor)'}</span><span className="font-medium">{data.nfNumero ? `NF ${data.nfNumero} · ${dataBR(data.nfData)}` : 'sem NF (preço do card)'}</span></div>
           <div className="flex justify-between py-1"><span className="text-gray-600">Valor da troca</span><span className="font-medium">{brl(data.valorTroca)}</span></div>
-          <div className="flex justify-between py-1"><span className="text-gray-600">{data.nfDoVendedor ? 'Sua comissão na NF' : 'Sua comissão no mês'}</span><span className="font-medium">{String(Number(data.pct || 0).toFixed(2)).replace('.', ',')}%</span></div>
+          <div className="flex justify-between py-1"><span className="text-gray-600">{data.nfDoVendedor ? 'Comissão do vendedor na NF' : 'Comissão do vendedor no mês'}</span><span className="font-medium">{String(Number(data.pct || 0).toFixed(2)).replace('.', ',')}%</span></div>
           <div className="flex justify-between pt-2"><span className="font-bold text-red-700">Desconto</span><span className="font-bold text-red-700 text-base">− {brl(data.desconto)}</span></div>
         </div>
       ) : null}
