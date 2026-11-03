@@ -25,7 +25,7 @@ import {
   ClipboardList, FileText, Printer, Clock, Truck, CheckCircle2,
   RefreshCw, ChevronRight, ChevronLeft, User, DollarSign, MapPin, Search,
   Power, CheckSquare, X, ArrowRightCircle, Copy, ChevronDown, Ban, Calendar, ArrowDownUp, Globe,
-  Star, StarOff, Store, Network
+  Star, StarOff, Store, Network, XCircle
 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useDelegacaoMarks, TagDelegacao } from '@/components/SobDelegacaoBadge';
@@ -746,6 +746,22 @@ export default function BillingPipeline() {
       toast({ title: 'Observação adicionada', description: 'Registrada no card com data, hora e seu nome.' });
     },
     onError: (e: any) => toast({ title: 'Erro ao adicionar observação', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
+  });
+  // Recusar troca (03/nov/2026): card vai para a Lixeira e o vendedor recebe o motivo no WhatsApp.
+  const recusarTrocaMutation = useMutation({
+    mutationFn: async ({ id, motivo }: { id: string; motivo: string }) => await apiRequest('POST', `/api/billing-pipeline/${id}/recusar-troca`, { motivo }),
+    onSuccess: (resp: any) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
+      setDetailItem(null);
+      const w = resp?.whatsapp;
+      toast({
+        title: 'Troca recusada',
+        description: `Card enviado para a Lixeira. ${w === 'enviado' ? 'Vendedor avisado no WhatsApp.' : w === 'sem_telefone' ? 'O vendedor não tem telefone cadastrado — avise-o por outro meio.' : w === 'sem_vendedor' ? 'Pedido sem vendedor para avisar.' : 'Não foi possível enviar o WhatsApp ao vendedor — avise-o por outro meio.'}`,
+        variant: w === 'enviado' ? undefined : 'destructive',
+      });
+    },
+    onError: (e: any) => toast({ title: 'Erro ao recusar a troca', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
   });
   const duplicateMutation = useMutation({
     mutationFn: async (id: string) => await apiRequest('POST', `/api/billing-pipeline/${id}/duplicate`, {}),
@@ -2409,6 +2425,27 @@ export default function BillingPipeline() {
                     <FileText className="h-3 w-3 mr-1" />
                     Gerar PDF
                   </Button>
+                  {String(detailItem.operationType || '').toLowerCase() === 'troca'
+                    && ['bloqueado', 'agendado', 'pedido', 'a_faturar'].includes(String(detailItem.stage || ''))
+                    && canEdit && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs border-red-400 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300"
+                      onClick={() => {
+                        if (!detailItem) return;
+                        const motivo = window.prompt(`Recusar a troca de ${detailItem.customerName}?\nO card vai para a Lixeira e o vendedor recebe o motivo no WhatsApp.\n\nMotivo da recusa:`, '');
+                        if (motivo === null) return;
+                        if (motivo.trim().length < 3) { toast({ title: 'Motivo obrigatório', description: 'Escreva o motivo da recusa.', variant: 'destructive' }); return; }
+                        recusarTrocaMutation.mutate({ id: detailItem.id, motivo: motivo.trim() });
+                      }}
+                      disabled={recusarTrocaMutation.isPending}
+                      data-testid="button-recusar-troca"
+                    >
+                      {recusarTrocaMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <XCircle className="h-3 w-3 mr-1" />}
+                      Recusar troca
+                    </Button>
+                  )}
                   </div>
                 </div>
                 <div>
