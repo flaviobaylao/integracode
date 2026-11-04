@@ -90,6 +90,11 @@ export function ensureTrocaSchema(): Promise<void> {
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS nf_troca_numero varchar",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS faturado_em timestamptz",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS vendedor_regra varchar",
+        // 04/11/2026: admin pode CANCELAR o desconto de uma troca, com justificativa.
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_em timestamptz",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_por varchar",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_por_nome varchar",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS admin_obs text",
         // Histórico de mudança de carteira (rezoneamento): gravado por gatilho em customers.seller_id.
         "CREATE TABLE IF NOT EXISTS customer_seller_changes (id bigserial PRIMARY KEY, customer_id varchar NOT NULL, old_seller_id varchar, new_seller_id varchar, changed_at timestamptz NOT NULL DEFAULT now())",
         "CREATE INDEX IF NOT EXISTS idx_customer_seller_changes ON customer_seller_changes (customer_id, changed_at)",
@@ -131,7 +136,7 @@ export async function descontosTrocaPorVendedor(ym: string): Promise<Record<stri
     const r: any = await db.execute(sql`
       SELECT nf_seller_id, COALESCE(SUM(desconto), 0) AS total
       FROM troca_registros WHERE ym = ${ym} AND motivo = 'vencido' AND nf_seller_id IS NOT NULL
-        AND faturado_em IS NOT NULL AND COALESCE(origem, '') <> 'backfill'
+        AND faturado_em IS NOT NULL AND COALESCE(origem, '') <> 'backfill' AND desconto_cancelado_em IS NULL
       GROUP BY nf_seller_id`);
     for (const row of r.rows || []) out[String(row.nf_seller_id)] = n(row.total);
   } catch (e: any) {
@@ -807,7 +812,8 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       const r: any = await db.execute(sql`
         SELECT id, sales_card_id, customer_id, customer_name, motivo, categoria, temperatura_c, valor_troca, itens,
                nf_numero, to_char(nf_data, 'YYYY-MM-DD') AS nf_data, nf_seller_id, nf_seller_name,
-               comissao_pct, desconto, ym, created_at, faturado_em, nf_troca_numero, vendedor_regra
+               comissao_pct, desconto, ym, created_at, faturado_em, nf_troca_numero, vendedor_regra,
+               desconto_cancelado_em, desconto_cancelado_por_nome, admin_obs
         FROM troca_registros
         WHERE ym = ${ym} AND COALESCE(origem, '') <> 'backfill'
           AND (${soVencido} = false OR motivo = 'vencido')
@@ -832,11 +838,15 @@ export function registerTrocaRegistrosRoutes(app: Express) {
         faturado: !!x.faturado_em,
         faturadoEm: x.faturado_em,
         nfTroca: x.nf_troca_numero,
+        cancelado: !!x.desconto_cancelado_em,
+        canceladoEm: x.desconto_cancelado_em,
+        canceladoPor: x.desconto_cancelado_por_nome || null,
+        adminObs: x.admin_obs || null,
         vendedorRegra: x.vendedor_regra || null,
       }));
       const porVendedor: Record<string, { vendedorId: string; vendedor: string; trocas: number; valorTroca: number; desconto: number }> = {};
       for (const x of registros) {
-        if (x.motivo !== "vencido" || !x.faturado) continue; // só conta depois do faturamento da NF de troca
+        if (x.motivo !== "vencido" || !x.faturado || x.cancelado) continue; // só conta depois do faturamento da NF de troca
         const k = x.vendedorId || "sem-vendedor";
         const v = (porVendedor[k] = porVendedor[k] || { vendedorId: k, vendedor: x.vendedor || "Sem vendedor", trocas: 0, valorTroca: 0, desconto: 0 });
         v.trocas++;
@@ -1011,6 +1021,52 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       res.json({ migracoes: r.rows || [], porMotivo: c.rows || [] });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "falha" });
+    }
+  });
+
+  // Admin cancela (ou reativa) o desconto de comissão de uma troca, com justificativa (04/11/2026).
+  // O registro da troca fica; só deixa de abater a comissão. A ação fica na coluna "Ação do admin".
+  app.post("/api/trocas/:id/cancelar-desconto", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const u = req.currentUser;
+      if (u?.role !== "admin") return res.status(403).json({ message: "Só o admin pode cancelar desconto de troca" });
+      const just = String(req.body?.justificativa || "").trim();
+      if (just.length < 5) return res.status(400).json({ message: "Escreva a justificativa do cancelamento" });
+      const quem = [u?.firstName, u?.lastName].filter(Boolean).join(" ") || u?.email || "admin";
+      const quando = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      const r: any = await db.execute(sql`
+        UPDATE troca_registros SET desconto_cancelado_em = now(), desconto_cancelado_por = ${u?.id || null},
+          desconto_cancelado_por_nome = ${quem},
+          admin_obs = COALESCE(admin_obs || E'\n', '') || ${`[${quando} — ${quem}] Desconto cancelado: ${just}`},
+          updated_at = now()
+        WHERE id = ${req.params.id} AND desconto_cancelado_em IS NULL RETURNING id`);
+      if (!r.rows?.length) return res.status(409).json({ message: "Desconto já cancelado ou troca não encontrada" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      console.error("[TROCA] cancelar desconto:", e?.message || e);
+      res.status(500).json({ message: "Falha ao cancelar o desconto" });
+    }
+  });
+
+  app.post("/api/trocas/:id/reativar-desconto", authenticateUser, async (req: any, res) => {
+    try {
+      await ensureTrocaSchema();
+      const u = req.currentUser;
+      if (u?.role !== "admin") return res.status(403).json({ message: "Só o admin pode reativar desconto de troca" });
+      const just = String(req.body?.justificativa || "").trim();
+      if (just.length < 5) return res.status(400).json({ message: "Escreva a justificativa da reativação" });
+      const quem = [u?.firstName, u?.lastName].filter(Boolean).join(" ") || u?.email || "admin";
+      const quando = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      const r: any = await db.execute(sql`
+        UPDATE troca_registros SET desconto_cancelado_em = NULL, desconto_cancelado_por = NULL, desconto_cancelado_por_nome = NULL,
+          admin_obs = COALESCE(admin_obs || E'\n', '') || ${`[${quando} — ${quem}] Desconto reativado: ${just}`},
+          updated_at = now()
+        WHERE id = ${req.params.id} AND desconto_cancelado_em IS NOT NULL RETURNING id`);
+      if (!r.rows?.length) return res.status(409).json({ message: "O desconto desta troca não está cancelado" });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ message: "Falha ao reativar o desconto" });
     }
   });
 }
