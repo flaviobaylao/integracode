@@ -117,6 +117,7 @@ import Chamados from "@/pages/Chamados";
 import AcessosEDelegacoes from "@/pages/AcessosEDelegacoes";
 import SolicitacoesAlteracao from "@/pages/SolicitacoesAlteracao";
 import FeriadosAdmin from "@/pages/FeriadosAdmin";
+import AmostrasLeads from "@/pages/AmostrasLeads";
 import CenariosFiscais from "@/pages/CenariosFiscais";
 import TelefonesClientes from "@/pages/TelefonesClientes";
 import TabelaPrecos from "@/pages/TabelaPrecos";
@@ -343,6 +344,7 @@ function Router() {
           <Route path="/admin/acessos-delegacoes" component={AcessosEDelegacoes} />
           <Route path="/admin/solicitacoes-alteracao" component={SolicitacoesAlteracao} />
           <Route path="/admin/feriados" component={FeriadosAdmin} />
+          <Route path="/admin/amostras" component={AmostrasLeads} />
           <Route path="/admin/recursos-prospeccao" component={RecursosProspeccao} />
           <Route path="/cenarios-fiscais" component={CenariosFiscais} />
           <Route path="/telefones-clientes" component={TelefonesClientes} />
