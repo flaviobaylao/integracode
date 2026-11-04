@@ -13,7 +13,6 @@ import { corStatusAmostra, type Amostra } from "@/components/LeadAmostras";
 // 🧃 Painel do administrativo: pedidos de amostra para LEADS (aprovar, separar, entregar).
 type Linha = Amostra & { vendedor?: string; leadName?: string | null; leadPhone?: string | null; leadContact?: string | null; leadCity?: string | null; leadNeighborhood?: string | null };
 
-const brl = (n: number) => `R$ ${(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dBR = (s?: string | null) => { if (!s) return "—"; const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : new Date(s).toLocaleDateString("pt-BR"); };
 const FILTROS: { v: string; l: string }[] = [
   { v: "solicitado", l: "Aguardando aprovação" }, { v: "aprovado", l: "Aprovadas" }, { v: "separado", l: "Separadas" },
@@ -59,7 +58,7 @@ export default function AmostrasLeads() {
           <div className="h-10 w-10 rounded-lg bg-violet-600 text-white flex items-center justify-center"><FlaskConical className="h-5 w-5" /></div>
           <div>
             <h1 className="text-xl font-bold">Amostras para Leads</h1>
-            <p className="text-sm text-muted-foreground">Pedidos de degustação feitos pelos vendedores em leads. Aprovar, separar e confirmar a entrega. Não vira cliente, não fatura, não conta comissão.</p>
+            <p className="text-sm text-muted-foreground">Pedidos de degustação feitos pelos vendedores em leads. Regra: 1 unidade de cada sabor, só 350 ml, 1 pedido por lead. O custo entra no relatório de amostras da Indústria, igual ao de cliente.</p>
           </div>
         </div>
         <div className="flex gap-2"><Button variant="outline" size="sm" onClick={carregar}><RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Atualizar</Button><BackToDashboardButton /></div>
@@ -96,7 +95,7 @@ export default function AmostrasLeads() {
               </div>
               <div className="text-sm">{a.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}</div>
               <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
-                <span><strong>{a.totalUnits}</strong> un. · ref. {brl(a.totalValue)}</span>
+                <span><strong>{a.totalUnits}</strong> un. (1 de cada sabor, 350 ml)</span>
                 <span>{a.deliveryMode === "vendedor" ? "Vendedor leva" : "Rota de entrega"} · {dBR(a.deliveryDate)}{a.receiver ? ` · recebe ${a.receiver}` : ""}</span>
                 <span>Retorno p/ fechar: {dBR(a.returnDate)}</span>
                 {a.objective && <span>Objetivo: {a.objective}</span>}
