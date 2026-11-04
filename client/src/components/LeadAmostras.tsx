@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { FlaskConical, Plus, Loader2, Check, XCircle, Truck, User } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import CnpjLupa, { mascaraCnpj, type DadosReceita } from "@/components/CnpjLupa";
 
 // 🧃 Amostras para LEAD — degustação antes de virar cliente.
 // Seção reutilizável (Rota do Dia, Leads, Consulta no local): lista os pedidos de amostra do lead,
@@ -95,6 +96,7 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${corStatusAmostra[a.status] || ""}`}>{a.statusLabel}{a.status === "degustado" && a.tastingResult ? ` · ${rotuloDegust[a.tastingResult] || a.tastingResult}` : ""}</span>
           </div>
           <div className="text-muted-foreground">{a.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}</div>
+          {(a as any).cnpj && <div className="text-[11px] text-muted-foreground">CNPJ {(a as any).cnpj}{(a as any).companyName ? ` · ${(a as any).companyName}` : ""}{(a as any).pipelineItemId ? " · NF no Pipeline" : ""}</div>}
           <div className="text-[11px] text-muted-foreground">{a.totalUnits} un. · {a.deliveryMode === "vendedor" ? "vendedor leva" : "rota de entrega"}{a.deliveryDate ? ` ${dBR(a.deliveryDate)}` : ""}{a.returnDate ? ` · retorno ${dBR(a.returnDate)}` : ""}</div>
           {a.status === "recusado" && a.rejectedReason && <div className="text-[11px] text-red-700 dark:text-red-400">Motivo: {a.rejectedReason}</div>}
           {a.tastingNotes && <div className="text-[11px] italic text-muted-foreground">“{a.tastingNotes}”</div>}
@@ -142,6 +144,20 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCrea
   const [returnDate, setReturnDate] = useState(hojeMais(7));
   const [observation, setObservation] = useState("");
   const [salvando, setSalvando] = useState(false);
+  // 🧾 NF de amostra grátis exige CNPJ + dados da Receita
+  const [cnpj, setCnpj] = useState("");
+  const [fiscal, setFiscal] = useState<{ razaoSocial: string; endereco: string; bairro: string; cidade: string; uf: string; cep: string; ie: string; email: string; situacao?: string; jaCadastrado?: any } | null>(null);
+  const [ie, setIe] = useState("");
+  useEffect(() => {
+    apiRequest("GET", `/api/leads/${leadId}/fiscal`).then((d: any) => {
+      if (d?.cnpj) { setCnpj(d.cnpj); if (d.fiscal) { setFiscal(d.fiscal); setIe(d.fiscal.ie || ""); } }
+    }).catch(() => {});
+  }, [leadId]);
+  const onReceita = (d: DadosReceita) => {
+    setCnpj(d.cnpj);
+    setFiscal({ razaoSocial: d.razaoSocial, endereco: d.endereco, bairro: d.bairro, cidade: d.cidade, uf: d.estado, cep: d.cep, ie: "", email: d.email, situacao: d.situacao, jaCadastrado: d.jaCadastrado });
+  };
+  const cnpjOk = cnpj.replace(/\D/g, "").length === 14 && !!fiscal?.razaoSocial;
 
   useEffect(() => {
     apiRequest("GET", "/api/products").then((ps: any) => {
@@ -162,10 +178,11 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCrea
   const toggle = (id: string) => setQtd((q) => ({ ...q, [id]: q[id] ? 0 : 1 }));
 
   const enviar = async () => {
-    if (!itens.length) { toast({ title: "Escolha ao menos um produto", variant: "destructive" }); return; }
+    if (!itens.length) { toast({ title: "Escolha ao menos um sabor", variant: "destructive" }); return; }
+    if (!cnpjOk) { toast({ title: "Informe o CNPJ e use a lupa", description: "A amostra gera nota fiscal de amostra grátis, por isso precisa dos dados da Receita.", variant: "destructive" }); return; }
     setSalvando(true);
     try {
-      const d: any = await apiRequest("POST", `/api/leads/${leadId}/amostras`, { items: itens, deliveryMode, deliveryDate, receiver, objective, returnDate, observation });
+      const d: any = await apiRequest("POST", `/api/leads/${leadId}/amostras`, { items: itens, deliveryMode, deliveryDate, receiver, objective, returnDate, observation, cnpj, fiscal: { ...fiscal, ie } });
       if (d?.ok) { toast({ title: `Pedido de amostra #A-${d.amostra.id} enviado`, description: "Aguardando aprovação do administrativo." }); onCreated(); }
       else toast({ title: "Não foi possível enviar", description: d?.message, variant: "destructive" });
     } catch (e: any) { toast({ title: "Erro ao enviar", description: e?.message, variant: "destructive" }); }
@@ -184,6 +201,21 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCrea
             <div className="flex items-center justify-between"><span className="text-[11px] font-bold text-muted-foreground tracking-wide">1 · DADOS DO LEAD</span><span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border border-amber-400 text-amber-700">Lead · não é cliente</span></div>
             <div className="font-semibold">{leadName || "Lead"}</div>
             <div className="text-xs text-muted-foreground">{[leadContact && `Contato: ${leadContact}`, leadPhone].filter(Boolean).join(" · ") || "sem contato informado"}</div>
+            <div className="pt-2 space-y-1.5">
+              <Label className="text-xs">CNPJ <span className="text-red-600">*</span> <span className="text-muted-foreground font-normal">(a amostra gera NF de amostra grátis)</span></Label>
+              <div className="flex gap-1.5">
+                <Input value={cnpj} inputMode="numeric" placeholder="00.000.000/0000-00" onChange={(e) => { setCnpj(mascaraCnpj(e.target.value)); setFiscal(null); }} data-testid="input-amostra-cnpj" />
+                <CnpjLupa cnpj={cnpj} onData={onReceita} testId="button-amostra-cnpj-lupa" />
+              </div>
+              {fiscal?.razaoSocial && (
+                <div className={`rounded-md border p-2 text-xs space-y-0.5 ${fiscal.jaCadastrado || (fiscal.situacao && fiscal.situacao.toUpperCase() !== "ATIVA") ? "border-red-300 bg-red-50 dark:bg-red-950/30" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"}`}>
+                  <div className="font-semibold">{fiscal.razaoSocial}{fiscal.situacao ? ` · ${fiscal.situacao}` : ""}</div>
+                  <div className="text-muted-foreground">{[fiscal.endereco, fiscal.bairro, fiscal.cidade && `${fiscal.cidade}/${fiscal.uf}`, fiscal.cep && `CEP ${fiscal.cep}`].filter(Boolean).join(" · ")}</div>
+                  {fiscal.jaCadastrado && <div className="text-red-700 dark:text-red-400 font-medium">⚠️ CNPJ já cadastrado: {fiscal.jaCadastrado.nome}</div>}
+                  <div className="flex items-center gap-2 pt-1"><Label className="text-[11px] whitespace-nowrap">Inscrição Estadual</Label><Input value={ie} onChange={(e) => setIe(e.target.value)} placeholder="isento / número" className="h-8 text-xs" /></div>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="rounded-md border p-3 space-y-2">
@@ -236,13 +268,13 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCrea
           <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5">
             <div className="font-semibold">Como esse pedido é tratado</div>
             <div>• Gera um pedido de amostra ligado ao lead, não a um cliente.</div>
-            <div>• Não vira cliente ativo, não conta comissão nem positivação. O custo entra no relatório de amostras, igual ao de cliente.</div>
+            <div>• Na aprovação, o Integra cria um cadastro <strong>em prospecção</strong> (inativo) com o CNPJ e emite a <strong>NF de amostra grátis</strong> pelo Pipeline, igual ao cliente. Não conta comissão nem positivação.</div>
             <div>• Só 350 ml, 1 unidade de cada sabor, 1 pedido por lead. Vai para aprovação do administrativo e o lead ganha retorno agendado na data acima.</div>
           </div>
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button className="bg-violet-600 hover:bg-violet-700 text-white" disabled={salvando || !itens.length} onClick={enviar} data-testid="button-enviar-amostra">
+          <Button className="bg-violet-600 hover:bg-violet-700 text-white" disabled={salvando || !itens.length || !cnpjOk} onClick={enviar} data-testid="button-enviar-amostra">
             {salvando ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Enviando…</> : `Enviar pedido (${totalUn} sabor${totalUn === 1 ? "" : "es"})`}
           </Button>
         </DialogFooter>
