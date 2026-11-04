@@ -35,6 +35,7 @@ import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import RouteMap from "@/components/RouteMap";
 import LeadActions from "@/components/LeadActions";
 import FotoPicker from "@/components/FotoPicker";
+import LeadAmostras, { SeloAmostra } from "@/components/LeadAmostras";
 import NovoLeadDialog from "@/components/NovoLeadDialog";
 import SalesCardDetailsModal from "@/components/SalesCardDetailsModal";
 import SaleEditModal from "@/components/SaleEditModal";
@@ -363,6 +364,21 @@ export default function RotaDoDia() {
     enabled: !!selectedDate,
   });
   const holidayNotes = holidayNotesData?.notes || {};
+
+  // 🧃 Status da amostra mais recente de cada lead da rota (selo no cabeçalho do card)
+  const leadIdsRota = useMemo(() => {
+    const vs: any[] = (response as any)?.visits || (response as any)?.route?.visits || [];
+    return vs.filter((v: any) => v.visitType === 'lead').map((v: any) => String(v.entityId || v.leadId)).filter(Boolean).sort();
+  }, [response]);
+  const { data: amostrasResumo } = useQuery<any>({
+    queryKey: ['/api/amostras/resumo', leadIdsRota.join(',')],
+    queryFn: async () => {
+      const r = await fetch('/api/amostras/resumo', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ leadIds: leadIdsRota }) });
+      return r.ok ? r.json() : { porLead: {} };
+    },
+    enabled: leadIdsRota.length > 0,
+  });
+  const amostrasPorLead: Record<string, any> = amostrasResumo?.porLead || {};
 
   // Repescagem2 (Fase 3): camada de repescagem sobreposta na rota do dia.
   // Decisao do cliente sobre a visita de hoje (resposta ao aviso do WhatsApp).
@@ -2926,6 +2942,10 @@ export default function RotaDoDia() {
                                 </Badge>
                               )}
                               </>)}
+                              {/* 🧃 Selo da amostra do lead (status mais recente) — visível mesmo recolhido */}
+                              {isLead && amostrasPorLead[String((visit as any).entityId || (visit as any).leadId)] && (
+                                <SeloAmostra status={amostrasPorLead[String((visit as any).entityId || (visit as any).leadId)].status} tastingResult={amostrasPorLead[String((visit as any).entityId || (visit as any).leadId)].tastingResult} />
+                              )}
                               {/* 📷 Miniatura da foto do LEAD (cadastro) — visível mesmo recolhido */}
                               {isLead && (visit as any).leadHasPhoto && (
                                 <img
@@ -3011,6 +3031,10 @@ export default function RotaDoDia() {
                                       </>
                                     ) : 'sem ficha do Google'}
                                   </p>
+                                  {/* 🧃 Amostras para degustação (pedido ligado ao LEAD, sem virar cliente) */}
+                                  <div className="pt-1.5">
+                                    <LeadAmostras leadId={String(lv.entityId || lv.leadId)} leadName={lv.customerName} leadContact={lv.leadContact} leadPhone={lv.leadPhone} compact onChanged={() => refetch()} />
+                                  </div>
                                 </div>
                               );
                             })()}

@@ -14,7 +14,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
 import FotoPicker, { fotoParaDataUrl } from "@/components/FotoPicker";
-import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check, Camera } from "lucide-react";
+import LeadAmostras from "@/components/LeadAmostras";
+import { Users, Phone, MapPin, Plus, Edit, Trash2, Navigation, X, FileText, History, Download, CheckCircle, XCircle, Clock, ChevronsUpDown, Check, Camera, FlaskConical } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,8 @@ export default function LeadsManagement() {
   const [selectedLeadForVisitHistory, setSelectedLeadForVisitHistory] = useState<Lead | null>(null);
   // Menu de ações do lead (Registro, Converter, Não Convertido, Prorrogar) — usado por vendedor/telemarketing.
   const [acoesLead, setAcoesLead] = useState<Lead | null>(null);
+  // 🧃 Amostras para degustação do lead
+  const [amostraLead, setAmostraLead] = useState<Lead | null>(null);
   // 📷 Foto do lead direto pelo card (câmera ou galeria/arquivo) → PATCH leads.photo
   const [fotoLead, setFotoLead] = useState<Lead | null>(null);
   const [fotoNova, setFotoNova] = useState<string>("");
@@ -473,6 +476,9 @@ export default function LeadsManagement() {
         </Button>
         <Button size="sm" variant="outline" className="border-slate-400 text-slate-700 dark:text-slate-200 flex-1 min-w-[46%]" onClick={() => run(abrirFotoLead)} data-testid={`acao-foto-${lead.id}`}>
           <Camera className="h-4 w-4 mr-1" /> Foto
+        </Button>
+        <Button size="sm" variant="outline" className="border-violet-400 text-violet-700 dark:text-violet-300 flex-1 min-w-[46%]" onClick={() => run((l) => setAmostraLead(l))} data-testid={`acao-amostra-${lead.id}`}>
+          <FlaskConical className="h-4 w-4 mr-1" /> Amostra
         </Button>
       </div>
     );
@@ -1815,6 +1821,16 @@ export default function LeadsManagement() {
             <DialogTitle className="text-base truncate">{acoesLead?.fantasyName || 'Ações do lead'}</DialogTitle>
           </DialogHeader>
           {acoesLead && renderAcoesLead(acoesLead, () => setAcoesLead(null))}
+        </DialogContent>
+      </Dialog>
+
+      {/* 🧃 Amostras para degustação do lead */}
+      <Dialog open={!!amostraLead} onOpenChange={(open) => { if (!open) setAmostraLead(null); }}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base truncate">Amostras · {amostraLead?.fantasyName || 'Lead'}</DialogTitle>
+          </DialogHeader>
+          {amostraLead && <LeadAmostras leadId={amostraLead.id} leadName={amostraLead.fantasyName} leadContact={amostraLead.contact} leadPhone={amostraLead.phone} onChanged={() => queryClient.invalidateQueries({ queryKey: ['/api/leads'] })} />}
         </DialogContent>
       </Dialog>
 
