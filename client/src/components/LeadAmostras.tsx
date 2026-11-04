@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FlaskConical, Plus, Loader2, Minus, Check, XCircle, Truck, User } from "lucide-react";
+import { FlaskConical, Plus, Loader2, Check, XCircle, Truck, User } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,9 +38,10 @@ export const corStatusAmostra: Record<string, string> = {
 };
 const rotuloDegust: Record<string, string> = { gostou: "Gostou", pensar: "Vai pensar", nao_gostou: "Não gostou" };
 
-// Kit padrão: 2× Maracujá, 2× Acerola, 2× Limonada (350 ml) — casa pelo nome do produto
-const KIT_PADRAO = [/maracuja.*350/i, /acerola.*350/i, /limonada.*350/i];
+// Regra (04/11/2026): amostra é 1 unidade de cada sabor, SOMENTE 350 ml, 1 pedido por lead.
+const SO_350 = (nome: string) => /350/.test(String(nome || ""));
 const norm = (s: string) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const nomeCurto = (n: string) => String(n || "").replace(/suco misto de fruta\s*-\s*/i, "").replace(/\s*350\s*ml/i, "").trim();
 
 export function SeloAmostra({ status, tastingResult, className = "" }: { status?: string | null; tastingResult?: string | null; className?: string }) {
   if (!status) return null;
@@ -54,7 +55,7 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
   const { toast } = useToast();
   const [lista, setLista] = useState<Amostra[]>([]);
   const [carregando, setCarregando] = useState(true);
-  const [cfg, setCfg] = useState<{ maxUnidades: number; maxPedidosLead: number }>({ maxUnidades: 12, maxPedidosLead: 2 });
+  const [cfg, setCfg] = useState<{ maxPedidosLead: number }>({ maxPedidosLead: 1 });
   const [formOpen, setFormOpen] = useState(false);
   const [degustDe, setDegustDe] = useState<Amostra | null>(null);
 
@@ -68,8 +69,9 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
 
   const ativas = lista.filter((a) => !["recusado", "cancelado"].includes(a.status));
   const ultima = ativas[0];
-  const podePedir = ativas.length < cfg.maxPedidosLead && (!ultima || ultima.status === "degustado");
-  const motivoBloqueio = ativas.length >= cfg.maxPedidosLead ? `Limite de ${cfg.maxPedidosLead} amostras por lead` : (ultima && ultima.status !== "degustado" ? "Registre a degustação da amostra atual para pedir outra" : "");
+  const podePedir = ativas.length < cfg.maxPedidosLead;
+  const motivoBloqueio = ativas.length >= cfg.maxPedidosLead ? (cfg.maxPedidosLead === 1 ? "Este lead já teve a sua amostra (1 por lead)" : `Limite de ${cfg.maxPedidosLead} amostras por lead`) : "";
+  void ultima;
 
   const mudarStatus = async (a: Amostra, status: string) => {
     try {
@@ -93,7 +95,7 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${corStatusAmostra[a.status] || ""}`}>{a.statusLabel}{a.status === "degustado" && a.tastingResult ? ` · ${rotuloDegust[a.tastingResult] || a.tastingResult}` : ""}</span>
           </div>
           <div className="text-muted-foreground">{a.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}</div>
-          <div className="text-[11px] text-muted-foreground">{a.totalUnits} un. · ref. {brl(a.totalValue)} · {a.deliveryMode === "vendedor" ? "vendedor leva" : "rota de entrega"}{a.deliveryDate ? ` ${dBR(a.deliveryDate)}` : ""}{a.returnDate ? ` · retorno ${dBR(a.returnDate)}` : ""}</div>
+          <div className="text-[11px] text-muted-foreground">{a.totalUnits} un. · {a.deliveryMode === "vendedor" ? "vendedor leva" : "rota de entrega"}{a.deliveryDate ? ` ${dBR(a.deliveryDate)}` : ""}{a.returnDate ? ` · retorno ${dBR(a.returnDate)}` : ""}</div>
           {a.status === "recusado" && a.rejectedReason && <div className="text-[11px] text-red-700 dark:text-red-400">Motivo: {a.rejectedReason}</div>}
           {a.tastingNotes && <div className="text-[11px] italic text-muted-foreground">“{a.tastingNotes}”</div>}
           <div className="flex gap-1.5 flex-wrap pt-0.5">
@@ -113,10 +115,10 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
       <Button size="sm" className="w-full h-10 bg-violet-600 hover:bg-violet-700 text-white" disabled={!podePedir || carregando} onClick={() => setFormOpen(true)} data-testid={`button-pedir-amostra-${leadId}`}>
         <Plus className="h-4 w-4 mr-1" /> Pedir amostra
       </Button>
-      <p className="text-[10px] text-muted-foreground text-center">{motivoBloqueio || "Aprovado pelo administrativo · não conta como cliente ativo nem comissão"}</p>
+      <p className="text-[10px] text-muted-foreground text-center">{motivoBloqueio || "1 un. de cada sabor, só 350 ml · 1 por lead · aprovado pelo administrativo"}</p>
 
       {formOpen && (
-        <FormAmostra leadId={leadId} leadName={leadName} leadContact={leadContact} leadPhone={leadPhone} cfg={cfg}
+        <FormAmostra leadId={leadId} leadName={leadName} leadContact={leadContact} leadPhone={leadPhone}
           onClose={() => setFormOpen(false)} onCreated={() => { setFormOpen(false); carregar(); onChanged?.(); queryClient.invalidateQueries({ queryKey: ["/api/leads"] }); }} />
       )}
       {degustDe && (
@@ -126,8 +128,8 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
   );
 }
 
-function FormAmostra({ leadId, leadName, leadContact, leadPhone, cfg, onClose, onCreated }: {
-  leadId: string; leadName?: string; leadContact?: string | null; leadPhone?: string | null; cfg: { maxUnidades: number }; onClose: () => void; onCreated: () => void;
+function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCreated }: {
+  leadId: string; leadName?: string; leadContact?: string | null; leadPhone?: string | null; onClose: () => void; onCreated: () => void;
 }) {
   const { toast } = useToast();
   const [produtos, setProdutos] = useState<any[]>([]);
@@ -143,11 +145,12 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, cfg, onClose, o
 
   useEffect(() => {
     apiRequest("GET", "/api/products").then((ps: any) => {
-      const lista = (Array.isArray(ps) ? ps : []).filter((p: any) => p.isActive !== false && !/bombona/i.test(p.name || ""));
+      // só sabores de 350 ml (regra da amostra)
+      const lista = (Array.isArray(ps) ? ps : []).filter((p: any) => p.isActive !== false && !/bombona/i.test(p.name || "") && SO_350(p.name));
       setProdutos(lista);
-      // kit padrão pré-marcado
+      // todos os sabores pré-marcados (1 un. cada)
       const q: Record<string, number> = {};
-      for (const rx of KIT_PADRAO) { const p = lista.find((x: any) => rx.test(norm(x.name))); if (p) q[p.id] = 2; }
+      for (const p of lista) q[p.id] = 1;
       setQtd(q);
     }).catch(() => setProdutos([]));
   }, []);
@@ -155,9 +158,8 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, cfg, onClose, o
   const valorRef = (p: any) => Number(p.resaleGoianiaPrice || p.wholesalePrice || p.price || 0);
   const itens = useMemo(() => produtos.map((p) => ({ productId: p.id, name: p.name, qty: qtd[p.id] || 0, unitValue: valorRef(p) })).filter((i) => i.qty > 0), [produtos, qtd]);
   const totalUn = itens.reduce((s, i) => s + i.qty, 0);
-  const totalVal = itens.reduce((s, i) => s + i.qty * i.unitValue, 0);
   const visiveis = produtos.filter((p) => !busca || norm(p.name).includes(norm(busca)));
-  const set = (id: string, v: number) => setQtd((q) => ({ ...q, [id]: Math.max(0, v) }));
+  const toggle = (id: string) => setQtd((q) => ({ ...q, [id]: q[id] ? 0 : 1 }));
 
   const enviar = async () => {
     if (!itens.length) { toast({ title: "Escolha ao menos um produto", variant: "destructive" }); return; }
@@ -175,7 +177,7 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, cfg, onClose, o
       <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><FlaskConical className="h-5 w-5 text-violet-600" /> Pedir amostra</DialogTitle>
-          <DialogDescription>Degustação para fechar negócio · sem faturamento, sem comissão.</DialogDescription>
+          <DialogDescription>Degustação para fechar negócio · 1 unidade de cada sabor, só 350 ml.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="rounded-md border p-3 text-sm space-y-0.5">
@@ -185,25 +187,22 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, cfg, onClose, o
           </div>
 
           <div className="rounded-md border p-3 space-y-2">
-            <div className="flex items-center justify-between"><span className="text-[11px] font-bold text-muted-foreground tracking-wide">2 · PRODUTOS DA AMOSTRA</span><span className="text-[11px] text-muted-foreground">máx. {cfg.maxUnidades} un.</span></div>
+            <div className="flex items-center justify-between"><span className="text-[11px] font-bold text-muted-foreground tracking-wide">2 · SABORES DA AMOSTRA</span><span className="text-[11px] text-muted-foreground">1 un. de cada · só 350 ml</span></div>
             <div className="flex gap-2">
-              <Button type="button" size="sm" variant="outline" className="flex-1 border-violet-400 text-violet-700" onClick={() => { const q: Record<string, number> = {}; for (const rx of KIT_PADRAO) { const p = produtos.find((x: any) => rx.test(norm(x.name))); if (p) q[p.id] = 2; } setQtd(q); }}>Kit padrão (6 un.)</Button>
+              <Button type="button" size="sm" variant="outline" className="flex-1 border-violet-400 text-violet-700" onClick={() => { const q: Record<string, number> = {}; for (const p of produtos) q[p.id] = 1; setQtd(q); }}>Todos os sabores</Button>
               <Button type="button" size="sm" variant="outline" className="flex-1" onClick={() => setQtd({})}>Limpar</Button>
             </div>
-            <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar produto…" className="h-9 text-sm" />
-            <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+            {produtos.length > 8 && <Input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar sabor…" className="h-9 text-sm" />}
+            <div className="grid grid-cols-2 gap-1.5">
               {visiveis.map((p) => (
-                <div key={p.id} className={`flex items-center gap-2 rounded-md border px-2 py-1.5 ${qtd[p.id] ? "border-violet-300 bg-violet-50/60 dark:bg-violet-950/20" : ""}`}>
-                  <div className="flex-1 min-w-0"><div className="text-xs font-medium truncate">{p.name}</div><div className="text-[10px] text-muted-foreground">ref. {brl(valorRef(p))}</div></div>
-                  <Button type="button" size="icon" variant="outline" className="h-8 w-8" aria-label="Menos" onClick={() => set(p.id, (qtd[p.id] || 0) - 1)}><Minus className="h-3.5 w-3.5" /></Button>
-                  <span className="w-5 text-center text-sm font-bold">{qtd[p.id] || 0}</span>
-                  <Button type="button" size="icon" variant="outline" className="h-8 w-8 border-violet-400 text-violet-700" aria-label="Mais" onClick={() => set(p.id, (qtd[p.id] || 0) + 1)}><Plus className="h-3.5 w-3.5" /></Button>
-                </div>
+                <button type="button" key={p.id} onClick={() => toggle(p.id)} aria-pressed={!!qtd[p.id]} className={`flex items-center gap-2 rounded-md border px-2 py-2 text-left min-h-[44px] ${qtd[p.id] ? "border-violet-500 bg-violet-50 dark:bg-violet-950/30" : "bg-background"}`} data-testid={`sabor-${p.id}`}>
+                  <span className={`h-5 w-5 rounded border flex items-center justify-center shrink-0 ${qtd[p.id] ? "bg-violet-600 border-violet-600 text-white" : "border-gray-300"}`}>{qtd[p.id] ? <Check className="h-3.5 w-3.5" /> : null}</span>
+                  <span className="text-xs font-medium leading-tight">{nomeCurto(p.name)} <span className="text-muted-foreground font-normal">350 ml</span></span>
+                </button>
               ))}
-              {produtos.length === 0 && <p className="text-xs text-muted-foreground text-center py-3">Carregando produtos…</p>}
+              {produtos.length === 0 && <p className="col-span-2 text-xs text-muted-foreground text-center py-3">Carregando sabores…</p>}
             </div>
-            <div className="flex items-center justify-between rounded-md bg-muted px-2.5 py-1.5 text-xs"><span>{totalUn} unidade(s)</span><span className="font-semibold">valor de referência {brl(totalVal)}</span></div>
-            {totalUn > cfg.maxUnidades && <p className="text-[11px] text-red-600">Acima do limite de {cfg.maxUnidades} unidades — só o gestor pode aprovar um pedido assim.</p>}
+            <div className="flex items-center justify-between rounded-md bg-muted px-2.5 py-1.5 text-xs"><span>{totalUn} sabor(es) · {totalUn} unidade(s)</span><span className="text-muted-foreground">custo tratado como amostra, igual ao de cliente</span></div>
           </div>
 
           <div className="rounded-md border p-3 space-y-2">
@@ -237,14 +236,14 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, cfg, onClose, o
           <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5">
             <div className="font-semibold">Como esse pedido é tratado</div>
             <div>• Gera um pedido de amostra ligado ao lead, não a um cliente.</div>
-            <div>• Não vira cliente ativo, não fatura, não conta comissão nem positivação.</div>
-            <div>• Vai para aprovação do administrativo. O lead ganha retorno agendado na data acima.</div>
+            <div>• Não vira cliente ativo, não conta comissão nem positivação. O custo entra no relatório de amostras, igual ao de cliente.</div>
+            <div>• Só 350 ml, 1 unidade de cada sabor, 1 pedido por lead. Vai para aprovação do administrativo e o lead ganha retorno agendado na data acima.</div>
           </div>
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button className="bg-violet-600 hover:bg-violet-700 text-white" disabled={salvando || !itens.length} onClick={enviar} data-testid="button-enviar-amostra">
-            {salvando ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Enviando…</> : `Enviar pedido (${totalUn} un.)`}
+            {salvando ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Enviando…</> : `Enviar pedido (${totalUn} sabor${totalUn === 1 ? "" : "es"})`}
           </Button>
         </DialogFooter>
       </DialogContent>
