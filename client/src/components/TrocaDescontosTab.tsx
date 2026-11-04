@@ -4,7 +4,9 @@
 // descontada da comissão do mês da troca. Trocas de qualidade aparecem com
 // "Mostrar também trocas de qualidade", sem desconto.
 import { useState } from "react";
-import { useQuery } from "@/lib/queryClient";
+import { useQuery, useQueryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
@@ -33,6 +35,7 @@ interface Registro {
   temperatura: number | null; valorTroca: number; nfNumero: string | null; nfData: string | null;
   vendedorId: string | null; vendedor: string | null; comissaoPct: number; desconto: number; data: string;
   faturado?: boolean; nfTroca?: string | null; vendedorRegra?: string | null;
+  cancelado?: boolean; canceladoPor?: string | null; adminObs?: string | null;
 }
 interface Resp {
   ym: string; registros: Registro[];
@@ -47,6 +50,30 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
   const ym = `${ano}-${String(mes).padStart(2, '0')}`;
   const anos = Array.from({ length: 3 }, (_, i) => hoje.getFullYear() - 1 + i);
   const equipe = ['admin', 'coordinator', 'administrative'].includes((user as any).role);
+  const isAdmin = (user as any).role === 'admin';
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [acaoId, setAcaoId] = useState<string | null>(null);
+  // Admin cancela (ou reativa) o desconto com justificativa (04/11/2026).
+  const acaoAdmin = async (r: Registro, tipo: 'cancelar' | 'reativar') => {
+    const just = window.prompt(tipo === 'cancelar'
+      ? `Cancelar o desconto de ${brl(r.desconto)} de ${r.vendedor || 'vendedor'} (${r.cliente || ''})?\n\nJustificativa:`
+      : `Reativar o desconto de ${brl(r.desconto)} de ${r.vendedor || 'vendedor'} (${r.cliente || ''})?\n\nJustificativa:`, '');
+    if (just === null) return;
+    if (just.trim().length < 5) { toast({ title: 'Justificativa obrigatória', description: 'Escreva ao menos 5 caracteres.', variant: 'destructive' }); return; }
+    try {
+      setAcaoId(r.id);
+      const res = await fetch(`/api/trocas/${r.id}/${tipo === 'cancelar' ? 'cancelar' : 'reativar'}-desconto`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ justificativa: just.trim() }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.message || 'Falha');
+      toast({ title: tipo === 'cancelar' ? 'Desconto cancelado' : 'Desconto reativado' });
+      qc.invalidateQueries({ queryKey: ['/api/trocas/descontos'] });
+    } catch (e: any) {
+      toast({ title: 'Não foi possível concluir', description: e?.message, variant: 'destructive' });
+    } finally { setAcaoId(null); }
+  };
 
   const { data, isLoading } = useQuery<Resp>({
     queryKey: ['/api/trocas/descontos', ym, todos],
@@ -162,6 +189,7 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                   <TableHead className="text-right">% comissão</TableHead>
                   <TableHead className="text-right">Desconto</TableHead>
                   <TableHead>Situação</TableHead>
+                  <TableHead>Ação do admin</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -177,8 +205,19 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                     <TableCell>{r.vendedor || '—'}{r.vendedorRegra && <div className="text-[11px] text-muted-foreground">{r.vendedorRegra}</div>}</TableCell>
                     <TableCell className="text-right">{brl(r.valorTroca)}</TableCell>
                     <TableCell className="text-right">{r.motivo === 'vencido' ? `${r.comissaoPct.toFixed(2).replace('.', ',')}%` : '—'}</TableCell>
-                    <TableCell className={`text-right font-medium ${r.faturado ? 'text-red-700' : 'text-muted-foreground'}`}>{r.desconto > 0 ? `− ${brl(r.desconto)}` : '—'}</TableCell>
-                    <TableCell className="text-xs">{r.motivo !== 'vencido' ? '—' : r.faturado ? <span className="text-green-700 font-semibold">Faturada{r.nfTroca ? ` · NF ${r.nfTroca}` : ''}</span> : <span className="text-amber-700">Aguardando faturamento</span>}</TableCell>
+                    <TableCell className={`text-right font-medium ${r.cancelado ? 'text-muted-foreground line-through' : r.faturado ? 'text-red-700' : 'text-muted-foreground'}`}>{r.desconto > 0 ? `− ${brl(r.desconto)}` : '—'}</TableCell>
+                    <TableCell className="text-xs">{r.motivo !== 'vencido' ? '—' : r.cancelado ? <span className="text-gray-600 font-semibold">Desconto cancelado</span> : r.faturado ? <span className="text-green-700 font-semibold">Faturada{r.nfTroca ? ` · NF ${r.nfTroca}` : ''}</span> : <span className="text-amber-700">Aguardando faturamento</span>}</TableCell>
+                    <TableCell className="text-xs max-w-[22rem]">
+                      {r.adminObs && <div className="whitespace-pre-line text-gray-700 mb-1">{r.adminObs}</div>}
+                      {isAdmin && r.motivo === 'vencido' && r.desconto > 0 && (
+                        r.cancelado ? (
+                          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={acaoId === r.id} onClick={() => acaoAdmin(r, 'reativar')} data-testid={`button-reativar-desconto-${r.id}`}>Reativar desconto</Button>
+                        ) : (
+                          <Button size="sm" variant="outline" className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-50" disabled={acaoId === r.id} onClick={() => acaoAdmin(r, 'cancelar')} data-testid={`button-cancelar-desconto-${r.id}`}>Cancelar desconto</Button>
+                        )
+                      )}
+                      {!r.adminObs && !(isAdmin && r.motivo === 'vencido' && r.desconto > 0) && <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -190,6 +229,7 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                     <TableCell />
                     <TableCell className="text-right text-red-700">− {brl(totalDesconto)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">só faturadas</TableCell>
+                    <TableCell />
                   </TableRow>
                 </TableFooter>
               )}
