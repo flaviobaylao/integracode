@@ -8,9 +8,15 @@
 // Regras (Flavio, 04/11/2026): 1 unidade de cada sabor, SOMENTE 350 ml, 1 pedido por lead
 // (amostra_max_pedidos_lead em system_settings, padrão 1). A data de retorno vira o próximo contato do lead.
 // Custo: as garrafas cedidas entram no mesmo relatório de trocas/amostras da Indústria (sem diferenciar lead/cliente).
+// NF: o lead precisa ter NOTA FISCAL de amostra grátis (CFOP 5911), igual ao cliente. Por isso o pedido exige o
+// CNPJ (lupa da Receita) e, na APROVAÇÃO, o Integra cria um cadastro de cliente "em prospecção" (is_lead = true,
+// inativo), um card de venda com operação 'amostra' e o joga no Pipeline de Faturamento — o mesmo caminho da
+// amostra de cliente. Quando o lead é convertido, esse cadastro é reaproveitado (não duplica CNPJ).
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
+import { storage } from './storage';
+import { receitaService } from './receitaIntegration';
 
 type Req = any; type Res = any;
 
@@ -45,6 +51,11 @@ async function ensureTabela() {
     created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_lead_sample_orders_lead ON lead_sample_orders (lead_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_lead_sample_orders_status ON lead_sample_orders (status)`);
+  // Dados fiscais (NF de amostra grátis): no pedido (snapshot) e no lead (reaproveitado na conversão)
+  for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal jsonb', 'customer_id varchar', 'sales_card_id varchar', 'pipeline_item_id varchar'])
+    await db.execute(sql.raw(`ALTER TABLE lead_sample_orders ADD COLUMN IF NOT EXISTS ${c}`));
+  for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal_address text', 'fiscal_neighborhood varchar(120)', 'fiscal_city varchar(120)', 'fiscal_state varchar(2)', 'fiscal_zip varchar(12)', 'state_registration varchar(30)', 'email varchar(160)'])
+    await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ${c}`));
   _tabela = true;
 }
 
@@ -73,6 +84,8 @@ function serial(r: any) {
     tastingResult: r.tasting_result, tastingNotes: r.tasting_notes, tastedAt: r.tasted_at,
     createdAt: r.created_at, updatedAt: r.updated_at,
     leadName: r.lead_name || null, leadPhone: r.lead_phone || null, leadContact: r.lead_contact || null, leadCity: r.lead_city || null, leadNeighborhood: r.lead_neighborhood || null,
+    cnpj: r.cnpj || null, companyName: r.company_name || null, fiscal: r.fiscal || null,
+    customerId: r.customer_id || null, salesCardId: r.sales_card_id || null, pipelineItemId: r.pipeline_item_id || null,
   };
 }
 
@@ -83,10 +96,89 @@ async function registrarVisitaLead(leadId: string, texto: string, user: any) {
   } catch { /* tabela/colunas podem variar — histórico é complementar */ }
 }
 
+// Cria/reaproveita o cadastro em prospecção (is_lead=true, inativo) pelo CNPJ, monta o card 'amostra' com os
+// preços de tabela dos produtos e envia ao Pipeline de Faturamento (skipDebtCheck: a aprovação do admin É a liberação).
+async function emitirAmostraNoPipeline(a: any, user: any): Promise<{ ok: boolean; message?: string }> {
+  const cnpjDig = String(a.cnpj || '').replace(/\D/g, '');
+  if (cnpjDig.length !== 14) return { ok: false, message: 'Este pedido não tem CNPJ. Peça ao vendedor para refazer com o CNPJ do lead.' };
+  const f: any = a.fiscal || {};
+  const lr: any = await db.execute(sql`SELECT * FROM leads WHERE id = ${a.lead_id} LIMIT 1`);
+  const lead: any = lr.rows?.[0];
+  if (!lead) return { ok: false, message: 'Lead não encontrado.' };
+  // 1) cliente pelo CNPJ (qualquer um existente serve — evita duplicar); senão cria em prospecção
+  let customerId: string | null = null;
+  const ex: any = await db.execute(sql`SELECT id, is_active, is_lead FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g') = ${cnpjDig} ORDER BY is_active DESC LIMIT 1`);
+  if (ex.rows?.[0]) customerId = String(ex.rows[0].id);
+  else {
+    const sellerId = a.seller_id || lead.assigned_to || user.id;
+    const c: any = await storage.createCustomer({
+      name: f.razaoSocial || a.company_name || lead.fantasy_name,
+      fantasyName: lead.fantasy_name,
+      companyName: f.razaoSocial || a.company_name || null,
+      customerType: 'pessoa_juridica',
+      cnpj: receitaService.formatarCNPJ(cnpjDig),
+      stateRegistration: f.ie || null,
+      phone: lead.phone || '(00) 00000-0000',
+      email: f.email || lead.email || null,
+      address: f.endereco || lead.fiscal_address || 'Endereço não informado',
+      neighborhood: f.bairro || lead.neighborhood || null,
+      city: f.cidade || lead.city || null,
+      state: f.uf || 'GO',
+      zipCode: f.cep || null,
+      sellerId,
+      weekdays: JSON.stringify(['Seg']),
+      visitPeriodicity: 'semanal',
+      latitude: lead.latitude != null ? String(lead.latitude) : null,
+      longitude: lead.longitude != null ? String(lead.longitude) : null,
+      isActive: false,   // em prospecção: não é cliente ativo, não entra em agenda/positivação/comissão
+      isLead: true,
+    } as any);
+    customerId = String(c.id);
+    try { await db.execute(sql.raw("ALTER TABLE customers ADD COLUMN IF NOT EXISTS origin_lead_id varchar")); await db.execute(sql`UPDATE customers SET origin_lead_id = ${a.lead_id} WHERE id = ${customerId}`); } catch {}
+  }
+  // 2) produtos com preço de tabela (a NF de amostra grátis carrega o valor do produto)
+  const items: any[] = Array.isArray(a.items) ? a.items : [];
+  const products: any[] = []; let saleValue = 0;
+  for (const it of items) {
+    let pd: any = null;
+    try { pd = it.productId ? await storage.getProduct(String(it.productId)) : null; } catch {}
+    if (!pd) { try { const pr: any = await db.execute(sql`SELECT * FROM products WHERE name = ${it.name} LIMIT 1`); pd = pr.rows?.[0] || null; if (pd && pd.retail_price) pd.retailPrice = pd.retail_price; } catch {} }
+    const unit = Number(pd?.retailPrice ?? pd?.price ?? it.unitValue ?? 0) || 0;
+    const qty = Number(it.qty) || 1;
+    products.push({ productId: pd?.id || it.productId || null, id: pd?.id || it.productId || null, name: pd?.name || it.name, quantity: qty, unitPrice: unit, totalPrice: Math.round(unit * qty * 100) / 100 });
+    saleValue += unit * qty;
+  }
+  if (!(saleValue > 0)) return { ok: false, message: 'Produtos sem preço de tabela — não dá para emitir a NF de amostra.' };
+  // 3) card de venda com operação 'amostra' (concluído) → pipeline
+  const card: any = await storage.createSalesCard({
+    customerId, sellerId: a.seller_id || lead.assigned_to || user.id, status: 'completed', isPermanent: false, isRecurring: false,
+    routeDay: 'Seg', recurrenceType: 'semanal', scheduledDate: new Date(), completedDate: new Date(),
+    saleValue: saleValue.toFixed(2), products: products as any, paymentMethod: 'a_vista', operationType: 'amostra', boletoDays: 0,
+    customerLatitude: lead.latitude != null ? String(lead.latitude) : null, customerLongitude: lead.longitude != null ? String(lead.longitude) : null,
+    notes: `Amostra grátis para LEAD #A-${a.id} (${lead.fantasy_name}) — aprovada por ${nome(user)}`, source: 'integra',
+  } as any);
+  const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
+  const r = await finalizarPedidoParaPipeline(card, user.email || 'system', { skipDebtCheck: true, skipHistoryGuard: true });
+  if (!r?.item) return { ok: false, message: 'A amostra não entrou no Pipeline de Faturamento (veja Pedidos Bloqueados / duplicidade).' };
+  await db.execute(sql`UPDATE lead_sample_orders SET customer_id = ${customerId}, sales_card_id = ${String(card.id)}, pipeline_item_id = ${String(r.item.id)}, updated_at = now() WHERE id = ${a.id}`);
+  console.log(`🧾 [AMOSTRA] #A-${a.id} → pipeline item ${r.item.id} (NF amostra grátis) cliente ${customerId}`);
+  return { ok: true };
+}
+
 export function registerLeadAmostras(app: any, authenticateUser: any) {
   // Config visível ao app (limites)
   app.get('/api/amostras/config', authenticateUser, async (_req: Req, res: Res) => {
     res.json({ maxUnidades: 0, maxPorSabor: 1, somente350: true, maxPedidosLead: await setting('amostra_max_pedidos_lead', 1) });
+  });
+
+  // Dados fiscais já conhecidos do lead (pré-preenche o CNPJ no formulário)
+  app.get('/api/leads/:id/fiscal', authenticateUser, async (req: Req, res: Res) => {
+    try {
+      await ensureTabela();
+      const r: any = await db.execute(sql`SELECT cnpj, company_name, fiscal_address, fiscal_neighborhood, fiscal_city, fiscal_state, fiscal_zip, state_registration, email FROM leads WHERE id = ${String(req.params.id)} LIMIT 1`);
+      const l = r.rows?.[0] || {};
+      res.json({ ok: true, cnpj: l.cnpj || '', fiscal: l.cnpj ? { razaoSocial: l.company_name || '', endereco: l.fiscal_address || '', bairro: l.fiscal_neighborhood || '', cidade: l.fiscal_city || '', uf: l.fiscal_state || '', cep: l.fiscal_zip || '', ie: l.state_registration || '', email: l.email || '' } : null });
+    } catch (e: any) { res.status(500).json({ ok: false, message: e?.message }); }
   });
 
   // Lista de amostras de um lead
@@ -132,10 +224,26 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
 
       const deliveryMode = b.deliveryMode === 'vendedor' ? 'vendedor' : 'rota';
       const dOk = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : null;
+      // NF de amostra grátis exige CNPJ + dados fiscais (vêm da lupa da Receita no formulário)
+      const cnpjDig = String(b.cnpj || '').replace(/\D/g, '');
+      if (cnpjDig.length !== 14 || !receitaService.validarCNPJ(cnpjDig)) return res.status(400).json({ ok: false, message: 'Informe um CNPJ válido (a amostra gera nota fiscal de amostra grátis).' });
+      const f = (b.fiscal && typeof b.fiscal === 'object') ? b.fiscal : {};
+      const fiscal = {
+        razaoSocial: String(f.razaoSocial || '').slice(0, 200), endereco: String(f.endereco || '').slice(0, 300), bairro: String(f.bairro || '').slice(0, 120),
+        cidade: String(f.cidade || '').slice(0, 120), uf: String(f.uf || '').slice(0, 2).toUpperCase(), cep: String(f.cep || '').replace(/\D/g, '').slice(0, 8),
+        ie: String(f.ie || '').slice(0, 30), email: String(f.email || '').slice(0, 160), situacao: String(f.situacao || '').slice(0, 40),
+      };
+      if (!fiscal.razaoSocial || !fiscal.endereco || !fiscal.cidade || !fiscal.uf) return res.status(400).json({ ok: false, message: 'Use a lupa do CNPJ para puxar razão social e endereço da Receita.' });
+      // guarda no lead (reaproveitado na conversão em cliente)
+      try {
+        await db.execute(sql`UPDATE leads SET cnpj = ${receitaService.formatarCNPJ(cnpjDig)}, company_name = ${fiscal.razaoSocial}, fiscal_address = ${fiscal.endereco}, fiscal_neighborhood = ${fiscal.bairro || null},
+          fiscal_city = ${fiscal.cidade}, fiscal_state = ${fiscal.uf}, fiscal_zip = ${fiscal.cep || null}, state_registration = ${fiscal.ie || null}, email = COALESCE(NULLIF(${fiscal.email}, ''), email), updated_at = now() WHERE id = ${leadId}`);
+      } catch (e: any) { console.warn('[amostra] gravar fiscal no lead:', e?.message); }
       const ins: any = await db.execute(sql`INSERT INTO lead_sample_orders
-        (lead_id, seller_id, requested_by, requested_by_name, status, items, total_units, total_value, delivery_mode, delivery_date, receiver, objective, return_date, observation)
+        (lead_id, seller_id, requested_by, requested_by_name, status, items, total_units, total_value, delivery_mode, delivery_date, receiver, objective, return_date, observation, cnpj, company_name, fiscal)
         VALUES (${leadId}, ${lead.assigned_to || (user.role === 'vendedor' ? user.id : null)}, ${user.id}, ${nome(user)}, 'solicitado', ${JSON.stringify(items)}::jsonb, ${totalUnits}, ${totalValue.toFixed(2)},
-                ${deliveryMode}, ${dOk(b.deliveryDate)}, ${String(b.receiver || '').slice(0, 120) || null}, ${String(b.objective || '').slice(0, 120) || null}, ${dOk(b.returnDate)}, ${String(b.observation || '').slice(0, 2000) || null})
+                ${deliveryMode}, ${dOk(b.deliveryDate)}, ${String(b.receiver || '').slice(0, 120) || null}, ${String(b.objective || '').slice(0, 120) || null}, ${dOk(b.returnDate)}, ${String(b.observation || '').slice(0, 2000) || null},
+                ${receitaService.formatarCNPJ(cnpjDig)}, ${fiscal.razaoSocial}, ${JSON.stringify(fiscal)}::jsonb)
         RETURNING *`);
       const row = ins.rows[0];
       // Retorno combinado vira o próximo contato do lead (agendado)
@@ -170,6 +278,11 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
       if (novo === 'degustado') return res.status(400).json({ ok: false, message: 'Use o registro de degustação.' });
       const ordem: Record<string, number> = { solicitado: 0, aprovado: 1, separado: 2, entregue: 3, degustado: 4 };
       if (ordem[novo] != null && ordem[a.status] != null && ordem[novo] < ordem[a.status]) return res.status(400).json({ ok: false, message: `Pedido já está em "${rotulo[a.status]}".` });
+      // APROVAÇÃO → NF de amostra grátis pelo mesmo caminho do cliente (cadastro em prospecção + card 'amostra' + pipeline)
+      if (novo === 'aprovado' && !a.pipeline_item_id) {
+        const r2 = await emitirAmostraNoPipeline(a, user);
+        if (!r2.ok) return res.status(400).json({ ok: false, message: r2.message });
+      }
       const up: any = await db.execute(sql`UPDATE lead_sample_orders SET status = ${novo}, updated_at = now(),
           approved_by = CASE WHEN ${novo} = 'aprovado' THEN ${user.id} ELSE approved_by END,
           approved_by_name = CASE WHEN ${novo} = 'aprovado' THEN ${nome(user)} ELSE approved_by_name END,

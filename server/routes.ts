@@ -27027,7 +27027,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _sellerId = sellerId || lead.assignedTo || req.currentUser?.id || '';
 
       // Criar cliente
-      const customer = await storage.createCustomer({
+      // 🧃 Cadastro EM PROSPECÇÃO criado pela amostra do lead (is_lead=true, mesmo CNPJ ou vindo deste lead):
+      // reaproveita e ATIVA em vez de duplicar o CNPJ.
+      let _prospect: any = null;
+      try {
+        const _dig = String(_cnpj || '').replace(/\D/g, '');
+        const _pr: any = await db.execute(sql`SELECT id FROM customers WHERE is_lead = true AND is_active = false AND (
+            (${_dig} <> '' AND regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g') = ${_dig}) OR origin_lead_id = ${id}) ORDER BY created_at DESC LIMIT 1`);
+        _prospect = _pr.rows?.[0] || null;
+      } catch (_e) {}
+      const customer = _prospect ? await storage.updateCustomer(String(_prospect.id), {
+        name,
+        customerType: customerType as 'pessoa_fisica' | 'pessoa_juridica',
+        cpf: _cpf,
+        cnpj: _cnpj,
+        companyName: companyName || null,
+        fantasyName: lead.fantasyName,
+        phone,
+        email: email || null,
+        address,
+        city: city || null,
+        state: state || null,
+        zipCode: zipCode || null,
+        neighborhood: neighborhood || null,
+        sellerId: _sellerId,
+        weekdays: weekdays ? JSON.stringify(normalizeWeekdayInput(weekdays)) : JSON.stringify(['Seg']),
+        visitPeriodicity: visitPeriodicity || 'semanal',
+        latitude: normalizeCoord(lead.latitude) ?? null,
+        longitude: normalizeCoord(lead.longitude) ?? null,
+        isActive: true,
+        isLead: false,
+      } as any) : await storage.createCustomer({
         name,
         customerType: customerType as 'pessoa_fisica' | 'pessoa_juridica',
         cpf: _cpf,
