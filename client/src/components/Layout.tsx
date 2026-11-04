@@ -605,7 +605,7 @@ export default function Layout({ children, activeView, setActiveView, user }: La
     return roleLabels[role as keyof typeof roleLabels] || role;
   };
 
-  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'carrinhos-loja', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque', 'recebimento-estoque', 'trocas-recorrentes', 'gestao-trocas'];
+  const TMK_WHITELIST = ['dashboard', 'extrato-cliente', 'sales-cards', 'sales-schedule', 'visit-routes', 'rota-do-dia', 'fechamento-config', 'repescagem', 'customers', 'clientes-ativos', 'clientes-virtuais-hoje', 'central-atendimento', 'financeiro', 'fin-receivables', 'fin-overdue', 'resumo-visitas', 'hotsite-orders', 'canais', 'carrinhos-loja', 'leads', 'sdr-digital', 'entregas-do-dia', 'billing-pipeline', 'gestao-carteiras', 'chamados', 'abertura-estoque', 'recebimento-estoque', 'trocas-recorrentes', 'gestao-trocas', 'minha-agenda'];
   // Concessão explícita por usuário: se um usuário CONFIGURADO tem "ver" salvo no
   // card, o item aparece mesmo que o papel dele não libere por padrão (ex.: um
   // telemarketing com acesso a Financeiro/Faturamento). É aditivo — não afrouxa
