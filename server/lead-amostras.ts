@@ -5,8 +5,9 @@
 // positivação. Mas precisa receber amostras para degustar e fechar. Este módulo guarda o
 // "Pedido de Amostra" ligado ao LEAD (tabela lead_sample_orders), com fluxo:
 //   solicitado → aprovado (administrativo) → separado → entregue → degustado   (ou recusado/cancelado)
-// Regras (ajustáveis em system_settings): amostra_max_unidades (12), amostra_max_pedidos_lead (2):
-// o 2º pedido só depois de registrar a degustação do 1º. A data de retorno vira o próximo contato do lead.
+// Regras (Flavio, 04/11/2026): 1 unidade de cada sabor, SOMENTE 350 ml, 1 pedido por lead
+// (amostra_max_pedidos_lead em system_settings, padrão 1). A data de retorno vira o próximo contato do lead.
+// Custo: as garrafas cedidas entram no mesmo relatório de trocas/amostras da Indústria (sem diferenciar lead/cliente).
 // ============================================================================
 import { db } from './db';
 import { sql } from 'drizzle-orm';
@@ -85,7 +86,7 @@ async function registrarVisitaLead(leadId: string, texto: string, user: any) {
 export function registerLeadAmostras(app: any, authenticateUser: any) {
   // Config visível ao app (limites)
   app.get('/api/amostras/config', authenticateUser, async (_req: Req, res: Res) => {
-    res.json({ maxUnidades: await setting('amostra_max_unidades', 12), maxPedidosLead: await setting('amostra_max_pedidos_lead', 2) });
+    res.json({ maxUnidades: 0, maxPorSabor: 1, somente350: true, maxPedidosLead: await setting('amostra_max_pedidos_lead', 1) });
   });
 
   // Lista de amostras de um lead
@@ -111,20 +112,23 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
       if (user.role === 'vendedor' && lead.assigned_to && lead.assigned_to !== user.id) return res.status(403).json({ ok: false, message: 'Este lead está com outro vendedor.' });
 
       const b = req.body || {};
+      // Regra: 1 unidade de cada sabor, só 350 ml (sem exceção para admin)
+      const vistos = new Set<string>();
       const items = (Array.isArray(b.items) ? b.items : []).map((it: any) => ({
         productId: String(it.productId || ''), name: String(it.name || '').slice(0, 120), qty: Math.max(0, Math.floor(Number(it.qty) || 0)), unitValue: Math.max(0, Number(it.unitValue) || 0),
-      })).filter((it: any) => it.qty > 0 && it.name);
-      if (!items.length) return res.status(400).json({ ok: false, message: 'Informe ao menos um produto com quantidade.' });
+      })).filter((it: any) => it.qty > 0 && it.name && !vistos.has(it.productId || it.name) && vistos.add(it.productId || it.name));
+      if (!items.length) return res.status(400).json({ ok: false, message: 'Escolha ao menos um sabor.' });
+      const fora350 = items.filter((it: any) => !/350/.test(it.name));
+      if (fora350.length) return res.status(400).json({ ok: false, message: `Amostra só de 350 ml: ${fora350.map((i: any) => i.name).join(', ')}.` });
+      const maisDeUm = items.filter((it: any) => it.qty > 1);
+      if (maisDeUm.length) return res.status(400).json({ ok: false, message: 'Amostra é 1 unidade de cada sabor.' });
       const totalUnits = items.reduce((s: number, i: any) => s + i.qty, 0);
       const totalValue = items.reduce((s: number, i: any) => s + i.qty * i.unitValue, 0);
-      const maxUn = await setting('amostra_max_unidades', 12);
-      const maxPed = await setting('amostra_max_pedidos_lead', 2);
-      if (totalUnits > maxUn && !ADMIN.includes(user.role)) return res.status(400).json({ ok: false, message: `Máximo de ${maxUn} unidades por pedido de amostra. Acima disso, peça ao gestor.` });
+      const maxPed = await setting('amostra_max_pedidos_lead', 1);
 
       const ant: any = await db.execute(sql`SELECT status FROM lead_sample_orders WHERE lead_id = ${leadId} AND status NOT IN ('recusado','cancelado') ORDER BY created_at DESC`);
       const anteriores = (ant.rows || []) as any[];
-      if (anteriores.length >= maxPed) return res.status(400).json({ ok: false, message: `Este lead já tem ${anteriores.length} pedido(s) de amostra (limite ${maxPed}).` });
-      if (anteriores.length && anteriores[0].status !== 'degustado') return res.status(400).json({ ok: false, message: 'Registre a degustação da amostra anterior antes de pedir outra.' });
+      if (anteriores.length >= maxPed) return res.status(400).json({ ok: false, message: maxPed === 1 ? 'Este lead já teve a sua amostra (1 por lead).' : `Este lead já tem ${anteriores.length} pedido(s) de amostra (limite ${maxPed}).` });
 
       const deliveryMode = b.deliveryMode === 'vendedor' ? 'vendedor' : 'rota';
       const dOk = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : null;

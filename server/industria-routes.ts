@@ -418,6 +418,20 @@ export function registerIndustriaRoutes(app: Express) {
           M[k].ta += Number(p.quantity) || 0;
         }
       }
+      // Amostras para LEADS (lead_sample_orders aprovadas/entregues): mesmas garrafas cedidas, mesmo custo —
+      // sem diferenciar lead de cliente (Flavio 04/11/2026).
+      try {
+        const leadR: any = await db.execute(sql`SELECT items, COALESCE(delivered_at, approved_at, created_at) AS d FROM lead_sample_orders WHERE status IN ('aprovado','separado','entregue','degustado')`);
+        for (const r of (leadR.rows || [])) {
+          const d = ym(r.d); if (!d || d < START) continue;
+          const its: any = Array.isArray(r.items) ? r.items : [];
+          const M = ensure(d);
+          for (const p of its) {
+            const { fl, size } = parse(p.name); if (!size) continue; const k = fl + '|' + size; if (!M[k]) continue;
+            M[k].ta += Number(p.qty) || 0;
+          }
+        }
+      } catch (_e) { /* tabela ainda não criada */ }
 
       const monthKeys = Object.keys(months).sort();
       const latest = monthKeys[monthKeys.length - 1];
