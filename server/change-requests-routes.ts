@@ -1842,6 +1842,49 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // POST /api/admin/orfao-para-lead — recria como LEAD um cadastro órfão (mesmo id, para
+  //   reaproveitar o histórico: prospecções, reports). Coordenada/endereço/vendedor vêm do
+  //   último card de visita daquele id. body: { itens: [{ id, nome }], aplicar?: boolean }.
+  //   Sem aplicar=true é só simulação (mostra o que seria criado).
+  // --------------------------------------------------------------------------
+  app.post("/api/admin/orfao-para-lead", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    const u = (req as any).currentUser;
+    const aplicar = req.body?.aplicar === true;
+    const itens: any[] = Array.isArray(req.body?.itens) ? req.body.itens.slice(0, 50) : [];
+    const out: any[] = [];
+    for (const it of itens) {
+      const id = String(it?.id || "").trim();
+      const nome = String(it?.nome || "").trim().slice(0, 200);
+      if (!id || !nome) { out.push({ id, erro: "id e nome obrigatórios" }); continue; }
+      const jaCliente = rowsOf(await db.execute(sql`SELECT 1 FROM customers WHERE id = ${id} LIMIT 1`)).length > 0;
+      const jaLead = rowsOf(await db.execute(sql`SELECT 1 FROM leads WHERE id::text = ${id} LIMIT 1`)).length > 0;
+      if (jaCliente || jaLead) { out.push({ id, nome, erro: jaCliente ? "já existe como cliente" : "já existe como lead" }); continue; }
+      const sc = rowsOf(await db.execute(sql`
+        SELECT COALESCE(customer_latitude, check_in_latitude)::float AS lat, COALESCE(customer_longitude, check_in_longitude)::float AS lng,
+               customer_address AS endereco, seller_id
+          FROM sales_cards WHERE customer_id::text = ${id}
+         ORDER BY (customer_latitude IS NOT NULL OR check_in_latitude IS NOT NULL) DESC, created_at DESC LIMIT 1`))[0] || {};
+      const lat = Number(sc.lat), lng = Number(sc.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) { out.push({ id, nome, erro: "sem coordenada nos cards — crie o lead pela tela de Leads" }); continue; }
+      const vend = sc.seller_id ? rowsOf(await db.execute(sql`
+        SELECT id FROM users WHERE id = ${sc.seller_id} OR omie_vendor_code = replace(${sc.seller_id}, 'omie-vendor-', '') LIMIT 1`))[0] : null;
+      const plano = { id, nome, lat, lng, endereco: sc.endereco || null, assignedTo: vend?.id || null };
+      if (!aplicar) { out.push({ ...plano, simulacao: true }); continue; }
+      try {
+        await db.execute(sql`
+          INSERT INTO leads (id, fantasy_name, latitude, longitude, observation, status, created_by, created_by_name, assigned_to,
+                             next_contact_date, original_return_date, created_at, updated_at)
+          VALUES (${id}, ${nome}, ${lat.toFixed(6)}, ${lng.toFixed(6)},
+                  ${"Recriado a partir de cadastro órfão (" + new Date().toISOString().slice(0, 10) + ")" + (sc.endereco ? " — " + String(sc.endereco).slice(0, 300) : "")},
+                  'pending', ${u?.id || "admin"}, ${userName(u)}, ${vend?.id || null},
+                  now() + interval '15 days', now() + interval '15 days', now(), now())`);
+        out.push({ ...plano, criado: true });
+      } catch (e: any) { out.push({ ...plano, erro: String(e?.message || e).slice(0, 300) }); }
+    }
+    res.json({ ok: true, aplicar, resultado: out });
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/admin/regularize-orphans — regulariza o PASSIVO de órfãos (cliente
   // inexistente): cancela sales_cards pendentes, rejeita pedidos bloqueados e faz
   // soft-cancel (deleted_at) dos recebíveis em aberto órfãos. dryRun por padrão.
