@@ -2683,6 +2683,22 @@ export function registerBillingPipelineRoutes(app: Express) {
   // Pedido, A Faturar), o gestor recusa com um motivo. Duas ações: o card vai para a LIXEIRA
   // (restaurável, como a exclusão) e o vendedor do pedido recebe no WhatsApp que a troca foi
   // recusada e por quê. O motivo fica registrado no card (data, hora e quem recusou).
+  // Reparo único (04/nov/2026): trocas recusadas antes desta correção foram para a Lixeira só com a
+  // linha da recusa. Recompõe as observações com as do card de vendas (vendedor + recusa).
+  setTimeout(async () => {
+    try {
+      const r: any = await db.execute(sql`
+        UPDATE billing_pipeline bp SET notes = sc.notes
+        FROM sales_cards sc
+        WHERE sc.id = bp.sales_card_id AND bp.stage = 'lixeira'
+          AND bp.notes LIKE '[%] Troca recusada. Motivo:%' AND bp.notes NOT LIKE '%' || E'\n' || '%'
+          AND sc.notes IS NOT NULL AND sc.notes <> bp.notes AND sc.notes LIKE '%' || bp.notes
+        RETURNING bp.id`);
+      const n = (r.rows || r || []).length;
+      if (n) console.log(`[RECUSAR-TROCA] observações do vendedor restauradas em ${n} card(s) da Lixeira`);
+    } catch (e: any) { console.warn('[RECUSAR-TROCA] reparo das observações:', e?.message || e); }
+  }, 30000);
+
   app.post('/api/billing-pipeline/:id/recusar-troca', authenticateUser, async (req: any, res) => {
     try {
       const _u = req.currentUser || req.user;
@@ -2724,11 +2740,16 @@ export function registerBillingPipelineRoutes(app: Express) {
         sellerId = order.sellerId || null; valor = Number(order.totalAmount || 0) || 0; salesCardId = order.salesCardId || null;
         produtos = Array.isArray(order.products) ? order.products : [];
         const histJson = JSON.stringify([{ stage: 'lixeira', changedAt: paredeBR(agora()), changedBy: `${_u?.email || 'sistema'} (troca recusada)` }]);
+        // O card na Lixeira guarda as observações do vendedor (e o motivo do bloqueio) antes da
+        // recusa, para o registro das ocorrências — não só a linha da recusa.
+        let obsVendedor = '';
+        try { const _sc: any = order.salesCardId ? await storage.getSalesCard(order.salesCardId) : null; obsVendedor = _sc?.notes ? String(_sc.notes).trim() : ''; } catch { /* segue */ }
+        const notasLixeira = [obsVendedor, String(order.blockDetails || '').trim(), entrada].filter(Boolean).join('\n\n');
         await db.execute(sql`
           INSERT INTO billing_pipeline (sales_card_id, customer_id, customer_name, seller_id, seller_name, stage, sale_value, payment_method, operation_type, products, stage_history, created_by, notes)
           VALUES (${order.salesCardId}, ${order.customerId}, ${cust?.name || cliente}, ${order.sellerId || null}, ${sellerName},
                   'lixeira', ${order.totalAmount ?? null}, ${order.paymentMethod || null}, ${order.operationType || null},
-                  ${produtos.length ? JSON.stringify(produtos) : null}::jsonb, ${histJson}::jsonb, ${_u?.email || 'sistema'}, ${entrada})`);
+                  ${produtos.length ? JSON.stringify(produtos) : null}::jsonb, ${histJson}::jsonb, ${_u?.email || 'sistema'}, ${notasLixeira})`);
         await db.delete(blockedOrders).where(eq(blockedOrders.id, req.params.id));
       }
       // Registro também nas observações do card de vendas (histórico do cliente).
