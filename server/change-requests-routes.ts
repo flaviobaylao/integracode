@@ -1778,6 +1778,27 @@ export function registerChangeRequestsRoutes(app: Express) {
   //   no nome. Serve para recuperar o nome de cadastros que foram apagados e só
   //   sobraram como id solto em pedidos, visitas e recebíveis.
   // --------------------------------------------------------------------------
+  // 🔎 04/nov/2026 — Diagnóstico SÓ LEITURA dos cadastros órfãos: para cada id, o que ainda
+  //   está em aberto (cards de visita pendentes, recebíveis em aberto, pedidos bloqueados).
+  app.post("/api/admin/orfaos-pendencias", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    const ids: string[] = (Array.isArray((req.body || {}).ids) ? req.body.ids : []).map((x: any) => String(x)).filter(Boolean).slice(0, 200);
+    if (ids.length === 0) return res.status(400).json({ error: "ids[] obrigatório" });
+    const inIds = sql.join(ids.map((x) => sql`${x}`), sql`, `);
+    const q = async (s: any) => { try { return rowsOf(await db.execute(s)); } catch (e: any) { return [{ erro: String(e?.message || e).slice(0, 200) }]; } };
+    const cards = await q(sql`
+      SELECT sc.customer_id::text AS cid, sc.id::text AS card_id, sc.status, sc.scheduled_date, sc.created_at, sc.route_day, sc.source,
+             sc.check_in_time, COALESCE(sc.sale_value, 0)::float AS sale_value,
+             (SELECT NULLIF(TRIM(CONCAT(u.first_name,' ',u.last_name)),'') FROM users u WHERE u.id = sc.seller_id OR u.omie_vendor_code = replace(COALESCE(sc.seller_id,''),'omie-vendor-','') LIMIT 1) AS vendedor
+        FROM sales_cards sc WHERE sc.status IN ('pending','overdue') AND sc.customer_id::text IN (${inIds})
+       ORDER BY sc.customer_id, sc.scheduled_date`);
+    const receb = await q(sql`
+      SELECT customer_id::text AS cid, id::text AS rec_id, amount::float AS valor, COALESCE(amount_paid,0)::float AS pago, due_date
+        FROM receivables WHERE deleted_at IS NULL AND (amount - COALESCE(amount_paid,0)) > 0 AND customer_id::text IN (${inIds})`);
+    const bloq = await q(sql`SELECT customer_id::text AS cid, id::text AS ped_id, created_at FROM blocked_orders WHERE status='blocked' AND customer_id::text IN (${inIds})`);
+    const leadsDel = await q(sql`SELECT id::text AS cid FROM leads WHERE id::text IN (${inIds})`);
+    res.json({ ok: true, cards, recebiveis: receb, pedidosBloqueados: bloq, aindaSaoLeads: leadsDel });
+  }));
+
   app.post("/api/admin/buscar-nome-ids", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
     const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map((x: any) => String(x || "").trim()).filter(Boolean).slice(0, 200);
     if (ids.length === 0) return res.status(400).json({ error: "Informe ids." });
