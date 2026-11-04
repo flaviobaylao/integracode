@@ -58,7 +58,7 @@ export default function AmostrasLeads() {
           <div className="h-10 w-10 rounded-lg bg-violet-600 text-white flex items-center justify-center"><FlaskConical className="h-5 w-5" /></div>
           <div>
             <h1 className="text-xl font-bold">Amostras para Leads</h1>
-            <p className="text-sm text-muted-foreground">Pedidos de degustação feitos pelos vendedores em leads. Regra: 1 unidade de cada sabor, só 350 ml, 1 pedido por lead. O custo entra no relatório de amostras da Indústria, igual ao de cliente.</p>
+            <p className="text-sm text-muted-foreground">Pedidos de degustação feitos pelos vendedores em leads. Regra: 1 unidade de cada sabor, só 350 ml, 1 pedido por lead. Ao aprovar, o Integra cria o cadastro em prospecção pelo CNPJ e manda a amostra para o Pipeline de Faturamento (NF de amostra grátis), igual ao cliente.</p>
           </div>
         </div>
         <div className="flex gap-2"><Button variant="outline" size="sm" onClick={carregar}><RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Atualizar</Button><BackToDashboardButton /></div>
@@ -94,6 +94,7 @@ export default function AmostrasLeads() {
                 <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${corStatusAmostra[a.status] || ""}`}>{a.statusLabel}{a.tastingResult ? ` · ${({ gostou: "gostou", pensar: "vai pensar", nao_gostou: "não gostou" } as any)[a.tastingResult] || ""}` : ""}</span>
               </div>
               <div className="text-sm">{a.items.map((i) => `${i.qty}× ${i.name}`).join(" · ")}</div>
+              {(a as any).cnpj && <div className="text-xs text-muted-foreground">CNPJ {(a as any).cnpj} · {(a as any).companyName}{(a as any).pipelineItemId ? <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800">NF de amostra no Pipeline</span> : null}</div>}
               <div className="text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-0.5">
                 <span><strong>{a.totalUnits}</strong> un. (1 de cada sabor, 350 ml)</span>
                 <span>{a.deliveryMode === "vendedor" ? "Vendedor leva" : "Rota de entrega"} · {dBR(a.deliveryDate)}{a.receiver ? ` · recebe ${a.receiver}` : ""}</span>
