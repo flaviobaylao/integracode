@@ -40,9 +40,14 @@ type Premissa = {
   chave: string; label: string; descricao: string;
   gatilhoLabel: string; gatilhoSufixo: string; base: string;
   ativa: boolean; modo: ModoPremissa; valor: number; gatilho: number;
+  // Segundo parâmetro, só nas premissas que o declaram no catálogo. Na
+  // positivação é o PEDIDO MÍNIMO para o cliente contar como positivado
+  // (04/nov/2026): 0 = sem mínimo, qualquer compra positiva.
+  pedidoMin?: number; pedidoMinLabel?: string;
 };
-const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho"> & {
+const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho" | "pedidoMin"> & {
   ativaPadrao: boolean; modoPadrao: ModoPremissa; valorPadrao: number; gatilhoPadrao: number;
+  pedidoMinPadrao?: number;
 }> = [
   {
     chave: "novos", label: "por novo cliente", descricao: "Venda faturada e recebida.",
@@ -55,6 +60,7 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     gatilhoLabel: "Positivação exigida", gatilhoSufixo: "%",
     base: "faturamento do vendedor no mês",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 90,
+    pedidoMinLabel: "Pedido mínimo para positivar (só PJ)", pedidoMinPadrao: 300,
   },
   {
     chave: "meta", label: "meta de faturamento", descricao: "Meta do mês cumprida.",
@@ -77,6 +83,26 @@ async function ensurePremissas(): Promise<void> {
     updated_by varchar, updated_at timestamptz DEFAULT now(),
     PRIMARY KEY (ym, chave)
   )`);
+  await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS pedido_min numeric`);
+
+  // CONGELAMENTO DE OUTUBRO (04/nov/2026). Outubro rodou SEM linha gravada: as
+  // premissas vinham todas do catálogo. Como o catálogo passa a trazer pedido
+  // mínimo de R$ 300 na positivação, deixar outubro no padrão reescreveria um
+  // mês já apurado, já pago e já comunicado à equipe — a positivação de cada
+  // vendedor cairia de um dia para o outro. Grava-se aqui, uma vez, exatamente
+  // o que outubro executou, com pedido mínimo 0. ON CONFLICT DO NOTHING: se
+  // alguém editou o mês pela tela, a edição dele é que vale.
+  await db.execute(sql`
+    INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, updated_by)
+    VALUES ('2026-10','novos',       true,'valor', 30,300,NULL,'sistema'),
+           ('2026-10','positivacao', true,'valor',500, 90,   0,'sistema'),
+           ('2026-10','meta',        true,'valor',500,100,NULL,'sistema')
+    ON CONFLICT (ym, chave) DO NOTHING`);
+  // Mês anterior a novembro que já tenha linha, mas ainda sem a coluna nova:
+  // também fica sem mínimo, pelo mesmo motivo.
+  await db.execute(sql`
+    UPDATE campanha_premissas SET pedido_min = 0
+    WHERE pedido_min IS NULL AND chave = 'positivacao' AND ym < '2026-11'`);
   _premissasOk = true;
 }
 
@@ -86,7 +112,7 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
   const gravadas: Record<string, any> = {};
   try {
     const r: any = await db.execute(sql`
-      SELECT chave, ativa, modo, valor, gatilho FROM campanha_premissas WHERE ym = ${ym}`);
+      SELECT chave, ativa, modo, valor, gatilho, pedido_min FROM campanha_premissas WHERE ym = ${ym}`);
     for (const x of r.rows || []) gravadas[String(x.chave)] = x;
   } catch (e: any) { console.error("[CAMPANHA] premissas:", e?.message || e); }
   return CATALOGO_PREMISSAS.map((c) => {
@@ -99,6 +125,14 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
       modo: (g && g.modo === "percentual" ? "percentual" : g ? "valor" : c.modoPadrao) as ModoPremissa,
       valor: g ? num(g.valor, c.valorPadrao) : c.valorPadrao,
       gatilho: g ? num(g.gatilho, c.gatilhoPadrao) : c.gatilhoPadrao,
+      // Só existe na premissa que declara o segundo parâmetro. Gravado como
+      // NULL significa "nunca foi definido" -> cai no padrão do catálogo; 0
+      // gravado é uma escolha explícita de "sem mínimo" e tem de sobreviver.
+      ...(c.pedidoMinPadrao === undefined ? {} : {
+        pedidoMinLabel: c.pedidoMinLabel,
+        pedidoMin: g && g.pedido_min !== null && g.pedido_min !== undefined
+          ? num(g.pedido_min, c.pedidoMinPadrao) : c.pedidoMinPadrao,
+      }),
     };
   });
 }
@@ -314,6 +348,7 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   // Carteira ativa (doc -> vendedor) para positivacao.
   const cart = await rawq(
     "SELECT regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc," +
+    " (NULLIF(TRIM(COALESCE(c.cnpj,'')),'') IS NOT NULL) AS pj," +
     " NULLIF(TRIM(CONCAT(COALESCE(u.first_name,''),' ',COALESCE(u.last_name,''))),'') AS seller" +
     " FROM customers c" +
     " LEFT JOIN users u ON (u.omie_vendor_code = c.seller_id OR u.omie_vendor_code = replace(COALESCE(c.seller_id,''),'omie-vendor-','') OR u.id = c.seller_id)" +
@@ -322,10 +357,14 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     " AND regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> ''" + PURO_EXCL
   );
   const docSeller: Record<string, string> = {};
+  const docPj: Record<string, boolean> = {};
   const carteiraCount: Record<string, number> = {};
   for (const r of cart) {
     const doc = String(r.doc); const seller = String(r.seller || "Sem vendedor");
-    if (doc && !(doc in docSeller)) { docSeller[doc] = seller; carteiraCount[seller] = (carteiraCount[seller] || 0) + 1; }
+    if (doc && !(doc in docSeller)) {
+      docSeller[doc] = seller; docPj[doc] = r.pj === true;
+      carteiraCount[seller] = (carteiraCount[seller] || 0) + 1;
+    }
   }
 
   // Faturamento do mes por documento (NF-e de venda).
@@ -338,13 +377,29 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   );
   // Cada venda conta para o dono da carteira NA DATA da NF-e (respeita delegacoes).
   const janelas = await janelasDelegacao(ym);
+  // Premissas do mes: o que paga, quanto e com que condicao. Lidas aqui porque o
+  // pedido minimo da positivacao ja decide o laco abaixo.
+  const premissas = await premissasDoMes(ym);
+  // PEDIDO MINIMO PARA POSITIVAR (04/nov/2026, campanha de novembro). Compra de
+  // valor baixo deixou de valer positivacao: a campanha quer pedido de verdade,
+  // nao uma caixa avulsa para marcar presenca na carteira. Vale SO para PJ — o
+  // cliente PF compra em volume menor por natureza e continua positivando com
+  // qualquer valor. 0 (outubro) desliga a regra e tudo volta a positivar.
+  // "Pedido" aqui e o MESMO conceito do bonus de novo cliente: o total que o
+  // cliente comprou NAQUELE DIA (as NF-e do dia somadas), e nao cada nota
+  // isolada. Dois criterios diferentes para a mesma palavra seria indefensavel
+  // na conferencia com o vendedor.
+  const minPositivacao = achaPremissa(premissas, "positivacao")?.pedidoMin || 0;
   const faturamento: Record<string, number> = {};
   const posDocs: Record<string, Set<string>> = {};
   for (const r of fat) {
     const doc = String(r.doc); const atual = docSeller[doc]; if (!atual) continue;
     const v = Number(r.v) || 0; if (v <= 0) continue;
     const seller = donoNaData(janelas[doc], String(r.d).slice(0, 10), { nome: atual, id: "" }).nome || atual;
+    // O faturamento continua somando TUDO: o minimo e criterio de positivacao,
+    // nao de faturamento — o dinheiro entrou de qualquer jeito.
     faturamento[seller] = (faturamento[seller] || 0) + v;
+    if (minPositivacao > 0 && docPj[doc] === true && v < minPositivacao) continue;
     (posDocs[seller] = posDocs[seller] || new Set<string>()).add(doc);
   }
   // Positivacao = clientes da carteira ATUAL do vendedor (a base do %) que compraram ENQUANTO
@@ -384,8 +439,6 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     } else if (String(r.status) === "pendente") emValidacao[s] = (emValidacao[s] || 0) + (Number(r.n) || 0);
   }
 
-  // Premissas do mes: o que paga, quanto e com que condicao.
-  const premissas = await premissasDoMes(ym);
   const pNovos = achaPremissa(premissas, "novos");
   const pPos = achaPremissa(premissas, "positivacao");
   const pMeta = achaPremissa(premissas, "meta");
@@ -554,13 +607,19 @@ export function registerCampanhaRoutes(app: Express): void {
       }
       const num = (v: any) => { const x = Number(String(v ?? "").replace(",", ".")); return Number.isFinite(x) && x >= 0 ? x : 0; };
       const modo = String(b.modo) === "percentual" ? "percentual" : "valor";
+      // pedidoMin ausente no corpo mantém o que está gravado: a tela edita um
+      // bloco por vez e não pode zerar um parâmetro que nem mostrou.
+      const temMin = b.pedidoMin !== undefined && b.pedidoMin !== null && String(b.pedidoMin) !== "";
+      const pedidoMin = temMin ? num(b.pedidoMin) : null;
       await db.execute(sql`
-        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, updated_by, updated_at)
+        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, updated_by, updated_at)
         VALUES (${ym}, ${chave}, ${b.ativa !== false}, ${modo}, ${num(b.valor)}, ${num(b.gatilho)},
-                ${String((req as any)?.session?.userId || "") || null}, now())
+                ${pedidoMin}, ${String((req as any)?.session?.userId || "") || null}, now())
         ON CONFLICT (ym, chave) DO UPDATE SET
           ativa = EXCLUDED.ativa, modo = EXCLUDED.modo, valor = EXCLUDED.valor,
-          gatilho = EXCLUDED.gatilho, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+          gatilho = EXCLUDED.gatilho,
+          pedido_min = COALESCE(EXCLUDED.pedido_min, campanha_premissas.pedido_min),
+          updated_by = EXCLUDED.updated_by, updated_at = now()`);
       res.json({ ok: true, premissas: await premissasDoMes(ym) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });

@@ -775,7 +775,22 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
       // 5. Campanhas: as de origem 'campanha' puxam do módulo; as 'manual'
       //    leem os valores lançados pelo admin.
-      const precisaModulo = campanhas.some((c) => c.origem === "campanha");
+      // DUAS COLUNAS DE MÓDULO NO MESMO MÊS PAGARIAM O DOBRO (04/nov/2026): o
+      // módulo devolve UM bônus por vendedor, e cada coluna de origem
+      // 'campanha' copiava esse mesmo valor. Com a campanha de outubro
+      // encerrada e a de novembro criada em seguida, basta alguém esquecer o
+      // ym_fim de uma para o mês ter duas vigentes e o total do mês inchar sem
+      // nenhum aviso. Só a primeira (menor ordem) puxa o módulo; as outras
+      // ficam zeradas e o log diz qual.
+      const colsModulo = campanhas.filter((c) => c.origem === "campanha");
+      const idModulo = colsModulo.length ? String(colsModulo[0].id) : "";
+      if (colsModulo.length > 1) {
+        console.warn("[RESUMO-RECEB] " + ym + ": " + colsModulo.length +
+          " colunas de campanha vigentes ao mesmo tempo (" +
+          colsModulo.map((c) => c.nome).join(", ") + "). Só \"" + colsModulo[0].nome +
+          "\" puxa o módulo; confira o ym_fim das demais.");
+      }
+      const precisaModulo = colsModulo.length > 0;
       const campModulo: Record<string, number> = {};
       if (precisaModulo) {
         try {
@@ -905,7 +920,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         for (const c of campanhas) {
           if (!cfg.usaCampanhas) { porCampanha[c.id] = null; continue; }
           porCampanha[c.id] = c.origem === "campanha"
-            ? (campModulo[nome.toLowerCase()] || 0)
+            ? (String(c.id) === idModulo ? (campModulo[nome.toLowerCase()] || 0) : 0)
             : (valorManual[`${c.id}|${id}`] ?? 0);
         }
 
