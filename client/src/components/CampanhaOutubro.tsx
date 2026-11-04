@@ -18,6 +18,9 @@ export type Premissa = {
   chave: string; label: string; descricao: string;
   gatilhoLabel: string; gatilhoSufixo: string; base: string;
   ativa: boolean; modo: "valor" | "percentual"; valor: number; gatilho: number;
+  // Segundo parâmetro, só nas premissas que o declaram. Na positivação é o
+  // pedido mínimo para o cliente PJ contar como positivado; 0 = sem mínimo.
+  pedidoMin?: number; pedidoMinLabel?: string;
 };
 
 type Resp = {
@@ -137,6 +140,9 @@ export default function CampanhaOutubro() {
     const novo = { ...p, ...mudanca };
     await apiRequest("POST", "/api/campanha/outubro/premissa", {
       ym, chave: p.chave, ativa: novo.ativa, modo: novo.modo, valor: novo.valor, gatilho: novo.gatilho,
+      // Vai só quando a premissa tem o parâmetro: ausente, o servidor mantém o
+      // que está gravado em vez de zerar.
+      ...(novo.pedidoMin === undefined ? {} : { pedidoMin: novo.pedidoMin }),
     });
     refetch();
   };
@@ -237,6 +243,25 @@ export default function CampanhaOutubro() {
                       className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
                       data-testid={`premissa-gatilho-${p.chave}`} />
                   </label>
+                  {p.pedidoMin !== undefined && (
+                    <label className="col-span-2 text-[11px] text-gray-500">
+                      {p.pedidoMinLabel || "Pedido mínimo"} (R$)
+                      <input type="text" inputMode="decimal" defaultValue={String(p.pedidoMin).replace(".", ",")}
+                        key={`pm-${p.chave}-${p.pedidoMin}`}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value.replace(",", ".")) || 0;
+                          if (v !== p.pedidoMin) salvarPremissa(p, { pedidoMin: v });
+                        }}
+                        className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
+                        data-testid={`premissa-pedidomin-${p.chave}`} />
+                      <span className="mt-0.5 block text-[10px] leading-relaxed text-gray-400">
+                        {(p.pedidoMin || 0) > 0
+                          ? <>Compra de cliente <b>PJ</b> abaixo de {brl(p.pedidoMin)} no dia não positiva.
+                              Cliente <b>PF</b> positiva com qualquer valor.</>
+                          : <>Sem mínimo: qualquer compra positiva o cliente.</>}
+                      </span>
+                    </label>
+                  )}
                   <p className="col-span-2 text-[10px] leading-relaxed text-gray-400">
                     Em <b>%</b>, o prêmio é calculado sobre o {p.base}. Vale só para{" "}
                     <b>{nomeDoMes(ym)}</b> — os outros meses ficam como estão.
@@ -278,7 +303,19 @@ export default function CampanhaOutubro() {
                     <th className="px-3 py-2.5 font-semibold">Vendedor</th>
                     {pNovos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Novos (aptos / validação)</th>}
                     {pNovos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus novos</th>}
-                    {pPos?.ativa && <th className="px-3 py-2.5 font-semibold">Positivação (meta {posMeta}%)</th>}
+                    {pPos?.ativa && (
+                      <th className="px-3 py-2.5 font-semibold"
+                        title={(pPos.pedidoMin || 0) > 0
+                          ? `Clientes da carteira que compraram no mês, sobre o total da carteira ativa. Cliente PJ só conta com pedido de ${brl(pPos.pedidoMin || 0)} ou mais no dia; cliente PF conta com qualquer valor.`
+                          : "Clientes da carteira que compraram no mês, sobre o total da carteira ativa. Qualquer valor de compra positiva."}>
+                        Positivação (meta {posMeta}%)
+                        {(pPos.pedidoMin || 0) > 0 && (
+                          <span className="ml-1 font-normal text-[10px] text-gray-400">
+                            pedido ≥ {brl(pPos.pedidoMin || 0)} (PJ)
+                          </span>
+                        )}
+                      </th>
+                    )}
                     {pMeta?.ativa && <th className="px-3 py-2.5 font-semibold">Faturamento (realizado / meta)</th>}
                     {pPos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus positiv.</th>}
                     {pMeta?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus meta</th>}
