@@ -15,6 +15,7 @@ import { registerConfirmacaoTelefone } from "./ia-confirmar-telefone";
 import { registerIaResgate } from "./ia-resgate";
 import { registerIaIndicacao } from "./ia-indicacao";
 import { registerSdrMapa } from "./ia-sdr-mapa";
+import { registerLeadAmostras } from "./lead-amostras";
 import { registerIaDiag } from "./ia-diag";
 import { registerCanaisGestao } from "./canais-gestao";
 import { registerRelatorioEntregas } from "./relatorio-entregas-whatsapp";
@@ -890,6 +891,7 @@ run();
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   try { registerRepescagemRoutes(app, { authenticateUser, requireRole }); } catch (e) { console.error('[repescagem routes]', e); }
+  try { registerLeadAmostras(app, authenticateUser); } catch (e) { console.error('[amostras routes]', e); }
   // Quem esta em repescagem AGORA (tag dos cards + filtro da Gestao de Carteiras).
   try { registerRepescagemAtiva(app); } catch (e) { console.error('[repescagem ativa]', e); }
 
