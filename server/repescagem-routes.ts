@@ -42,6 +42,33 @@ const REPESCAGEM_EXCLUDED_USER_IDS = new Set<string>([
   'omie-vendor-4323360115',               // Maria E.
 ]);
 
+// CONTAS DE SISTEMA/CANAL: nunca aparecem como atendentes de repescagem (nov/2026).
+// As PESSOAS que estavam fixas fora (Flavio E, Fabio H, Lorenna, Natalia B, Maria E) passaram a
+// ser incluídas/tiradas pelo admin no painel ("Fora da repescagem" -> Incluir). A lista acima
+// (REPESCAGEM_EXCLUDED_USER_IDS) continua valendo só para a MIGRAÇÃO de carteira.
+const REPESCAGEM_SYSTEM_USER_IDS = new Set<string>([
+  'a0903a77-a217-4989-8e0c-7d9ca2ac36cf', // HOTSITE
+  'bcdda258-90cb-408a-9d40-dfc0ced2d481', // INSTAGRAM
+  '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest Admin (conta Honest 1)
+  'f87166f7-0431-4bd1-8c8c-074d13b2c861', // Honest Fornecedores (conta Honest 2)
+]);
+const REPESCAGEM_FORMER_EXCLUDED_PEOPLE = Array.from(REPESCAGEM_EXCLUDED_USER_IDS).filter(id => !REPESCAGEM_SYSTEM_USER_IDS.has(id));
+// Uma única vez: quem estava fixo fora começa DESLIGADO (o painel passa a mandar). Idempotente.
+let __pessoasForaMigradas: Promise<void> | null = null;
+function ensureFormerExcludedOff(): Promise<void> {
+  if (!__pessoasForaMigradas) {
+    __pessoasForaMigradas = (async () => {
+      await db.execute(sql.raw("CREATE TABLE IF NOT EXISTS repescagem_flags (key text PRIMARY KEY, done_at timestamptz DEFAULT now())"));
+      const r: any = await db.execute(sql`INSERT INTO repescagem_flags (key) VALUES ('pessoas_fora_desligadas') ON CONFLICT (key) DO NOTHING RETURNING key`);
+      if (((r.rows || r) as any[]).length > 0 && REPESCAGEM_FORMER_EXCLUDED_PEOPLE.length > 0) {
+        await db.update(repescagemAttendants).set({ isEnabled: false, updatedAt: new Date() })
+          .where(inArray(repescagemAttendants.userId, REPESCAGEM_FORMER_EXCLUDED_PEOPLE));
+      }
+    })().catch((e) => { console.error('[repescagem][pessoas-fora]', (e as any)?.message); __pessoasForaMigradas = null; });
+  }
+  return __pessoasForaMigradas;
+}
+
 // Carteiras (vendedor dono do cliente) que NAO entram em repescagem: canais/sistema
 // Honest 1/2/3, HOTSITE, INSTAGRAM. Clientes dessas carteiras sao ignorados no gatilho.
 const REPESCAGEM_EXCLUDED_SELLER_IDS = new Set<string>([
@@ -87,7 +114,8 @@ async function loadSpecialCrossReceivers(): Promise<Map<string, Receiver[]>> {
   const map = new Map<string, Receiver[]>();
   for (const r of rows) {
     const cart = Array.isArray((r as any).carteiras) ? ((r as any).carteiras as string[]) : [];
-    if (cart.length === 0) continue; // sem carteira = desabilitado
+    if (cart.length === 0) continue; // sem carteira = nao recebe roteamento especial
+    if ((r as any).isEnabled === false || REPESCAGEM_SYSTEM_USER_IDS.has(r.userId)) continue; // desligado no painel
     const pcts = ((r as any).carteiraPcts && typeof (r as any).carteiraPcts === 'object') ? (r as any).carteiraPcts as Record<string, number> : {};
     for (const src of cart) {
       if (!src || src === r.userId) continue; // carteira propria nao e roteamento especial
@@ -664,6 +692,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
 // - Cria novas atribuições para candidatos sem atribuição ativa
 // - Marca como completed se houve service log após assignedAt para esse customer
 async function reconcileAssignments(actorUserId?: string): Promise<void> {
+  await ensureFormerExcludedOff();
   try { await __reconcileAssignmentsRaw(actorUserId); } catch (e) { console.error('[reconcileAssignments] skip:', (e as any)?.message); }
 }
 
@@ -713,7 +742,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, enabledRawIds))
     : [];
   const roleById = new Map(enabledUsers.map(u => [u.id, u.role]));
-  const allEnabledIds = enabledRawIds.filter(id => !REPESCAGEM_EXCLUDED_USER_IDS.has(id));
+  const allEnabledIds = enabledRawIds.filter(id => !REPESCAGEM_SYSTEM_USER_IDS.has(id));
   const externalIds = allEnabledIds.filter(id => roleById.get(id) === 'vendedor');
   const internalIds = allEnabledIds.filter(id => roleById.get(id) !== 'vendedor');
   const externalSet = new Set(externalIds);
@@ -1302,6 +1331,7 @@ async function geocodeMissingCandidates(customerIds: string[]): Promise<void> {
 
 async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promise<any> {
   const drawDate = opts.drawDate;
+  await ensureFormerExcludedOff();
 
   // Idempotência: se o dia já foi sorteado, não refaz (a menos que force).
   const existing = await db.select({ id: repescagemAssignments.id })
@@ -1322,7 +1352,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
 
   // Atendentes habilitados, separados por função.
   const enabled = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.isEnabled, true));
-  const enabledIds = enabled.map(a => a.userId).filter(id => !REPESCAGEM_EXCLUDED_USER_IDS.has(id));
+  const enabledIds = enabled.map(a => a.userId).filter(id => !REPESCAGEM_SYSTEM_USER_IDS.has(id));
   const roleRows = enabledIds.length
     ? await db.select({ id: users.id, role: users.role }).from(users).where(inArray(users.id, enabledIds))
     : [];
@@ -1917,7 +1947,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
       const urows = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, toUserId));
       const role = urows[0]?.role;
-      if (enabled.length === 0 || REPESCAGEM_EXCLUDED_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
+      if (enabled.length === 0 || REPESCAGEM_SYSTEM_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
         return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
       }
       const phase = role === 'vendedor' ? 'external' : 'telemarketing';
@@ -1956,7 +1986,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
       const urows = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, toUserId));
       const role = urows[0]?.role;
-      if (enabled.length === 0 || REPESCAGEM_EXCLUDED_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
+      if (enabled.length === 0 || REPESCAGEM_SYSTEM_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
         return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
       }
       const phase = role === 'vendedor' ? 'external' : 'telemarketing';
@@ -2006,7 +2036,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .where(and(eq(repescagemAttendants.userId, toUserId), eq(repescagemAttendants.isEnabled, true)));
       const urows = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, toUserId));
       const role = urows[0]?.role;
-      if (enabled.length === 0 || REPESCAGEM_EXCLUDED_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
+      if (enabled.length === 0 || REPESCAGEM_SYSTEM_USER_IDS.has(toUserId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(role as any)) {
         return res.status(400).json({ message: 'Atendente não habilitado para a repescagem' });
       }
       const phase = role === 'vendedor' ? 'external' : 'telemarketing';
@@ -2297,11 +2327,13 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // Gilmar → as três veem todos os clientes do Gilmar em repescagem. Quem CAPTURAR fica com o
       // cliente no dia e ele some para os outros. % não escolhido = 100%.
       const recvPct = new Map<string, number>();
-      if (!REPESCAGEM_EXCLUDED_USER_IDS.has(sellerId)) {
+      await ensureFormerExcludedOff();
+      if (!REPESCAGEM_SYSTEM_USER_IDS.has(sellerId)) {
         try {
           const ar = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, sellerId));
           const a0: any = ar[0];
-          const cart: string[] = a0 && Array.isArray(a0.carteiras) ? a0.carteiras : [];
+          // Atendente DESLIGADO no painel não vê carteiras compartilhadas (continua vendo o que é dele).
+          const cart: string[] = a0 && a0.isEnabled !== false && Array.isArray(a0.carteiras) ? a0.carteiras : [];
           const pcts: Record<string, number> = a0 && a0.carteiraPcts && typeof a0.carteiraPcts === 'object' ? a0.carteiraPcts : {};
           for (const src of cart) {
             if (!src || src === sellerId) continue;
@@ -2505,6 +2537,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
     try {
       // Semeia os defaults (espelho de hoje) se ainda nao houver nenhuma carteira configurada.
       try { await seedRepescagemCarteirasIfEmpty(); } catch {}
+      await ensureFormerExcludedOff();
 
       const eligible = await db.select({
         id: users.id,
@@ -2549,7 +2582,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const nameById = new Map(nameRows.map(u => [u.id, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id]));
 
       const out = eligible
-        .filter(u => !REPESCAGEM_EXCLUDED_USER_IDS.has(u.id))
+        .filter(u => !REPESCAGEM_SYSTEM_USER_IDS.has(u.id))
         .map(u => {
           const a = map.get(u.id);
           const carteiras = Array.isArray((a as any)?.carteiras) ? ((a as any).carteiras as string[]) : [];
@@ -2569,7 +2602,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
             userId: u.id,
             name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id,
             role: u.role, // 'vendedor' (externo) | 'telemarketing' (interno)
-            isEnabled: carteiras.length > 0,
+            // Chave do painel (liga/desliga), independente das carteiras salvas.
+            isEnabled: !!(a as any)?.isEnabled,
             enabledAt: a?.enabledAt || null,
             carteiras,
             carteiraPcts,
@@ -2592,7 +2626,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         and(eq(users.isActive, true), inArray(users.role, REPESCAGEM_ELIGIBLE_ROLES as any))
       );
       const out = sellers
-        .filter(u => !REPESCAGEM_EXCLUDED_USER_IDS.has(u.id))
+        .filter(u => !REPESCAGEM_SYSTEM_USER_IDS.has(u.id))
         .map(u => ({ sellerId: u.id, name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.id, role: u.role }))
         .sort((a, b) => a.name.localeCompare(b.name));
       res.json(out);
@@ -2614,11 +2648,12 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const target = await db.select({ id: users.id, role: users.role, isActive: users.isActive }).from(users).where(eq(users.id, userId));
       if (target.length === 0) return res.status(404).json({ message: 'Usuário não encontrado' });
       const t = target[0];
-      if (REPESCAGEM_EXCLUDED_USER_IDS.has(userId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(t.role as any) || !t.isActive) {
+      if (REPESCAGEM_SYSTEM_USER_IDS.has(userId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(t.role as any) || !t.isActive) {
         return res.status(400).json({ message: 'Usuário não elegível para a repescagem' });
       }
-      const isEnabled = carteiras.length > 0;
       const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
+      // Carteiras e liga/desliga são independentes: salvar carteiras mantém o estado da chave.
+      const isEnabled = existing.length > 0 ? !!existing[0].isEnabled : carteiras.length > 0;
       // Mantem os % apenas das carteiras que continuam na lista (poda os removidos).
       const prevPcts = existing.length > 0 && (existing[0] as any).carteiraPcts && typeof (existing[0] as any).carteiraPcts === 'object'
         ? (existing[0] as any).carteiraPcts as Record<string, number> : {};
@@ -2639,8 +2674,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
           isEnabled,
           carteiras: carteiras as any,
           carteiraPcts: carteiraPcts as any,
-          enabledAt: isEnabled ? (existing[0].enabledAt || new Date()) : existing[0].enabledAt,
-          disabledAt: isEnabled ? null : new Date(),
+          enabledAt: existing[0].enabledAt,
+          disabledAt: existing[0].disabledAt,
           updatedAt: new Date(),
         }).where(eq(repescagemAttendants.userId, userId));
       }
@@ -2695,7 +2730,7 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .from(users).where(eq(users.id, userId));
       if (target.length === 0) return res.status(404).json({ message: 'Usuário não encontrado' });
       const t = target[0];
-      if (REPESCAGEM_EXCLUDED_USER_IDS.has(userId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(t.role as any) || !t.isActive) {
+      if (REPESCAGEM_SYSTEM_USER_IDS.has(userId) || !REPESCAGEM_ELIGIBLE_ROLES.includes(t.role as any) || !t.isActive) {
         return res.status(400).json({ message: 'Usuário não elegível para a repescagem' });
       }
       const existing = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, userId));
@@ -2703,7 +2738,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // seria "ligado mas sem receber ninguem", entao ao HABILITAR semeamos ao menos a carteira propria
       // (se ainda vazio); ao DESABILITAR limpamos as carteiras.
       const curCart = existing.length > 0 && Array.isArray((existing[0] as any).carteiras) ? ((existing[0] as any).carteiras as string[]) : [];
-      const nextCart = isEnabled ? (curCart.length > 0 ? curCart : defaultCarteirasFor(userId, true)) : [];
+      // Desligar NÃO apaga as carteiras: ao religar, o atendente volta com a mesma configuração.
+      const nextCart = isEnabled ? (curCart.length > 0 ? curCart : defaultCarteirasFor(userId, true)) : curCart;
       if (existing.length === 0) {
         // id explícito: a coluna no banco pode não ter DEFAULT gen_random_uuid(),
         // então geramos o UUID no próprio INSERT para não violar o NOT NULL.
