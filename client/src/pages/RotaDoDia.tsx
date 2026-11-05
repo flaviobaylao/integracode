@@ -457,12 +457,12 @@ export default function RotaDoDia() {
     },
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' }),
   });
-  // TODO atendimento de repescagem do TELEMARKETING passa pelo card CAPTURADO: ao clicar em
-  // WhatsApp ou Registrar num card ainda não capturado, ele é capturado primeiro (some para os
-  // demais) e só então a ação segue. Capturado por outro atendente → bloqueia. Admin e vendedor
-  // externo (dono da carteira) seguem sem captura.
+  // TODO atendimento de repescagem passa pelo card CAPTURADO (carteira compartilhada: vários
+  // atendentes veem o mesmo cliente): ao clicar em WhatsApp ou Registrar num card ainda não
+  // capturado, ele é capturado primeiro (some para os demais) e só então a ação segue. Capturado
+  // por outro atendente → bloqueia. Admin e o DONO da carteira (card duplo) seguem sem captura.
   const comCaptura = (r: any, acao: () => void) => {
-    if (!isTelemarketing || isAdmin || !r?.assignmentId) { acao(); return; }
+    if (isAdmin || !r?.assignmentId || r?.isOwner) { acao(); return; }
     if (r.captured && r.canRelease) { acao(); return; }
     if (r.captured && !r.canRelease) {
       toast({ title: 'Cliente já capturado', description: `Este cliente está com ${r.capturedByName || 'outro atendente'}.`, variant: 'destructive' });

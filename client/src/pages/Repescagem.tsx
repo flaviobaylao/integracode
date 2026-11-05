@@ -186,7 +186,7 @@ export default function Repescagem() {
     onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao salvar carteiras', variant: 'destructive' }),
   });
 
-  // Define o % (10..100) de uma carteira para um atendente (rateio quando 2+ recebem a carteira).
+  // Define o % (10..100) de uma carteira para um atendente: fatia dos clientes da carteira que ele vê (compartilhada, não rateio).
   const setCarteiraPct = useMutation({
     mutationFn: async ({ userId, sellerId, pct }: { userId: string; sellerId: string; pct: number }) =>
       apiRequest('POST', `/api/repescagem/attendants/${userId}/carteira-pct`, { sellerId, pct }),
@@ -448,9 +448,9 @@ export default function Repescagem() {
             <>
               <p className="text-xs text-gray-500">
                 Atendentes de repescagem são o <b>telemarketing</b> e os <b>vendedores externos</b>. Marque as <b>carteiras</b>
-                que cada um recebe e escolha o <b>%</b> daquela carteira que ele atende (10 a 100). Quando 2+ atendentes
-                recebem a mesma carteira, os clientes são rateados conforme os <b>%</b> escolhidos. O <b>atual %</b> em cinza
-                mostra a cobertura real de hoje (resultado do rateio).
+                que cada um recebe e escolha o <b>%</b> dos clientes daquela carteira que ele vê (10 a 100). <b>Não é rateio:</b> com
+                2+ atendentes na mesma carteira, cada um vê o seu % — com <b>100%</b>, todos veem todos os clientes da carteira em
+                repescagem na rota do dia. Quem <b>capturar</b> o atendimento fica com o cliente no dia e ele some para os demais.
               </p>
               <p className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md px-2 py-1.5">
                 O dono da carteira também vê o cliente na rota pelo <b>card duplo</b>. Os <b>vendedores externos</b> recebem
@@ -495,19 +495,18 @@ export default function Repescagem() {
                         const cov = covById.get(sid);
                         const nm = cov?.sellerName || carteiraNameById.get(sid) || sid;
                         const isOwn = sid === a.userId;
-                        const chosenPct = (a.carteiraPcts && a.carteiraPcts[sid] != null)
-                          ? a.carteiraPcts[sid]
-                          : (cov && cov.total > 0 ? Math.max(10, Math.min(100, Math.round(cov.pct / 10) * 10)) : 100);
+                        // % não escolhido = 100% (mesma regra do servidor: carteira compartilhada, não rateio).
+                        const chosenPct = (a.carteiraPcts && a.carteiraPcts[sid] != null) ? a.carteiraPcts[sid] : 100;
                         return (
                           <span
                             key={sid}
                             className="inline-flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 dark:bg-blue-950/40 pl-2 pr-1 py-0.5 text-[11px]"
                             data-testid={`carteira-chip-${a.userId}-${sid}`}
-                            title={isOwn ? 'Carteira própria (fica com o próprio atendente)' : 'Carteira recebida — escolha o % que este atendente atende (o rateio segue os %)'}
+                            title={isOwn ? 'Carteira própria (fica com o próprio atendente)' : 'Carteira recebida — escolha o % dos clientes desta carteira que este atendente vê (não é rateio: cada atendente vê o seu %)'}
                           >
                             <span className="font-medium">{nm}{isOwn ? ' (própria)' : ''}</span>
                             {isOwn ? (
-                              <span className="text-blue-700 dark:text-blue-300 font-semibold">{cov ? `${cov.pct}%` : '100%'}</span>
+                              <span className="text-blue-700 dark:text-blue-300 font-semibold" title="O dono sempre vê os próprios clientes em repescagem (card duplo)">100%</span>
                             ) : (
                               <>
                                 <select
@@ -520,7 +519,6 @@ export default function Repescagem() {
                                 >
                                   {[10,20,30,40,50,60,70,80,90,100].map(p => <option key={p} value={p}>{p}%</option>)}
                                 </select>
-                                {cov && cov.total > 0 && <span className="text-gray-400" title="cobertura atual (resultado do rateio)">atual {cov.pct}%</span>}
                               </>
                             )}
                             <button
