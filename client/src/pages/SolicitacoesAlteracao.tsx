@@ -27,7 +27,7 @@ import { MessageThread } from "@/components/change-request/ChangeRequestControl"
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { AnexosPicker, prepararAnexos, arquivosDoColar, type AnexoNovo } from "@/components/change-request/Anexos";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus, ChevronDown } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus, ChevronDown, Undo2 } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -905,6 +905,16 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
     },
     onError: (e: any) => toast({ title: "Erro ao enviar para repescagem", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  // ↩️ Voltar para Pendentes (05/nov/2026): desfaz um "Marcar como lido"/resolução feita por engano.
+  const reabrirMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/reabrir`, {}),
+    onSuccess: () => {
+      toast({ title: "Report de volta em Pendentes", description: "Ele saiu de Resolvidas e voltou para a caixa de pendentes." });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível reabrir", description: String(e?.message || "Tente novamente.").replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
+  });
   if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} resolved />;
   return (
     <Card className="p-4 space-y-2">
@@ -984,6 +994,12 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
               {whatsappMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><MessageCircle className="h-3.5 w-3.5 mr-1" /> Envio Whatsapp</>}
             </Button>
             <EnviarParaAgenda r={r} compacto />
+            <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50 h-7 text-xs" disabled={reabrirMut.isPending}
+              title="Devolve este report para Pendentes (use quando ele foi resolvido por engano)"
+              data-testid={`cr-reabrir-${r.id}`}
+              onClick={() => { if (window.confirm("Voltar este report para Pendentes?")) reabrirMut.mutate(); }}>
+              {reabrirMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Undo2 className="h-3.5 w-3.5 mr-1" /> Voltar para pendentes</>}
+            </Button>
           </div>
         )}
       </div>
