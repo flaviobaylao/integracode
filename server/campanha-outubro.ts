@@ -141,8 +141,63 @@ const achaPremissa = (ps: Premissa[], chave: string) => ps.find((p) => p.chave =
 // Contas fora da campanha (canais digitais, contas institucionais e excecoes do gestor).
 // A comparacao ignora pontuacao, acentos, espacos e caixa ("Maria E." = "Maria E").
 const chaveExcl = (s: string) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-const EXCLUIDOS = new Set(["hotsite", "instagram", "honest colaboradores", "honest admin", "honest fornecedores", "maria e.", "natalia b.", "vinicius leal", "wellington s"].map(chaveExcl));
+// Só contas que NÃO SÃO PESSOAS ficam fixas aqui. Pessoa fora da campanha é
+// decisão do gestor e mudou de lugar (05/nov/2026): está na tabela
+// campanha_participantes e se liga/desliga na tela. Até então cada "tira o
+// fulano" era um deploy, e a lista de nomes aqui era a prova disso.
+const EXCLUIDOS = new Set(["hotsite", "instagram", "honest colaboradores", "honest admin", "honest fornecedores"].map(chaveExcl));
+// Pessoas que estavam fixas no código quando a tabela nasceu: viram linhas
+// "incluir = false" na primeira subida, para ninguém voltar sem querer.
+const DESLIGADOS_INICIAIS = ["maria e.", "natalia b.", "vinicius leal", "wellington s", "wilson m"];
 function excluido(nome: string): boolean { return EXCLUIDOS.has(chaveExcl(nome)); }
+
+// ---------------------------------------------------------------------------
+// PARTICIPANTES. Entra na campanha quem é usuário ativo com papel vendedor ou
+// telemarketing, salvo quem o gestor desligou. Quem está ligado aparece na
+// tabela MESMO sem carteira, sem venda e sem novo cliente no mês — uma linha
+// zerada diz "não produziu"; linha ausente só levanta a dúvida de se a pessoa
+// participa ou não (foi o caso da Virgínia).
+// ---------------------------------------------------------------------------
+type Participante = { id: string; nome: string; role: string; incluir: boolean };
+let _participantesOk = false;
+async function ensureParticipantes(): Promise<void> {
+  if (_participantesOk) return;
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS campanha_participantes (
+    user_id varchar PRIMARY KEY,
+    incluir boolean NOT NULL DEFAULT true,
+    updated_by varchar, updated_at timestamptz DEFAULT now()
+  )`);
+  // Semente única: só quando a chave de nome aponta para UM usuário, e só se
+  // ainda não há decisão gravada para ele.
+  const lista = DESLIGADOS_INICIAIS.map((n) => "'" + chaveExcl(n) + "'").join(",");
+  await db.execute(sql.raw(
+    "INSERT INTO campanha_participantes (user_id, incluir, updated_by)" +
+    " SELECT uid, false, 'sistema' FROM (" +
+    "   SELECT MIN(id) AS uid, COUNT(*) AS n FROM (" +
+    "     SELECT id, regexp_replace(translate(lower(COALESCE(first_name,'')||COALESCE(last_name,'')),'áàâãéêíóôõúç','aaaaeeiooouc'),'[^a-z0-9]','','g') AS k FROM users" +
+    "   ) x WHERE k IN (" + lista + ") GROUP BY k" +
+    " ) m WHERE m.n = 1 ON CONFLICT (user_id) DO NOTHING"
+  ));
+  _participantesOk = true;
+}
+/** Usuários elegíveis (ativos, vendedor/telemarketing) com a decisão do gestor. */
+async function listarParticipantes(): Promise<Participante[]> {
+  await ensureParticipantes();
+  const rows = await rawq(
+    "SELECT u.id, NULLIF(TRIM(COALESCE(u.first_name,'')||' '||COALESCE(u.last_name,'')),'') AS nome, u.role::text AS role," +
+    " COALESCE(p.incluir, true) AS incluir" +
+    " FROM users u LEFT JOIN campanha_participantes p ON p.user_id = u.id" +
+    " WHERE u.role::text IN ('vendedor','telemarketing') AND u.is_active IS TRUE" +
+    " ORDER BY COALESCE(p.incluir, true) DESC, u.role::text, nome"
+  );
+  return rows
+    .map((r: any) => ({ id: String(r.id), nome: String(r.nome || ""), role: String(r.role || ""), incluir: r.incluir !== false }))
+    .filter((p) => p.nome && !excluido(p.nome));
+}
+/** Nomes de quem está DENTRO da campanha. */
+async function nomesParticipantes(): Promise<Set<string>> {
+  return new Set((await listarParticipantes()).filter((p) => p.incluir).map((p) => p.nome));
+}
 
 const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 
@@ -304,6 +359,7 @@ export async function detectNovos(ym: string): Promise<number> {
   const docUid: Record<string, string> = {};
   for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) { docSeller[d] = String(r.seller || ""); docUid[d] = String(r.uid || ""); } }
   const janelas = await janelasDelegacao(ym);
+  const dentro = await nomesParticipantes();
 
   let n = 0;
   for (const r of novos) {
@@ -314,7 +370,8 @@ export async function detectNovos(ym: string): Promise<number> {
     // Credito do novo cliente: dono da carteira NA DATA da 1a compra (respeita delegacao).
     const dono = donoNaData(janelas[doc], fd, { nome: docSeller[doc] || "", id: docUid[doc] || "" });
     const seller = dono.nome || "";
-    if (excluido(seller)) continue; // conta fora da campanha
+    // Conta de canal ou pessoa desligada da campanha: o cadastro nem nasce.
+    if (excluido(seller) || !dentro.has(seller)) continue;
     const val = Math.round((Number(r.dayv) || 0) * 100) / 100;
     const docE = doc.replace(/'/g, "");
     const nomeE = c.nome.replace(/'/g, "''");
@@ -446,11 +503,11 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   const metaPct = pMeta?.gatilho ?? 100;
   const bateuMeta = (fat: number, meta: number) => meta > 0 && fat >= (meta * metaPct) / 100;
 
-  // Participam da campanha apenas usuarios ativos com papel vendedor/telemarketing.
-  const vendRows = await rawq("SELECT NULLIF(TRIM(COALESCE(first_name,'')||' '||COALESCE(last_name,'')),'') AS nome FROM users WHERE role::text IN ('vendedor','telemarketing') AND is_active IS TRUE");
-  const vendSet = new Set(vendRows.map((r: any) => String(r.nome || "")).filter(Boolean));
+  // Quem está na campanha: vendedor/telemarketing ativo que o gestor não desligou.
+  const vendSet = await nomesParticipantes();
 
-  const names = new Set<string>();
+  // Todo participante ligado tem linha, produzindo ou não.
+  const names = new Set<string>(vendSet);
   Object.keys(carteiraCount).forEach((s) => names.add(s));
   Object.keys(novosAptos).forEach((s) => names.add(s));
   Object.keys(emValidacao).forEach((s) => names.add(s));
@@ -621,6 +678,32 @@ export function registerCampanhaRoutes(app: Express): void {
           pedido_min = COALESCE(EXCLUDED.pedido_min, campanha_premissas.pedido_min),
           updated_by = EXCLUDED.updated_by, updated_at = now()`);
       res.json({ ok: true, premissas: await premissasDoMes(ym) });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
+
+  // Participantes: quem entra na campanha (somente admin lista e altera).
+  app.get("/api/campanha/outubro/participantes", async (req, res) => {
+    try {
+      const { role } = await resolveUser(req);
+      if (role !== "admin") return res.status(403).json({ error: "forbidden" });
+      res.json({ participantes: await listarParticipantes() });
+    } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
+  });
+  app.post("/api/campanha/outubro/participante", async (req, res) => {
+    try {
+      const { role } = await resolveUser(req);
+      if (role !== "admin") return res.status(403).json({ error: "forbidden" });
+      await ensureParticipantes();
+      const b = (req.body || {}) as any;
+      const userId = String(b.userId || "").replace(/[^a-zA-Z0-9-]/g, "");
+      if (!userId) return res.status(400).json({ error: "usuário inválido" });
+      const incluir = b.incluir !== false;
+      await db.execute(sql`
+        INSERT INTO campanha_participantes (user_id, incluir, updated_by, updated_at)
+        VALUES (${userId}, ${incluir}, ${String((req as any)?.session?.userId || "") || null}, now())
+        ON CONFLICT (user_id) DO UPDATE SET
+          incluir = EXCLUDED.incluir, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      res.json({ ok: true, participantes: await listarParticipantes() });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
