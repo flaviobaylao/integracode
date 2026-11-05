@@ -11400,6 +11400,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             trocaPhotoUrl: fotosDoCard(order.salesCardId)[0] || null,
             trocaPhotoUrls: fotosDoCard(order.salesCardId),
             trocaRecorrencia: recPorCard.get(String(order.salesCardId)) || null,
+            trocaDescontoBoleto: recPorCard.get(String(order.salesCardId))?.descontoBoleto === true,
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
