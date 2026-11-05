@@ -1267,6 +1267,29 @@ export function registerChangeRequestsRoutes(app: Express) {
   }));
 
   // --------------------------------------------------------------------------
+  // POST /api/change-requests/:id/reabrir — admin: devolve para PENDENTES um REPORT que foi
+  //   para Resolvidas por engano (05/nov/2026). Limpa a resolução e registra na conversa.
+  //   A foto do check-in, removida ao resolver, NÃO volta (regra de 24/out/2026).
+  // --------------------------------------------------------------------------
+  app.post("/api/change-requests/:id/reabrir", authenticateUser, requireRole(["admin"]), safe(async (req, res) => {
+    await ensureTables();
+    const u = (req as any).currentUser;
+    const id = String(req.params.id);
+    const cur = rowsOf(await db.execute(sql`SELECT id, kind, status FROM change_requests WHERE id = ${id} LIMIT 1`))[0];
+    if (!cur) return res.status(404).json({ error: "Report não encontrado." });
+    if ((cur.kind || "solicitacao") !== "report") return res.status(400).json({ error: "Só reports podem voltar para pendentes por aqui." });
+    if (cur.status === "pending") return res.status(409).json({ error: "Este report já está em Pendentes." });
+    const msg = mkMsg("admin", u, "↩️ Report devolvido para Pendentes (resolvido por engano).", "reopen");
+    const updated = rowsOf(await db.execute(sql`
+      UPDATE change_requests
+      SET status = 'pending', resolved_by = NULL, resolved_by_name = NULL, resolution_note = NULL, resolved_at = NULL,
+          messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+      WHERE id = ${id}
+      RETURNING *`));
+    res.json(mapRow(updated[0]));
+  }));
+
+  // --------------------------------------------------------------------------
   // POST /api/change-requests/:id/cancel — admin: CANCELA/REABRE uma solicitação já
   //   resolvida (efetuadas/parcial/rejeitadas), devolvendo o CARD ao estado normal e
   //   UTILIZÁVEL (deixa de ficar cinza/travado). Registra no histórico. (30/jul/2026)
