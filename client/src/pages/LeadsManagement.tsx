@@ -425,7 +425,14 @@ export default function LeadsManagement() {
     onError: (e: any) => toast({ title: "Cliente criado", description: "Mas não foi possível marcar o lead como convertido: " + (e?.message || ''), variant: "destructive" }),
   });
 
-  const openConverter = (lead: Lead) => {
+  // 🧾 Dados fiscais do lead (CNPJ/Receita gravados pela amostra ou pela lupa) → pré-preenche o cadastro.
+  const [converterFiscal, setConverterFiscal] = useState<any>(null);
+  const openConverter = async (lead: Lead) => {
+    setConverterFiscal(null);
+    try {
+      const d: any = await apiRequest('GET', `/api/leads/${lead.id}/fiscal`);
+      if (d?.cnpj) setConverterFiscal({ cnpj: d.cnpj, companyName: d.fiscal?.razaoSocial || '', address: d.fiscal?.endereco || '', neighborhood: d.fiscal?.bairro || '', city: d.fiscal?.cidade || '', state: d.fiscal?.uf || '', zipCode: d.fiscal?.cep || '', stateRegistration: d.fiscal?.ie || '', email: d.fiscal?.email || '' });
+    } catch { /* segue sem fiscal */ }
     setConverterLead(lead);
   };
   const openProrrogar = (lead: Lead) => {
@@ -2159,12 +2166,14 @@ export default function LeadsManagement() {
           isOpen={!!converterLead}
           onClose={() => setConverterLead(null)}
           initialData={{
-            name: converterLead.fantasyName,
+            name: converterFiscal?.companyName || converterLead.fantasyName,
+            fantasyName: converterLead.fantasyName,
             phone: converterLead.phone || '',
             customerType: 'pessoa_juridica',
             sellerId: converterLead.assignedTo || '',
             latitude: (converterLead as any).latitude,
             longitude: (converterLead as any).longitude,
+            ...(converterFiscal || {}),
           }}
           onCreated={() => { const lid = converterLead.id; marcarConvertidoMut.mutate(lid); }}
         />
