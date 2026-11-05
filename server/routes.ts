@@ -26987,6 +26987,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { name, customerType, cpf, cnpj, companyName, phone, email, address, city, state, zipCode, neighborhood, sellerId, weekdays, visitPeriodicity, latitude, longitude } = req.body;
+      // 🧾 IE: do formulário ou a já gravada no lead (lupa da Receita / amostra)
+      let stateRegistration: string | null = String(req.body?.stateRegistration || '').trim() || null;
+      if (!stateRegistration) { try { const _ie: any = await db.execute(sql`SELECT state_registration FROM leads WHERE id = ${id} LIMIT 1`); stateRegistration = _ie.rows?.[0]?.state_registration || null; } catch (_e) {} }
 
       // Buscar lead
       const lead = await storage.getLead(id);
@@ -27042,6 +27045,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cpf: _cpf,
         cnpj: _cnpj,
         companyName: companyName || null,
+        stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
         phone,
         email: email || null,
@@ -27063,6 +27067,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cpf: _cpf,
         cnpj: _cnpj,
         companyName: companyName || null,
+        stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
         phone,
         email: email || null,
