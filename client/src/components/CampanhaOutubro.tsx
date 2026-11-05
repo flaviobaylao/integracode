@@ -159,7 +159,11 @@ export default function CampanhaOutubro() {
                 bônus de meta em novembro, mês em que a meta está desligada. */}
             <p className="mt-1 max-w-2xl text-sm text-gray-600">
               {premissas.filter((p) => p.ativa).length
-                ? <>Bonificação por {premissas.filter((p) => p.ativa).map((p) => p.label).join(", ").replace(/, ([^,]*)$/, " e $1")} — por vendedor.</>
+                ? <>Bonificação por {premissas.filter((p) => p.ativa)
+                    // O rótulo do novo cliente já começa com "por" ("por novo
+                    // cliente"); emendado na frase virava "por por".
+                    .map((p) => p.chave === "novos" ? "novos clientes" : p.label.replace(/^por\s+/i, ""))
+                    .join(", ").replace(/, ([^,]*)$/, " e $1")} — por vendedor.</>
                 : <>Nenhuma premissa ligada neste mês — a campanha não paga nada.</>}
             </p>
           </div>
