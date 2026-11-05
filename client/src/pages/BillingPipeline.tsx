@@ -884,20 +884,22 @@ export default function BillingPipeline() {
   });
 
   const releaseBlockedMutation = useMutation({
-    mutationFn: async (vars: string[] | { orderIds: string[]; observacoes?: Record<string, string> }) =>
+    mutationFn: async (vars: string[] | { orderIds: string[]; observacoes?: Record<string, string>; scheduledBillingDate?: string }) =>
       await apiRequest('POST', '/api/blocked-orders/release', Array.isArray(vars) ? { orderIds: vars } : vars),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['/api/blocked-orders'] });
       queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] });
       const rel = data?.released ?? 0; const errs = data?.errors?.length ?? 0;
       if (errs && !rel) toast({ title: 'Nao foi possivel liberar', description: (data?.errors || []).join(' | '), variant: 'destructive' });
+      else if (data?.agendadoPara) toast({ title: 'Pedido liberado e agendado', description: `${rel} pedido(s) em "Agendado" para faturar em ${String(data.agendadoPara).split('-').reverse().join('/')}${errs ? `, ${errs} erro(s)` : ''}` });
       else toast({ title: 'Pedido liberado', description: `${rel} pedido(s) enviado(s) ao faturamento${errs ? `, ${errs} erro(s)` : ''}` });
     },
     onError: (error: any) => { toast({ title: 'Erro ao liberar', description: error.message, variant: 'destructive' }); }
   });
 
   // Troca recorrente (3ª ou mais do mesmo motivo em 60 dias): pede a observação do admin antes de liberar.
-  const liberarBloqueados = (ids: string[]) => {
+  // scheduledBillingDate (opcional, 'YYYY-MM-DD' futura): libera direto para "Agendado" com essa data.
+  const liberarBloqueados = (ids: string[], scheduledBillingDate?: string) => {
     const observacoes: Record<string, string> = {};
     for (const id of ids) {
       const b: any = (blockedOrders as any[]).find((x: any) => x.id === id);
@@ -910,7 +912,7 @@ export default function BillingPipeline() {
         observacoes[id] = obs.trim();
       }
     }
-    releaseBlockedMutation.mutate({ orderIds: ids, observacoes });
+    releaseBlockedMutation.mutate(scheduledBillingDate ? { orderIds: ids, observacoes, scheduledBillingDate } : { orderIds: ids, observacoes });
   };
 
   const rejectBlockedMutation = useMutation({
@@ -1264,6 +1266,12 @@ export default function BillingPipeline() {
       });
       return;
     }
+    // Pedido BLOQUEADO: "Agendado" = LIBERAR já agendado para a data (não é PATCH /stage — o id é do blocked_orders).
+    if (String(scheduleTarget.item.stage) === 'bloqueado') {
+      liberarBloqueados([scheduleTarget.item.id], scheduleDate);
+      closeSchedule();
+      return;
+    }
     moveStageMutation.mutate({ id: scheduleTarget.item.id, stage: scheduleTarget.stage, scheduledBillingDate: scheduleDate });
     closeSchedule();
   };
@@ -1304,7 +1312,9 @@ export default function BillingPipeline() {
       return;
     }
     // Card da coluna 'Bloqueados' nao e item do pipeline: alterar a etapa = LIBERAR (release).
-    // O pedido liberado entra na etapa "Pedido" e dali pode ser movido normalmente.
+    // Para "Agendado": pede a data "Faturar em" e libera direto em Agendado (o popup de data é a confirmação).
+    // Demais etapas: o pedido liberado entra em "Pedido" e dali pode ser movido normalmente.
+    if (item.stage === 'bloqueado' && stage === 'agendado') { openSchedule(item, 'agendado'); return; }
     if (item.stage === 'bloqueado') {
       if (window.confirm(`Liberar o pedido de ${item.customerName} para o faturamento? Ele entrara na etapa "Pedido".`)) liberarBloqueados([item.id]);
       return;
@@ -2651,6 +2661,9 @@ export default function BillingPipeline() {
             <DialogDescription>
               Escolha a data em que o pedido de <strong>{scheduleTarget?.item.customerName}</strong> deve ser faturado.
               A data aparece no card e no detalhe, e o pedido volta sozinho para "Pedido" nesse dia.
+              {String(scheduleTarget?.item.stage) === 'bloqueado' && (
+                <span className="block mt-2 text-amber-700">Este pedido está em <strong>Bloqueados</strong>: ao agendar, ele é <strong>liberado</strong> e vai para "Agendado".</span>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="py-2">
@@ -2660,7 +2673,7 @@ export default function BillingPipeline() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeSchedule}>Cancelar</Button>
-            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending || !scheduleDate || scheduleDate < amanhaISObr} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
+            <Button onClick={confirmSchedule} disabled={moveStageMutation.isPending || releaseBlockedMutation.isPending || !scheduleDate || scheduleDate < amanhaISObr} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="button-confirmar-agendamento">
               {moveStageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Clock className="h-4 w-4 mr-1" />}
               Agendar
             </Button>
