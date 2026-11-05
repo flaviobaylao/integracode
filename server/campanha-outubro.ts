@@ -44,10 +44,13 @@ type Premissa = {
   // positivação é o PEDIDO MÍNIMO para o cliente contar como positivado
   // (04/nov/2026): 0 = sem mínimo, qualquer compra positiva.
   pedidoMin?: number; pedidoMinLabel?: string;
+  // Mínimo próprio do cliente PF (05/nov/2026). Antes o PF positivava com
+  // qualquer valor; agora tem um piso menor que o do PJ, mas tem piso.
+  pedidoMinPf?: number; pedidoMinPfLabel?: string;
 };
-const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho" | "pedidoMin"> & {
+const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho" | "pedidoMin" | "pedidoMinPf"> & {
   ativaPadrao: boolean; modoPadrao: ModoPremissa; valorPadrao: number; gatilhoPadrao: number;
-  pedidoMinPadrao?: number;
+  pedidoMinPadrao?: number; pedidoMinPfPadrao?: number;
 }> = [
   {
     chave: "novos", label: "por novo cliente", descricao: "Venda faturada dentro do raio logístico.",
@@ -61,7 +64,8 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     base: "faturamento do vendedor no mês",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 90,
     // 300 -> 200 em 05/nov/2026 (Flavio): vale como padrão dos próximos meses.
-    pedidoMinLabel: "Pedido mínimo para positivar (só PJ)", pedidoMinPadrao: 200,
+    pedidoMinLabel: "Pedido mínimo para positivar (PJ)", pedidoMinPadrao: 200,
+    pedidoMinPfLabel: "Pedido mínimo para positivar (PF)", pedidoMinPfPadrao: 80,
   },
   {
     chave: "meta", label: "meta de faturamento", descricao: "Meta do mês cumprida.",
@@ -85,6 +89,7 @@ async function ensurePremissas(): Promise<void> {
     PRIMARY KEY (ym, chave)
   )`);
   await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS pedido_min numeric`);
+  await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS pedido_min_pf numeric`);
 
   // CONGELAMENTO DE OUTUBRO (04/nov/2026). Outubro rodou SEM linha gravada: as
   // premissas vinham todas do catálogo. Como o catálogo passa a trazer pedido
@@ -104,6 +109,12 @@ async function ensurePremissas(): Promise<void> {
   await db.execute(sql`
     UPDATE campanha_premissas SET pedido_min = 0
     WHERE pedido_min IS NULL AND chave = 'positivacao' AND ym < '2026-11'`);
+  // Mesmo raciocínio para o mínimo do PF: outubro positivou PF com qualquer
+  // valor e assim fica. Sem isto, a linha de outubro (pedido_min_pf NULL)
+  // cairia no padrão de R$ 80 e a positivação do mês fechado mudaria.
+  await db.execute(sql`
+    UPDATE campanha_premissas SET pedido_min_pf = 0
+    WHERE pedido_min_pf IS NULL AND chave = 'positivacao' AND ym < '2026-11'`);
   _premissasOk = true;
 }
 
@@ -113,7 +124,7 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
   const gravadas: Record<string, any> = {};
   try {
     const r: any = await db.execute(sql`
-      SELECT chave, ativa, modo, valor, gatilho, pedido_min FROM campanha_premissas WHERE ym = ${ym}`);
+      SELECT chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf FROM campanha_premissas WHERE ym = ${ym}`);
     for (const x of r.rows || []) gravadas[String(x.chave)] = x;
   } catch (e: any) { console.error("[CAMPANHA] premissas:", e?.message || e); }
   return CATALOGO_PREMISSAS.map((c) => {
@@ -133,6 +144,11 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
         pedidoMinLabel: c.pedidoMinLabel,
         pedidoMin: g && g.pedido_min !== null && g.pedido_min !== undefined
           ? num(g.pedido_min, c.pedidoMinPadrao) : c.pedidoMinPadrao,
+      }),
+      ...(c.pedidoMinPfPadrao === undefined ? {} : {
+        pedidoMinPfLabel: c.pedidoMinPfLabel,
+        pedidoMinPf: g && g.pedido_min_pf !== null && g.pedido_min_pf !== undefined
+          ? num(g.pedido_min_pf, c.pedidoMinPfPadrao) : c.pedidoMinPfPadrao,
       }),
     };
   });
@@ -463,14 +479,17 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   const premissas = await premissasDoMes(ym);
   // PEDIDO MINIMO PARA POSITIVAR (04/nov/2026, campanha de novembro). Compra de
   // valor baixo deixou de valer positivacao: a campanha quer pedido de verdade,
-  // nao uma caixa avulsa para marcar presenca na carteira. Vale SO para PJ — o
-  // cliente PF compra em volume menor por natureza e continua positivando com
-  // qualquer valor. 0 (outubro) desliga a regra e tudo volta a positivar.
+  // nao uma caixa avulsa para marcar presenca na carteira. PJ e PF tem pisos
+  // proprios (05/nov/2026: PJ R$ 200, PF R$ 80) — o PF compra em volume menor
+  // por natureza, mas tambem nao positiva com qualquer valor. 0 desliga o piso
+  // daquele tipo (outubro esta gravado com os dois em 0).
   // "Pedido" aqui e o MESMO conceito do bonus de novo cliente: o total que o
   // cliente comprou NAQUELE DIA (as NF-e do dia somadas), e nao cada nota
   // isolada. Dois criterios diferentes para a mesma palavra seria indefensavel
   // na conferencia com o vendedor.
-  const minPositivacao = achaPremissa(premissas, "positivacao")?.pedidoMin || 0;
+  const pPosMin = achaPremissa(premissas, "positivacao");
+  const minPj = pPosMin?.pedidoMin || 0;
+  const minPf = pPosMin?.pedidoMinPf || 0;
   const faturamento: Record<string, number> = {};
   const posDocs: Record<string, Set<string>> = {};
   for (const r of fat) {
@@ -480,7 +499,9 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     // O faturamento continua somando TUDO: o minimo e criterio de positivacao,
     // nao de faturamento — o dinheiro entrou de qualquer jeito.
     faturamento[seller] = (faturamento[seller] || 0) + v;
-    if (minPositivacao > 0 && docPj[doc] === true && v < minPositivacao) continue;
+    // Cada tipo de cliente tem o seu piso: PJ (CNPJ) e PF (CPF).
+    const minimo = docPj[doc] === true ? minPj : minPf;
+    if (minimo > 0 && v < minimo) continue;
     (posDocs[seller] = posDocs[seller] || new Set<string>()).add(doc);
   }
   // Positivacao = clientes da carteira ATUAL do vendedor (a base do %) que compraram ENQUANTO
@@ -696,14 +717,17 @@ export function registerCampanhaRoutes(app: Express): void {
       // bloco por vez e não pode zerar um parâmetro que nem mostrou.
       const temMin = b.pedidoMin !== undefined && b.pedidoMin !== null && String(b.pedidoMin) !== "";
       const pedidoMin = temMin ? num(b.pedidoMin) : null;
+      const temMinPf = b.pedidoMinPf !== undefined && b.pedidoMinPf !== null && String(b.pedidoMinPf) !== "";
+      const pedidoMinPf = temMinPf ? num(b.pedidoMinPf) : null;
       await db.execute(sql`
-        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, updated_by, updated_at)
+        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf, updated_by, updated_at)
         VALUES (${ym}, ${chave}, ${b.ativa !== false}, ${modo}, ${num(b.valor)}, ${num(b.gatilho)},
-                ${pedidoMin}, ${String((req as any)?.session?.userId || "") || null}, now())
+                ${pedidoMin}, ${pedidoMinPf}, ${String((req as any)?.session?.userId || "") || null}, now())
         ON CONFLICT (ym, chave) DO UPDATE SET
           ativa = EXCLUDED.ativa, modo = EXCLUDED.modo, valor = EXCLUDED.valor,
           gatilho = EXCLUDED.gatilho,
           pedido_min = COALESCE(EXCLUDED.pedido_min, campanha_premissas.pedido_min),
+          pedido_min_pf = COALESCE(EXCLUDED.pedido_min_pf, campanha_premissas.pedido_min_pf),
           updated_by = EXCLUDED.updated_by, updated_at = now()`);
       res.json({ ok: true, premissas: await premissasDoMes(ym) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
