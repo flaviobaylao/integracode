@@ -151,6 +151,9 @@ export default function Repescagem() {
     ...attendants.filter(a => a.role === 'vendedor'),
   ];
   const enabledAttendants = attendants.filter(a => a.role === 'telemarketing' && a.isEnabled);
+  // Painel dinâmico: liga/desliga por atendente (as carteiras ficam salvas ao desligar).
+  const onAttendants = panelAttendants.filter(a => a.isEnabled);
+  const offAttendants = panelAttendants.filter(a => !a.isEnabled);
   const isAdmin = user?.role === 'admin';
 
   // Repescagem2: somente administradores habilitam/desabilitam atendentes.
@@ -160,7 +163,8 @@ export default function Repescagem() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/repescagem/attendants'] });
       queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
-      toast({ title: 'Atualizado', description: 'Disponibilidade do atendente atualizada.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay'] });
+      toast({ title: 'Atualizado', description: 'Atendente incluído/retirado da repescagem. As carteiras dele ficam salvas.' });
     },
     onError: (e: any) => {
       toast({ title: 'Erro', description: e?.message || 'Falha ao atualizar', variant: 'destructive' });
@@ -429,7 +433,7 @@ export default function Repescagem() {
           >
             <CardTitle className="text-base flex items-center gap-2">
               <UserCheck className="h-4 w-4" />
-              Atendentes e carteiras de repescagem ({enabledAttendants.length})
+              Atendentes e carteiras de repescagem ({onAttendants.length})
               <span className="inline-flex items-center justify-center h-6 w-6 rounded-md border border-gray-300 bg-white dark:bg-gray-900 text-gray-600 shrink-0">
                 {attendantsCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
               </span>
@@ -447,7 +451,7 @@ export default function Repescagem() {
           ) : isAdmin ? (
             <>
               <p className="text-xs text-gray-500">
-                Atendentes de repescagem são o <b>telemarketing</b> e os <b>vendedores externos</b>. Marque as <b>carteiras</b>
+                Atendentes de repescagem são o <b>telemarketing</b> e os <b>vendedores externos</b>. Use a chave <b>Na repescagem</b> para tirar alguém (as carteiras ficam salvas) e <b>+ Incluir</b> na lista "Fora da repescagem" para colocar. Marque as <b>carteiras</b>
                 que cada um recebe e escolha o <b>%</b> dos clientes daquela carteira que ele vê (10 a 100). <b>Não é rateio:</b> com
                 2+ atendentes na mesma carteira, cada um vê o seu % — com <b>100%</b>, todos veem todos os clientes da carteira em
                 repescagem na rota do dia. Quem <b>capturar</b> o atendimento fica com o cliente no dia e ele some para os demais.
@@ -458,11 +462,10 @@ export default function Repescagem() {
                 de outros vendedores para eles, também passam a atendê-las, igual ao telemarketing.
               </p>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                {panelAttendants.map(a => {
+                {onAttendants.map(a => {
                   const sel = a.carteiras || [];
                   const isExt = a.role === 'vendedor';
-                  // Externo é sempre "ativo" (recebe os próprios clientes na rota). Telemarketing só com carteira.
-                  const active = isExt || sel.length > 0;
+                  const active = a.isEnabled;
                   const covById = new Map((a.coverage || []).map(c => [c.sellerId, c]));
                   const available = carteiras.filter(c => !sel.includes(c.sellerId));
                   // Rascunho local da multi-seleção (cai de volta para o salvo quando não editado).
@@ -489,6 +492,15 @@ export default function Repescagem() {
                           </p>
                         )}
                       </div>
+                      <label className="flex items-center gap-1.5 shrink-0 cursor-pointer" title="Desligar tira o atendente da repescagem (as carteiras ficam salvas para quando religar)">
+                        <span className="text-[11px] text-green-700 dark:text-green-300 font-medium">Na repescagem</span>
+                        <Switch
+                          checked={a.isEnabled}
+                          disabled={toggleAttendant.isPending}
+                          onCheckedChange={(v) => toggleAttendant.mutate({ userId: a.userId, isEnabled: !!v })}
+                          data-testid={`attendant-switch-${a.userId}`}
+                        />
+                      </label>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {sel.map(sid => {
@@ -534,7 +546,7 @@ export default function Repescagem() {
                       })}
                       {sel.length === 0 && (
                         <span className="text-[11px] text-gray-400">
-                          {isExt ? 'Sem carteiras de outros vendedores (recebe apenas os próprios clientes na rota).' : 'Nenhuma carteira — não recebe repescagem.'}
+                          {isExt ? 'Sem carteiras de outros vendedores (recebe apenas os próprios clientes na rota).' : 'Sem carteiras — recebe só a sobra (clientes de carteiras que ninguém recebe).'}
                         </span>
                       )}
                     </div>
@@ -601,9 +613,32 @@ export default function Repescagem() {
                   </div>
                   );
                 })}
-                {panelAttendants.length === 0 && (
-                  <span className="text-xs text-gray-500">Nenhum atendente elegível.</span>
+                {onAttendants.length === 0 && (
+                  <span className="text-xs text-gray-500">Nenhum atendente na repescagem. Inclua alguém na lista abaixo.</span>
                 )}
+              </div>
+              {/* FORA DA REPESCAGEM: incluir com 1 clique (volta com as carteiras salvas). */}
+              <div className="rounded-md border border-dashed p-2" data-testid="attendants-off">
+                <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1.5">
+                  Fora da repescagem ({offAttendants.length})
+                  <span className="font-normal text-gray-500"> — clique em Incluir para colocar o atendente na repescagem.</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {offAttendants.map(a => (
+                    <span key={a.userId} className="inline-flex items-center gap-1.5 rounded-full border bg-white dark:bg-gray-900 pl-2.5 pr-1 py-0.5 text-[11px]" data-testid={`attendant-off-${a.userId}`}>
+                      <span className="font-medium">{a.name}</span>
+                      <span className="text-gray-400">{a.role === 'vendedor' ? 'Externo' : 'Telemarketing'}{(a.carteiras || []).length > 0 ? ` · ${(a.carteiras || []).length} carteira(s) salvas` : ''}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleAttendant.mutate({ userId: a.userId, isEnabled: true })}
+                        disabled={toggleAttendant.isPending}
+                        className="rounded-full bg-green-600 hover:bg-green-700 text-white px-2 py-0.5 font-semibold disabled:opacity-50"
+                        data-testid={`attendant-include-${a.userId}`}
+                      >+ Incluir</button>
+                    </span>
+                  ))}
+                  {offAttendants.length === 0 && <span className="text-[11px] text-gray-400">Todos os atendentes elegíveis estão na repescagem.</span>}
+                </div>
               </div>
             </>
           ) : (
