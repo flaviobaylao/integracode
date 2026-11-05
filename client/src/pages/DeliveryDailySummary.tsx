@@ -45,6 +45,7 @@ interface DeliveryStop {
   isPriority: boolean;
   photos?: string[];
   notes?: string;
+  invoiceNumber?: string | null;
 }
 
 interface RouteWithDeliveries {
@@ -60,7 +61,9 @@ interface RouteWithDeliveries {
 }
 
 export default function DeliveryDailySummary() {
-  const [selectedDate, setSelectedDate] = useState(hojeBR());
+  const [dateFrom, setDateFrom] = useState(hojeBR());
+  const [dateTo, setDateTo] = useState(hojeBR());
+  const [busca, setBusca] = useState('');
   const [selectedDriver, setSelectedDriver] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
@@ -72,10 +75,13 @@ export default function DeliveryDailySummary() {
   });
 
   const { data: routes = [], isLoading } = useQuery<RouteWithDeliveries[]>({
-    queryKey: ['/api/delivery-routes', selectedDate, selectedDriver],
+    queryKey: ['/api/delivery-routes', dateFrom, dateTo, selectedDriver],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (selectedDate) params.append('routeDate', selectedDate);
+      const de = dateFrom || dateTo;
+      const ate = dateTo || dateFrom;
+      if (de) params.append('dateFrom', de <= ate ? de : ate);
+      if (ate) params.append('dateTo', de <= ate ? ate : de);
       if (selectedDriver !== 'all') params.append('driverId', selectedDriver);
 
       const url = `/api/delivery-routes?${params.toString()}`;
@@ -83,7 +89,7 @@ export default function DeliveryDailySummary() {
       if (!res.ok) throw new Error('Failed to fetch routes');
       return res.json();
     },
-    enabled: !!selectedDate,
+    enabled: !!(dateFrom || dateTo),
   });
 
   const allDeliveries = routes.flatMap(route => 
@@ -91,19 +97,34 @@ export default function DeliveryDailySummary() {
       ...stop,
       routeId: route.id,
       routeName: route.routeName,
+      routeDate: route.routeDate,
       driverName: route.driverName,
       driverEmail: route.driverEmail,
       routeStatus: route.status,
       vehicleType: route.vehicleType
     }))
   ).sort((a, b) => {
+    const da = String(a.routeDate || '').slice(0, 10), db = String(b.routeDate || '').slice(0, 10);
+    if (da !== db) return da.localeCompare(db);
     if (a.driverName !== b.driverName) {
       return a.driverName.localeCompare(b.driverName);
     }
     return a.stopOrder - b.stopOrder;
   });
 
-  const filteredDeliveries = allDeliveries.filter(delivery => {
+  // Busca por cliente ou NF (ignora acento, caixa e o prefixo "NF-")
+  const norm = (v: any) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const termo = norm(busca.trim());
+  const termoDig = busca.replace(/\D/g, '');
+  const searchedDeliveries = !termo ? allDeliveries : allDeliveries.filter(d =>
+    norm(d.customerName).includes(termo) ||
+    norm(d.invoiceNumber).includes(termo) ||
+    (termoDig.length > 0 && String(d.invoiceNumber || '').replace(/\D/g, '').includes(termoDig))
+  );
+  const multiDia = (dateFrom || dateTo) !== (dateTo || dateFrom);
+  const fmtDia = (v?: string) => { const s = String(v || '').slice(0, 10).split('-'); return s.length === 3 ? `${s[2]}/${s[1]}` : '—'; };
+
+  const filteredDeliveries = searchedDeliveries.filter(delivery => {
     if (selectedStatus === 'all') return true;
     if (selectedStatus === 'pendente') return delivery.status === 'pendente' || delivery.status === 'pending';
     return delivery.status === selectedStatus;
@@ -152,9 +173,9 @@ export default function DeliveryDailySummary() {
     return notes;
   };
 
-  const totalPendente = allDeliveries.filter(d => d.status === 'pendente' || d.status === 'pending').length;
-  const totalEfetuada = allDeliveries.filter(d => d.status === 'efetuada').length;
-  const totalDevolvida = allDeliveries.filter(d => d.status === 'devolvida').length;
+  const totalPendente = searchedDeliveries.filter(d => d.status === 'pendente' || d.status === 'pending').length;
+  const totalEfetuada = searchedDeliveries.filter(d => d.status === 'efetuada').length;
+  const totalDevolvida = searchedDeliveries.filter(d => d.status === 'devolvida').length;
 
   const activeDrivers = drivers.filter(d => d.isActive);
 
@@ -177,14 +198,33 @@ export default function DeliveryDailySummary() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="space-y-2">
-              <Label>Data</Label>
+              <Label>Data de</Label>
               <Input
                 type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                data-testid="input-delivery-summary-date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                data-testid="input-delivery-summary-date-from"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Data até</Label>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                data-testid="input-delivery-summary-date-to"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Buscar cliente ou NF</Label>
+              <Input
+                type="search"
+                placeholder="Nome do cliente ou nº da NF"
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                data-testid="input-delivery-summary-busca"
               />
             </div>
             <div className="space-y-2">
@@ -222,11 +262,11 @@ export default function DeliveryDailySummary() {
       </Card>
 
       {/* Resumo */}
-      {!isLoading && allDeliveries.length > 0 && (
+      {!isLoading && searchedDeliveries.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card className="bg-gradient-to-br from-blue-50 to-blue-100">
             <CardContent className="p-4 text-center">
-              <p className="text-3xl font-bold text-blue-700">{allDeliveries.length}</p>
+              <p className="text-3xl font-bold text-blue-700">{searchedDeliveries.length}</p>
               <p className="text-sm text-blue-600">Total</p>
             </CardContent>
           </Card>
@@ -261,7 +301,7 @@ export default function DeliveryDailySummary() {
       )}
 
       {/* Empty State */}
-      {!isLoading && allDeliveries.length === 0 && (
+      {!isLoading && filteredDeliveries.length === 0 && (dateFrom || dateTo) && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             <Truck className="h-12 w-12 mx-auto mb-4 text-gray-400" />
@@ -287,8 +327,10 @@ export default function DeliveryDailySummary() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[50px]">#</TableHead>
+                    {multiDia && <TableHead>Data</TableHead>}
                     <TableHead>Motorista</TableHead>
                     <TableHead>Cliente</TableHead>
+                    <TableHead>NF</TableHead>
                     <TableHead className="text-center">Status</TableHead>
                     <TableHead className="text-center">Horários</TableHead>
                     <TableHead className="text-center">Fotos</TableHead>
@@ -309,6 +351,9 @@ export default function DeliveryDailySummary() {
                           {delivery.stopOrder}
                         </div>
                       </TableCell>
+                      {multiDia && (
+                        <TableCell className="text-sm">{fmtDia(delivery.routeDate)}</TableCell>
+                      )}
                       <TableCell>
                         <span className="font-medium">{delivery.driverName}</span>
                       </TableCell>
@@ -317,6 +362,9 @@ export default function DeliveryDailySummary() {
                         {delivery.isPriority && (
                           <Badge variant="destructive" className="ml-2 text-xs">Urgente</Badge>
                         )}
+                      </TableCell>
+                      <TableCell className="text-sm whitespace-nowrap" data-testid={`nf-${delivery.id}`}>
+                        {delivery.invoiceNumber || '—'}
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center justify-center gap-1">

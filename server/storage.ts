@@ -308,7 +308,7 @@ export interface IStorage {
   getDeliveryDriverStats(): Promise<any>;
   
   // Delivery routes operations
-  getDeliveryRoutes(filters?: { status?: string; routeDate?: string | Date; driverId?: string; savedOnly?: boolean }): Promise<any[]>;
+  getDeliveryRoutes(filters?: { status?: string; routeDate?: string | Date; dateFrom?: string; dateTo?: string; driverId?: string; savedOnly?: boolean }): Promise<any[]>;
   getDeliveryRoute(id: string): Promise<any | undefined>;
   createDeliveryRoute(route: any): Promise<any>;
   updateDeliveryRoute(id: string, route: any): Promise<any>;
@@ -5469,7 +5469,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Delivery routes operations
-  async getDeliveryRoutes(filters?: { status?: string; routeDate?: string | Date; driverId?: string; savedOnly?: boolean }): Promise<any[]> {
+  async getDeliveryRoutes(filters?: { status?: string; routeDate?: string | Date; dateFrom?: string; dateTo?: string; driverId?: string; savedOnly?: boolean }): Promise<any[]> {
     let query = db.select().from(deliveryRoutes);
     
     const conditions: any[] = [];
@@ -5485,6 +5485,13 @@ export class DatabaseStorage implements IStorage {
         ? filters.routeDate.split('T')[0]
         : filters.routeDate.toISOString().split('T')[0];
       conditions.push(sql`${deliveryRoutes.routeDate}::text LIKE ${dateStr + '%'}`);
+    }
+    // Periodo de/ate (YYYY-MM-DD), comparando so a parte da data
+    if (filters?.dateFrom) {
+      conditions.push(sql`substr(${deliveryRoutes.routeDate}::text, 1, 10) >= ${String(filters.dateFrom).slice(0, 10)}`);
+    }
+    if (filters?.dateTo) {
+      conditions.push(sql`substr(${deliveryRoutes.routeDate}::text, 1, 10) <= ${String(filters.dateTo).slice(0, 10)}`);
     }
     if (filters?.savedOnly) {
       // Filtrar apenas rotas salvas (que têm routeName)
@@ -5505,10 +5512,25 @@ export class DatabaseStorage implements IStorage {
           .from(deliveryRouteStops)
           .where(eq(deliveryRouteStops.routeId, route.id))
           .orderBy(deliveryRouteStops.stopOrder);
-        
+
+        // Numero da NF de cada parada (billing_id -> billing_pipeline.invoice_number)
+        const bIds = stops.map((s: any) => s.billingId).filter((x: any) => !!x) as string[];
+        let nfMap = new Map<string, string | null>();
+        if (bIds.length) {
+          try {
+            const bps = await db
+              .select({ id: billingPipeline.id, invoiceNumber: billingPipeline.invoiceNumber })
+              .from(billingPipeline)
+              .where(inArray(billingPipeline.id, bIds));
+            nfMap = new Map(bps.map((b: any) => [b.id, b.invoiceNumber || null]));
+          } catch (e: any) {
+            console.warn('[getDeliveryRoutes] NF das paradas:', e?.message);
+          }
+        }
+
         return {
           ...route,
-          stops
+          stops: stops.map((s: any) => ({ ...s, invoiceNumber: s.billingId ? (nfMap.get(s.billingId) ?? null) : null })),
         };
       })
     );
