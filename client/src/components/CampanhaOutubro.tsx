@@ -153,13 +153,14 @@ export default function CampanhaOutubro() {
   // não no código. Só o admin vê e mexe; a tabela do mês acompanha na hora.
   type Participante = { id: string; nome: string; role: string; incluir: boolean; positivacao: boolean };
   const { data: partData, refetch: refetchPart } = useQuery<{ participantes: Participante[] }>({
-    queryKey: ["/api/campanha/outubro/participantes"],
-    queryFn: () => apiRequest("GET", "/api/campanha/outubro/participantes"),
+    // Por mês: a decisão de quem participa vale a partir do mês em que foi tomada.
+    queryKey: ["/api/campanha/outubro/participantes", ym],
+    queryFn: () => apiRequest("GET", "/api/campanha/outubro/participantes?ym=" + ym),
     enabled: admin,
   });
   const participantes: Participante[] = partData?.participantes || [];
   const alternarParticipante = async (p: Participante, campo: "incluir" | "positivacao") => {
-    await apiRequest("POST", "/api/campanha/outubro/participante", { userId: p.id, [campo]: !p[campo] });
+    await apiRequest("POST", "/api/campanha/outubro/participante", { userId: p.id, ym, [campo]: !p[campo] });
     await refetchPart();
     refetch();
   };
@@ -342,9 +343,9 @@ export default function CampanhaOutubro() {
           </p>
         )}
 
-        {/* PARTICIPANTES — um chip por pessoa elegível (vendedor/telemarketing
-            ativo). Clicar liga ou desliga. Vale para todos os meses: a decisão
-            é "fulano está na campanha", não "fulano está na campanha de novembro". */}
+        {/* PARTICIPANTES — uma linha por pessoa elegível (vendedor/telemarketing
+            ativo). A decisão vale A PARTIR do mês aberto na tela: a 1ª versão
+            valia para todos os meses e reescrevia outubro (05/nov/2026). */}
         {admin && participantes.length > 0 && (
           <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3" data-testid="campanha-participantes">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -388,7 +389,8 @@ export default function CampanhaOutubro() {
               <b>Campanha</b> desligada: a pessoa some da tabela, não gera cadastro de novo cliente e não recebe
               bônus. <b>Positivação</b> desligada: a pessoa continua na campanha (novo cliente conta), mas fica fora
               da premissa de positivação — é para quem ainda está formando a carteira, em que um percentual não
-              mede nada. Contas de canal (Hotsite, Instagram, Honest) ficam sempre fora.
+              mede nada. A mudança vale de <b>{nomeDoMes(ym)}</b> em diante; os meses anteriores ficam
+              como estavam. Contas de canal (Hotsite, Instagram, Honest) ficam sempre fora.
             </p>
           </div>
         )}
