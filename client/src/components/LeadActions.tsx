@@ -173,6 +173,21 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
           assignedTo: l.assignedTo || sellerId,
         }));
       }
+      // 🧾 CNPJ/Receita já gravados no lead (amostra ou lupa) → reaproveita no cadastro
+      const rf = await fetch(`/api/leads/${leadId}/fiscal`, { credentials: "include" });
+      if (rf.ok) {
+        const d = await rf.json();
+        if (d?.cnpj) {
+          const f = d.fiscal || {};
+          setCust((prev: any) => ({
+            ...prev,
+            cnpj: d.cnpj, companyName: f.razaoSocial || prev.companyName, name: f.razaoSocial || prev.name,
+            address: f.endereco || prev.address, neighborhood: f.bairro || prev.neighborhood, city: f.cidade || prev.city,
+            state: f.uf || prev.state, zipCode: f.cep || prev.zipCode, email: f.email || prev.email,
+            _receita: { cnpj: d.cnpj, razaoSocial: f.razaoSocial || "", nomeFantasia: "", endereco: f.endereco || "", enderecoCompleto: [f.endereco, f.bairro].filter(Boolean).join(", "), bairro: f.bairro || "", cidade: f.cidade || "", estado: f.uf || "", cep: f.cep || "", telefone: "", email: f.email || "", situacao: "" },
+          }));
+        }
+      }
     } catch {
       // silencioso — usuário preenche manualmente
     } finally {

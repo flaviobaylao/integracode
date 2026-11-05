@@ -117,9 +117,20 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
     onError: (e: any) => toast({ title: "Erro ao converter", description: e?.message || "Verifique os dados", variant: "destructive" }),
   });
 
-  const openConverter = (l: LeadReturn) => {
+  const openConverter = async (l: LeadReturn) => {
     setCust({ name: l.fantasyName, customerType: "pessoa_juridica", phone: l.phone || "", address: "", city: "", neighborhood: "", visitPeriodicity: "semanal" });
     setConverterLead(l);
+    // 🧾 CNPJ/Receita já gravados no lead (amostra ou lupa) → reaproveita no cadastro
+    try {
+      const rf = await fetch(`/api/leads/${l.id}/fiscal`, { credentials: "include" });
+      if (rf.ok) {
+        const d = await rf.json();
+        if (d?.cnpj) {
+          const f = d.fiscal || {};
+          setCust((prev: any) => ({ ...prev, cnpj: d.cnpj, companyName: f.razaoSocial || prev.companyName, name: f.razaoSocial || prev.name, address: f.endereco || prev.address, neighborhood: f.bairro || prev.neighborhood, city: f.cidade || prev.city, state: f.uf || prev.state, zipCode: f.cep || prev.zipCode, email: f.email || prev.email }));
+        }
+      }
+    } catch { /* segue sem fiscal */ }
   };
 
   // Leads que já aparecem como parada na rota (com botões no próprio card) são

@@ -345,6 +345,16 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         if (initialData.address) form.setValue('address', initialData.address);
         if (initialData.latitude != null && initialData.latitude !== '') form.setValue('latitude', String(initialData.latitude));
         if (initialData.longitude != null && initialData.longitude !== '') form.setValue('longitude', String(initialData.longitude));
+        // 🧾 Dados fiscais já conhecidos do lead (CNPJ da amostra / lupa da Receita): reaproveita no cadastro.
+        if (initialData.cnpj) form.setValue('cnpj', String(initialData.cnpj));
+        if (initialData.companyName) form.setValue('companyName', String(initialData.companyName));
+        if (initialData.fantasyName) form.setValue('fantasyName', String(initialData.fantasyName));
+        if (initialData.neighborhood) form.setValue('neighborhood' as any, String(initialData.neighborhood));
+        if (initialData.city) form.setValue('city', String(initialData.city));
+        if (initialData.state) form.setValue('state', String(initialData.state));
+        if (initialData.zipCode) form.setValue('zipCode', String(initialData.zipCode));
+        if (initialData.email) form.setValue('email', String(initialData.email));
+        if (initialData.stateRegistration) form.setValue('stateRegistration' as any, String(initialData.stateRegistration));
       }
     }
   }, [customer, form, initialData]);
