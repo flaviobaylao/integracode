@@ -11432,6 +11432,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Troca recorrente (3ª ou mais do mesmo motivo em 60 dias): só admin libera, com observação
       // (política de trocas, 30/10/2026). observacoes = { [orderId]: texto }.
       const observacoes: Record<string, string> = (req.body?.observacoes && typeof req.body.observacoes === 'object') ? req.body.observacoes : {};
+      // AGENDAR NA LIBERAÇÃO (botão "Agendado" num card de Bloqueados): data "Faturar em" futura
+      // (YYYY-MM-DD, BRT). O pedido liberado entra em 'agendado' e sobe para 'pedido' na data.
+      const _agRaw = String(req.body?.scheduledBillingDate || '').slice(0, 10);
+      const agendarPara: string | null = /^\d{4}-\d{2}-\d{2}$/.test(_agRaw) ? _agRaw : null;
+      if (req.body?.scheduledBillingDate && !agendarPara) return res.status(400).json({ message: 'Data de agendamento inválida' });
+      if (agendarPara && agendarPara <= new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })) {
+        return res.status(400).json({ message: 'A data "Faturar em" deve ser futura (a partir de amanhã).' });
+      }
       const userId = req.currentUser.id;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ message: 'Lista de IDs de pedidos e obrigatoria' });
@@ -11491,7 +11499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             paymentMethod: (order as any).paymentMethod || (salesCard as any).paymentMethod || null,
           };
           let pipelineItem: any = null; let pipelineItemId: string | null = null;
-          try { pipelineItem = (await finalizarPedidoParaPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true })).item; if (pipelineItem?.id) pipelineItemId = String(pipelineItem.id); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
+          try { pipelineItem = (await finalizarPedidoParaPipeline(cardForPipeline, 'system-liberacao-manual', { skipDebtCheck: true, ...(agendarPara ? { scheduledBillingDate: agendarPara } : {}) })).item; if (pipelineItem?.id) pipelineItemId = String(pipelineItem.id); } catch (e: any) { console.warn('[RELEASE-BLOCKED] autoSend erro:', e?.message); }
           // Idempotencia: so conta como "entrou" se ja existe item DESTE pedido no funil — mesmo card
           // + mesma operacao + mesmo valor. Um item de OUTRA operacao (ex.: uma venda) no mesmo card
           // NAO significa que a troca/amostra liberada entrou: isso mascarava a colisao e a troca sumia.
@@ -11521,8 +11529,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (pipelineItemId) {
             try { const { appendStageHistory } = await import('./deliveryPipelineSync.js'); await appendStageHistory(pipelineItemId, 'liberado', req.currentUser?.email || String(userId)); } catch (e: any) { console.warn('[RELEASE-BLOCKED] stage_history liberado falhou:', e?.message); }
           }
+          // Garante o agendamento mesmo quando o item já existia (dedup) ou caiu em 'pedido'.
+          if (agendarPara && pipelineItemId) {
+            try {
+              const _it: any = await storage.getBillingPipelineItem(pipelineItemId);
+              if (_it && (String(_it.stage) === 'pedido' || String(_it.stage) === 'agendado')) {
+                const _h = Array.isArray(_it.stageHistory) ? _it.stageHistory : [];
+                const _upd: any = { scheduledBillingDate: new Date(`${agendarPara}T12:00:00-03:00`) };
+                if (String(_it.stage) !== 'agendado') {
+                  _upd.stage = 'agendado';
+                  _upd.stageHistory = [..._h, { stage: 'agendado', changedAt: paredeBR(agora()), changedBy: req.currentUser?.email || String(userId) }];
+                }
+                await storage.updateBillingPipelineItem(pipelineItemId, _upd);
+              }
+            } catch (e: any) { console.warn('[RELEASE-BLOCKED] agendamento na liberação falhou:', e?.message); }
+          }
           released++;
-          console.log('[RELEASE-BLOCKED] pedido ' + orderId + ' liberado para o pipeline por ' + req.currentUser.email);
+          console.log('[RELEASE-BLOCKED] pedido ' + orderId + ' liberado para o pipeline por ' + req.currentUser.email + (agendarPara ? ` (agendado p/ ${agendarPara})` : ''));
         } catch (error: any) {
           const customerName = salesCard?.customer?.fantasyName || salesCard?.customer?.name || 'Cliente';
           console.error('Erro ao liberar pedido ' + orderId + ':', error?.message);
@@ -11532,7 +11555,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 📣 Liberacao tambem e ocorrencia: o cliente sabe na hora que o pedido destravou
       // (pedido_liberado), em vez de esperar a proxima varredura.
       if (released > 0) { try { const { dispararAgora } = await import('./pipeline-dispatch'); dispararAgora('pedido liberado'); } catch {} }
-      res.json({ released, errors, message: `${released} pedido(s) liberado(s) com sucesso${errors.length > 0 ? `, ${errors.length} erro(s)` : ''}` });
+      res.json({ released, errors, agendadoPara: agendarPara, message: `${released} pedido(s) liberado(s) com sucesso${errors.length > 0 ? `, ${errors.length} erro(s)` : ''}` });
     } catch (error: any) {
       console.error('Erro critico ao liberar pedidos bloqueados:', error?.message);
       res.status(500).json({ message: `Erro ao processar liberacao: ${error.message || 'Erro'}` });
