@@ -50,7 +50,7 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
   pedidoMinPadrao?: number;
 }> = [
   {
-    chave: "novos", label: "por novo cliente", descricao: "Venda faturada e recebida.",
+    chave: "novos", label: "por novo cliente", descricao: "Venda faturada dentro do raio logístico.",
     gatilhoLabel: "Pedido mínimo", gatilhoSufixo: "R$",
     base: "valor do 1º pedido de cada novo cliente apto",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 30, gatilhoPadrao: 300,
@@ -158,7 +158,13 @@ function excluido(nome: string): boolean { return EXCLUIDOS.has(chaveExcl(nome))
 // zerada diz "não produziu"; linha ausente só levanta a dúvida de se a pessoa
 // participa ou não (foi o caso da Virgínia).
 // ---------------------------------------------------------------------------
-type Participante = { id: string; nome: string; role: string; incluir: boolean };
+// `positivacao` = entra na premissa de positivação. Quem ainda está formando a
+// carteira fica fora (05/nov/2026): 0% de uma carteira de 1 cliente não mede
+// nada, e "X de N com 90%" ficava inflado no N.
+type Participante = { id: string; nome: string; role: string; incluir: boolean; positivacao: boolean };
+// Quem começou fora da positivação. Só vale na primeira subida (NULL = nunca
+// decidido); depois que o gestor mexe na tela, a tela manda.
+const SEM_POSITIVACAO_INICIAL = ["virginia t", "amanda c"];
 let _participantesOk = false;
 async function ensureParticipantes(): Promise<void> {
   if (_participantesOk) return;
@@ -167,6 +173,8 @@ async function ensureParticipantes(): Promise<void> {
     incluir boolean NOT NULL DEFAULT true,
     updated_by varchar, updated_at timestamptz DEFAULT now()
   )`);
+  // Nullable de propósito: NULL é "nunca decidido" e lê como true.
+  await db.execute(sql`ALTER TABLE campanha_participantes ADD COLUMN IF NOT EXISTS positivacao boolean`);
   // Semente única: só quando a chave de nome aponta para UM usuário, e só se
   // ainda não há decisão gravada para ele.
   const lista = DESLIGADOS_INICIAIS.map((n) => "'" + chaveExcl(n) + "'").join(",");
@@ -178,6 +186,16 @@ async function ensureParticipantes(): Promise<void> {
     "   ) x WHERE k IN (" + lista + ") GROUP BY k" +
     " ) m WHERE m.n = 1 ON CONFLICT (user_id) DO NOTHING"
   ));
+  const listaPos = SEM_POSITIVACAO_INICIAL.map((n) => "'" + chaveExcl(n) + "'").join(",");
+  await db.execute(sql.raw(
+    "INSERT INTO campanha_participantes (user_id, incluir, positivacao, updated_by)" +
+    " SELECT uid, true, false, 'sistema' FROM (" +
+    "   SELECT MIN(id) AS uid, COUNT(*) AS n FROM (" +
+    "     SELECT id, regexp_replace(translate(lower(COALESCE(first_name,'')||COALESCE(last_name,'')),'áàâãéêíóôõúç','aaaaeeiooouc'),'[^a-z0-9]','','g') AS k FROM users" +
+    "   ) x WHERE k IN (" + listaPos + ") GROUP BY k" +
+    " ) m WHERE m.n = 1" +
+    " ON CONFLICT (user_id) DO UPDATE SET positivacao = false WHERE campanha_participantes.positivacao IS NULL"
+  ));
   _participantesOk = true;
 }
 /** Usuários elegíveis (ativos, vendedor/telemarketing) com a decisão do gestor. */
@@ -185,18 +203,22 @@ async function listarParticipantes(): Promise<Participante[]> {
   await ensureParticipantes();
   const rows = await rawq(
     "SELECT u.id, NULLIF(TRIM(COALESCE(u.first_name,'')||' '||COALESCE(u.last_name,'')),'') AS nome, u.role::text AS role," +
-    " COALESCE(p.incluir, true) AS incluir" +
+    " COALESCE(p.incluir, true) AS incluir, COALESCE(p.positivacao, true) AS positivacao" +
     " FROM users u LEFT JOIN campanha_participantes p ON p.user_id = u.id" +
     " WHERE u.role::text IN ('vendedor','telemarketing') AND u.is_active IS TRUE" +
     " ORDER BY COALESCE(p.incluir, true) DESC, u.role::text, nome"
   );
   return rows
-    .map((r: any) => ({ id: String(r.id), nome: String(r.nome || ""), role: String(r.role || ""), incluir: r.incluir !== false }))
+    .map((r: any) => ({ id: String(r.id), nome: String(r.nome || ""), role: String(r.role || ""), incluir: r.incluir !== false, positivacao: r.positivacao !== false }))
     .filter((p) => p.nome && !excluido(p.nome));
 }
 /** Nomes de quem está DENTRO da campanha. */
 async function nomesParticipantes(): Promise<Set<string>> {
   return new Set((await listarParticipantes()).filter((p) => p.incluir).map((p) => p.nome));
+}
+/** Nomes de quem está na campanha mas FORA da positivação (carteira em formação). */
+async function nomesSemPositivacao(): Promise<Set<string>> {
+  return new Set((await listarParticipantes()).filter((p) => p.incluir && !p.positivacao).map((p) => p.nome));
 }
 
 const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
@@ -392,7 +414,8 @@ export async function detectNovos(ym: string): Promise<number> {
 
 export type CampaignSeller = {
   seller: string; novosAptos: number; emValidacao: number; carteira: number; positivados: number;
-  positivacao: number; faturamento: number; meta: number;
+  // null = fora da premissa de positivação (carteira em formação).
+  positivacao: number | null; positivacaoElegivel: boolean; faturamento: number; meta: number;
   bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number;
 };
 
@@ -505,6 +528,7 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
 
   // Quem está na campanha: vendedor/telemarketing ativo que o gestor não desligou.
   const vendSet = await nomesParticipantes();
+  const semPos = await nomesSemPositivacao();
 
   // Todo participante ligado tem linha, produzindo ou não.
   const names = new Set<string>(vendSet);
@@ -519,7 +543,8 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     if (only && seller !== only) continue;
     const cartN = carteiraCount[seller] || 0;
     const pos = positivados[seller] || 0;
-    const positivacao = cartN > 0 ? Math.round((pos / cartN) * 1000) / 10 : 0;
+    const elegivelPos = !semPos.has(seller);
+    const positivacao = !elegivelPos ? null : cartN > 0 ? Math.round((pos / cartN) * 1000) / 10 : 0;
     const fatv = Math.round((faturamento[seller] || 0) * 100) / 100;
     const meta = Math.round((metas[seller] || 0) * 100) / 100;
     const aptos = novosAptos[seller] || 0;
@@ -530,13 +555,13 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     const bonusNovos = !pNovos?.ativa ? 0
       : pNovos.modo === "percentual" ? ((valorNovos[seller] || 0) * pNovos.valor) / 100
       : aptos * pNovos.valor;
-    const bonusPos = !pPos?.ativa || positivacao < posMeta ? 0
+    const bonusPos = !pPos?.ativa || positivacao === null || positivacao < posMeta ? 0
       : pPos.modo === "percentual" ? (fatv * pPos.valor) / 100 : pPos.valor;
     const bonusMeta = !pMeta?.ativa || !bateuMeta(fatv, meta) ? 0
       : pMeta.modo === "percentual" ? (fatv * pMeta.valor) / 100 : pMeta.valor;
     sellers.push({
       seller, novosAptos: aptos, emValidacao: emValidacao[seller] || 0, carteira: cartN, positivados: pos,
-      positivacao, faturamento: fatv, meta, bonusNovos, bonusPos, bonusMeta, bonusTotal: bonusNovos + bonusPos + bonusMeta,
+      positivacao, positivacaoElegivel: elegivelPos, faturamento: fatv, meta, bonusNovos, bonusPos, bonusMeta, bonusTotal: bonusNovos + bonusPos + bonusMeta,
     });
   }
   sellers.sort((a, b) => b.bonusTotal - a.bonusTotal || b.faturamento - a.faturamento);
@@ -548,7 +573,9 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     bonusPos: sellers.reduce((a, s) => a + s.bonusPos, 0),
     bonusMeta: sellers.reduce((a, s) => a + s.bonusMeta, 0),
     bonusTotal: sellers.reduce((a, s) => a + s.bonusTotal, 0),
-    comPositivacao: sellers.filter((s) => s.positivacao >= posMeta).length,
+    comPositivacao: sellers.filter((s) => s.positivacao !== null && s.positivacao >= posMeta).length,
+    // Denominador do "X de N com 90%": só quem está na premissa.
+    elegiveisPositivacao: sellers.filter((s) => s.positivacaoElegivel).length,
     comMeta: sellers.filter((s) => bateuMeta(s.faturamento, s.meta)).length,
     vendedores: sellers.length,
   };
@@ -697,12 +724,16 @@ export function registerCampanhaRoutes(app: Express): void {
       const b = (req.body || {}) as any;
       const userId = String(b.userId || "").replace(/[^a-zA-Z0-9-]/g, "");
       if (!userId) return res.status(400).json({ error: "usuário inválido" });
-      const incluir = b.incluir !== false;
+      // Cada campo só muda quando vem no corpo: a tela alterna um de cada vez.
+      const atual = (await listarParticipantes()).find((p) => p.id === userId);
+      const incluir = b.incluir === undefined ? (atual ? atual.incluir : true) : b.incluir !== false;
+      const positivacao = b.positivacao === undefined ? (atual ? atual.positivacao : true) : b.positivacao !== false;
       await db.execute(sql`
-        INSERT INTO campanha_participantes (user_id, incluir, updated_by, updated_at)
-        VALUES (${userId}, ${incluir}, ${String((req as any)?.session?.userId || "") || null}, now())
+        INSERT INTO campanha_participantes (user_id, incluir, positivacao, updated_by, updated_at)
+        VALUES (${userId}, ${incluir}, ${positivacao}, ${String((req as any)?.session?.userId || "") || null}, now())
         ON CONFLICT (user_id) DO UPDATE SET
-          incluir = EXCLUDED.incluir, updated_by = EXCLUDED.updated_by, updated_at = now()`);
+          incluir = EXCLUDED.incluir, positivacao = EXCLUDED.positivacao,
+          updated_by = EXCLUDED.updated_by, updated_at = now()`);
       res.json({ ok: true, participantes: await listarParticipantes() });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
