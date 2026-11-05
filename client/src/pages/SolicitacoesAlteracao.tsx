@@ -326,6 +326,93 @@ function motivoInativacaoDe(note: string, details: any): string {
   return txt.length >= 5 ? txt : "Cliente inativado via Inbox.";
 }
 
+// 📋 REPORT DIÁRIO (18h) — "Repescagem não atendida" (nov/2026). Um único card do Sistema com
+// todos os clientes que caíram na repescagem do dia e não foram atendidos. O admin escolhe se
+// eles VOLTAM para a repescagem (redistribuídos no próximo sorteio) ou não.
+function CardRepescagemNaoAtendida({ r, resolved }: { r: any; resolved?: boolean }) {
+  const { toast } = useToast();
+  const rd = r?.details || {};
+  const clientes: any[] = Array.isArray(rd.clientes) ? rd.clientes : [];
+  const [sel, setSel] = useState<string[]>(() => clientes.map((c) => String(c.customerId)));
+  const fmtD = (d: any) => (d ? String(d).split("-").reverse().join("/") : "");
+  const invalidar = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
+  };
+  const devolverMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/repescagem/nao-atendidos/${r.id}/devolver`, { customerIds: sel }),
+    onSuccess: (res: any) => {
+      toast({ title: "Devolvidos à repescagem", description: `${res?.devolvidos ?? sel.length} cliente(s) voltam na repescagem de ${fmtD(res?.forcedDate)}${res?.redistribuidoAgora ? " (redistribuídos agora)" : " (sorteio das 00:10)"}. O report foi para Resolvidas.` });
+      invalidar();
+    },
+    onError: (e: any) => toast({ title: "Erro ao devolver", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const naoDevolverMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido", note: "Não devolvidos à repescagem (decisão do Admin) — seguem as regras normais." }),
+    onSuccess: () => { toast({ title: "Report marcado como lido", description: "Os clientes não voltam por decisão do Admin; seguem as regras normais." }); invalidar(); },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const busy = devolverMut.isPending || naoDevolverMut.isPending;
+  const devolvidos = new Set<string>(Array.isArray(rd.devolvidos) ? rd.devolvidos.map(String) : []);
+  return (
+    <Card className="p-4 space-y-3 border-rose-200 dark:border-rose-900" data-testid={`cr-rep-nao-atendida-${r.id}`}>
+      <div>
+        <div className="font-semibold flex items-center gap-1.5"><Target className="h-4 w-4 text-rose-600" /> {r.entityName || "Repescagem não atendida"}</div>
+        <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+          <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem não atendida</Badge>
+          <Badge variant="outline" className="text-[10px]">Sistema · 18h</Badge>
+          <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
+          {resolved && r.resolvedByName && <span>Decisão: {r.resolvedByName}</span>}
+        </div>
+      </div>
+      {rd.texto && <div className="text-sm rounded-md bg-rose-50/60 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900 p-2.5">{rd.texto}</div>}
+      {resolved && r.resolutionNote && <div className="text-sm text-emerald-700 dark:text-emerald-300">{r.resolutionNote}</div>}
+      <div className="rounded-md border">
+        {!resolved && (
+          <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-b text-[11px]">
+            <span className="text-muted-foreground">{sel.length} de {clientes.length} selecionado(s) para voltar</span>
+            <span className="flex items-center gap-2">
+              <button type="button" className="text-blue-600 hover:underline" onClick={() => setSel(clientes.map((c) => String(c.customerId)))} data-testid={`rep-na-all-${r.id}`}>Marcar todos</button>
+              <span className="text-gray-300">·</span>
+              <button type="button" className="text-blue-600 hover:underline" onClick={() => setSel([])} data-testid={`rep-na-none-${r.id}`}>Desmarcar todos</button>
+            </span>
+          </div>
+        )}
+        <div className="max-h-80 overflow-y-auto divide-y">
+          {clientes.map((c) => {
+            const id = String(c.customerId);
+            const on = sel.includes(id);
+            return (
+              <label key={id} className={`flex items-start gap-2 px-2 py-1.5 text-xs ${resolved ? "" : "cursor-pointer hover:bg-muted/50"}`} data-testid={`rep-na-row-${id}`}>
+                {!resolved && <Checkbox checked={on} onCheckedChange={(v) => setSel((p) => (v ? Array.from(new Set([...p, id])) : p.filter((x) => x !== id)))} className="mt-0.5" />}
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{c.nome}</span>
+                  <span className="text-muted-foreground"> · Carteira: {c.vendedor}{c.atendente ? ` · Atendente: ${c.atendente}` : ""}{c.periodicidade ? ` · ${c.periodicidade}` : ""}{c.cidade ? ` · ${c.cidade}` : ""}</span>
+                </span>
+                {resolved && devolvidos.has(id) && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300 shrink-0">Devolvido</Badge>}
+              </label>
+            );
+          })}
+          {clientes.length === 0 && <div className="px-2 py-2 text-xs text-muted-foreground">Nenhum cliente.</div>}
+        </div>
+      </div>
+      {!resolved && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" disabled={busy || sel.length === 0} data-testid={`rep-na-devolver-${r.id}`}
+            onClick={() => { if (window.confirm(`Devolver ${sel.length} cliente(s) para a repescagem?\n\nEles entram no próximo sorteio (decisão do Admin) e são redistribuídos conforme o painel de carteiras.`)) devolverMut.mutate(); }}>
+            {devolverMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Voltar para a repescagem ({sel.length})</>}
+          </Button>
+          <Button size="sm" variant="outline" disabled={busy} data-testid={`rep-na-lido-${r.id}`}
+            onClick={() => { if (window.confirm("Não devolver nenhum cliente? Eles seguem as regras normais da repescagem.")) naoDevolverMut.mutate(); }}>
+            {naoDevolverMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Não devolver (marcar como lido)</>}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; selected?: boolean; onToggleSelect?: (id: string) => void; onAbrirAcoes?: (id: string, name: string) => void; onAbrirHistoricoLead?: (id: string, name: string) => void }) {
   const { toast } = useToast();
   const { pedirMotivo, MotivoModal } = useMotivoInativacao();
@@ -536,6 +623,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   // aparece no Inbox como item pendente; o admin só precisa "Marcar como lido".
   const isReport = r?.kind === "report";
   const rd = r?.details || {};
+  if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} />;
 
   return (
     <Card className="p-4 space-y-3">
@@ -817,6 +905,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
     },
     onError: (e: any) => toast({ title: "Erro ao enviar para repescagem", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} resolved />;
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
