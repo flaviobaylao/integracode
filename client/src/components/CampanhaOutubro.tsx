@@ -133,6 +133,21 @@ export default function CampanhaOutubro() {
   const metaPct = pMeta?.gatilho ?? 100;
   const multi = sellers.length > 1;
   const admin = data?.admin === true;
+
+  // PARTICIPANTES (05/nov/2026): quem entra na campanha se liga/desliga aqui,
+  // não no código. Só o admin vê e mexe; a tabela do mês acompanha na hora.
+  type Participante = { id: string; nome: string; role: string; incluir: boolean };
+  const { data: partData, refetch: refetchPart } = useQuery<{ participantes: Participante[] }>({
+    queryKey: ["/api/campanha/outubro/participantes"],
+    queryFn: () => apiRequest("GET", "/api/campanha/outubro/participantes"),
+    enabled: admin,
+  });
+  const participantes: Participante[] = partData?.participantes || [];
+  const alternarParticipante = async (p: Participante) => {
+    await apiRequest("POST", "/api/campanha/outubro/participante", { userId: p.id, incluir: !p.incluir });
+    await refetchPart();
+    refetch();
+  };
   // Quantas colunas a tabela tem de fato — muda com as premissas ligadas.
   const nCols = 2 + (pNovos?.ativa ? 2 : 0) + (pPos?.ativa ? 2 : 0) + (pMeta?.ativa ? 2 : 0);
 
@@ -297,6 +312,42 @@ export default function CampanhaOutubro() {
             Nenhuma premissa está valendo em {nomeDoMes(ym)}: a campanha não paga nada no mês e a
             tabela fica só com os nomes.
           </p>
+        )}
+
+        {/* PARTICIPANTES — um chip por pessoa elegível (vendedor/telemarketing
+            ativo). Clicar liga ou desliga. Vale para todos os meses: a decisão
+            é "fulano está na campanha", não "fulano está na campanha de novembro". */}
+        {admin && participantes.length > 0 && (
+          <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3" data-testid="campanha-participantes">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wide text-gray-500">Participantes</span>
+                <span className="ml-2 text-xs text-gray-400">
+                  {participantes.filter((p) => p.incluir).length} de {participantes.length} na campanha · clique para ligar ou desligar
+                </span>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {participantes.map((p) => (
+                <button key={p.id} type="button" onClick={() => alternarParticipante(p)}
+                  title={p.incluir ? `Desligar ${p.nome} da campanha` : `Incluir ${p.nome} na campanha`}
+                  data-testid={`participante-${p.id}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${
+                    p.incluir
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                      : "border-gray-200 bg-gray-50 text-gray-400 line-through hover:bg-gray-100"}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${p.incluir ? "bg-emerald-500" : "bg-gray-300"}`} />
+                  {p.nome}
+                  <span className="text-[9px] uppercase opacity-60">{p.role === "telemarketing" ? "int" : "ext"}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
+              Quem está ligado aparece na tabela mesmo sem venda no mês. Quem está desligado some da tabela,
+              não gera cadastro de novo cliente e não recebe bônus. Contas de canal (Hotsite, Instagram, Honest)
+              ficam sempre fora.
+            </p>
+          </div>
         )}
       </div>
 
