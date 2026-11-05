@@ -60,7 +60,8 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     gatilhoLabel: "Positivação exigida", gatilhoSufixo: "%",
     base: "faturamento do vendedor no mês",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 90,
-    pedidoMinLabel: "Pedido mínimo para positivar (só PJ)", pedidoMinPadrao: 300,
+    // 300 -> 200 em 05/nov/2026 (Flavio): vale como padrão dos próximos meses.
+    pedidoMinLabel: "Pedido mínimo para positivar (só PJ)", pedidoMinPadrao: 200,
   },
   {
     chave: "meta", label: "meta de faturamento", descricao: "Meta do mês cumprida.",
@@ -87,7 +88,7 @@ async function ensurePremissas(): Promise<void> {
 
   // CONGELAMENTO DE OUTUBRO (04/nov/2026). Outubro rodou SEM linha gravada: as
   // premissas vinham todas do catálogo. Como o catálogo passa a trazer pedido
-  // mínimo de R$ 300 na positivação, deixar outubro no padrão reescreveria um
+  // mínimo na positivação, deixar outubro no padrão reescreveria um
   // mês já apurado, já pago e já comunicado à equipe — a positivação de cada
   // vendedor cairia de um dia para o outro. Grava-se aqui, uma vez, exatamente
   // o que outubro executou, com pedido mínimo 0. ON CONFLICT DO NOTHING: se
