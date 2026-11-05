@@ -2581,10 +2581,15 @@ export function registerBillingPipelineRoutes(app: Express) {
       // alterado para uma dessas em um pedido que está no pipeline, movemos para Bloqueados
       // (cria o bloqueio operation_type e remove do funil) em vez de deixar no faturamento.
       // A liberação manual (Bloqueados -> Liberar) segue sendo a única forma de aprovar.
+      // ⚠️ SÓ quando o tipo MUDOU: o formulário de edição reenvia o tipo atual em TODO salvar. Sem esta
+      // checagem, salvar qualquer troca/amostra/bonificação JÁ LIBERADA recriava o bloqueio e mandava o
+      // card para a LIXEIRA (ex.: LOJA DE CONVENIENCIA JK, troca em Ag. Rota BSB, 23/out/2026).
       if (updates.operationType && NON_SALE_BLOCK_OPS.has(String(updates.operationType).toLowerCase().trim())) {
         try {
           const _item: any = await storage.getBillingPipelineItem(req.params.id);
-          const _card: any = _item?.salesCardId ? await storage.getSalesCard(_item.salesCardId) : null;
+          const _opAtual = String(_item?.operationType || '').toLowerCase().trim();
+          const _mudouTipo = !!_item && _opAtual !== String(updates.operationType).toLowerCase().trim();
+          const _card: any = (_mudouTipo && _item?.salesCardId) ? await storage.getSalesCard(_item.salesCardId) : null;
           if (_card) {
             const _op = String(updates.operationType).toLowerCase().trim();
             const _label = _op === 'troca' ? 'troca' : _op === 'bonificacao' ? 'bonificação' : 'amostra';
@@ -2592,7 +2597,10 @@ export function registerBillingPipelineRoutes(app: Express) {
             const _pr = (updates.products !== undefined ? updates.products : _card.products);
             try { await storage.updateSalesCard(_card.id, { operationType: _op, saleValue: _sv, products: _pr } as any); } catch {}
             await insertBlockedOrderIdempotent({ ..._card, operationType: _op, saleValue: _sv, products: _pr }, { reason: 'operation_type', details: `Pedido de ${_label} requer aprovação manual de um administrador antes do faturamento.` });
-            await storage.deleteBillingPipelineItem(req.params.id);
+            // Bloqueio = mudança de REPRESENTAÇÃO (o pedido passa a viver em blocked_orders / coluna
+            // Bloqueados). Remove a linha do pipeline SEM ir para a Lixeira — igual ao POST /:id/block.
+            // (deleteBillingPipelineItem virou soft-delete → Lixeira, e o card ficava nas duas colunas.)
+            await storage.hardRemoveBillingPipelineItem(req.params.id);
             try { await logOrderAudit(_card.id, 'blocked_operation_type'); } catch {}
             console.log(`🚫 [BILLING-PIPELINE] Item ${req.params.id} (${_card.id}) reetiquetado como ${_label} -> movido para Bloqueados`);
             return res.json({ movedToBlocked: true, reason: 'operation_type', operationType: _op });
@@ -3028,10 +3036,13 @@ export function registerBillingPipelineRoutes(app: Express) {
       if (!item) return res.status(404).json({ message: 'Item não encontrado' });
       if (item.stage !== 'lixeira') return res.status(400).json({ message: 'Item não está na Lixeira' });
       const hist = (item.stageHistory as any[]) || [];
+      // Volta para a última ETAPA real do funil. Eventos do histórico que não são etapa
+      // ('edicao' = alteração de campos, 'liberado' = saída de Bloqueados) são pulados — antes,
+      // um card editado antes de ir para a Lixeira era restaurado em "Pedido".
       let prev = 'pedido';
       for (let i = hist.length - 1; i >= 0; i--) {
         const s = hist[i]?.stage;
-        if (s && s !== 'lixeira') { prev = s; break; }
+        if (s && s !== 'lixeira' && (BILLING_STAGES as readonly string[]).includes(s)) { prev = s; break; }
       }
       if (!(BILLING_STAGES as readonly string[]).includes(prev) || prev === 'lixeira') prev = 'pedido';
       const user = req.currentUser || req.user;
