@@ -130,9 +130,10 @@ function repescagemSplitLR(cands: Array<{ customerId: string }>, ownerOf: (id: s
   for (const [carteira, idsRaw] of byCarteira) {
     const recs = crossReceivers.get(carteira)!;
     const ids = idsRaw.slice().sort();
-    // pesos: usa % escolhido; se ninguem tem %, todos = 1 (igualitario)
-    const anyPct = recs.some(r => r.pct != null && r.pct > 0);
-    const weights = recs.map(r => (anyPct ? (r.pct != null && r.pct > 0 ? r.pct : 0) : 1));
+    // pesos: % escolhido; % NAO escolhido = 100 (antes virava peso zero quando outro receptor
+    // tinha %, e o atendente nunca recebia — caso Leticia, nov/2026). A atribuicao aqui e so o
+    // "responsavel principal": a rota do dia mostra a carteira a TODOS que a recebem (compartilhada).
+    const weights = recs.map(r => (r.pct != null && r.pct > 0 ? r.pct : 100));
     const totalW = weights.reduce((a, b) => a + b, 0) || recs.length;
     const n = ids.length;
     // contagem alvo por receptor (maior-resto)
@@ -2290,9 +2291,30 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // Libera capturas expiradas (dias anteriores + hoje após 18h) antes de montar os cards.
       await releaseExpiredCaptures();
 
-      // CARD DUPLO: mostra a repescagem do dia tanto para o ATENDENTE que recebeu
-      // (assigned_user_id = sellerId) quanto para o DONO da carteira do cliente
-      // (customers.seller_id = sellerId), mesmo que atribuída a outro habilitado.
+      // CARTEIRAS COMPARTILHADAS (nov/2026, regra do Flavio): o % de cada carteira no painel NÃO
+      // é rateio. Cada atendente que recebe a carteira vê o SEU % dos clientes dela que caíram,
+      // independentemente dos demais (100% = todos). Ex.: Letícia, Amanda e Virgínia com 100% do
+      // Gilmar → as três veem todos os clientes do Gilmar em repescagem. Quem CAPTURAR fica com o
+      // cliente no dia e ele some para os outros. % não escolhido = 100%.
+      const recvPct = new Map<string, number>();
+      if (!REPESCAGEM_EXCLUDED_USER_IDS.has(sellerId)) {
+        try {
+          const ar = await db.select().from(repescagemAttendants).where(eq(repescagemAttendants.userId, sellerId));
+          const a0: any = ar[0];
+          const cart: string[] = a0 && Array.isArray(a0.carteiras) ? a0.carteiras : [];
+          const pcts: Record<string, number> = a0 && a0.carteiraPcts && typeof a0.carteiraPcts === 'object' ? a0.carteiraPcts : {};
+          for (const src of cart) {
+            if (!src || src === sellerId) continue;
+            const raw = Number(pcts[src]);
+            recvPct.set(String(src), Number.isFinite(raw) && raw > 0 ? Math.min(100, raw) : 100);
+          }
+        } catch (e) { console.warn('[route-overlay][carteiras]', (e as any)?.message); }
+      }
+      const recvList = Array.from(recvPct.keys());
+
+      // CARD DUPLO: mostra a repescagem do dia para o ATENDENTE que recebeu
+      // (assigned_user_id = sellerId), para o DONO da carteira do cliente
+      // (customers.seller_id = sellerId) e para quem RECEBE a carteira no painel (compartilhada).
       const rowsRes: any = await db.execute(sql`
         SELECT ra.id, ra.customer_id, ra.assigned_user_id, ra.phase, c.seller_id AS owner_seller_id,
                ra.locked, ra.locked_by, ra.locked_date
@@ -2300,11 +2322,31 @@ export function registerRepescagemRoutes(app: Express, opts: {
         JOIN customers c ON c.id = ra.customer_id
         WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
           AND (c.is_supplier IS NOT TRUE)
-          AND (ra.assigned_user_id = ${sellerId} OR c.seller_id = ${sellerId})
+          AND (ra.assigned_user_id = ${sellerId} OR c.seller_id = ${sellerId}
+               ${recvList.length ? sql`OR c.seller_id IN (${sql.join(recvList.map((x) => sql`${x}`), sql`, `)})` : sql``})
         ORDER BY ra.last_red_date DESC NULLS LAST, ra.assigned_at DESC NULLS LAST`);
       const seenRowIds = new Set<string>();
-      const rows = ((rowsRes.rows || []) as any[])
-        .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; })
+      const rawRows = ((rowsRes.rows || []) as any[])
+        .filter(r => { if (seenRowIds.has(r.id)) return false; seenRowIds.add(r.id); return true; });
+      // % < 100: vê só essa fatia da carteira no dia (ordem estável por cliente; maior % contém a menor).
+      const sharedKeep = new Set<string>();
+      {
+        const byCart = new Map<string, any[]>();
+        for (const r of rawRows) {
+          const own = String(r.owner_seller_id || '');
+          if (!recvPct.has(own)) continue;
+          if (!byCart.has(own)) byCart.set(own, []);
+          byCart.get(own)!.push(r);
+        }
+        for (const [own, list] of byCart) {
+          const pct = recvPct.get(own) || 100;
+          const ord = list.slice().sort((a, b) => repShuffleKey(String(a.customer_id)) - repShuffleKey(String(b.customer_id)));
+          const k = pct >= 100 ? ord.length : Math.round((ord.length * pct) / 100);
+          for (const r of ord.slice(0, k)) sharedKeep.add(String(r.id));
+        }
+      }
+      const rows = rawRows
+        .filter(r => r.assigned_user_id === sellerId || r.owner_seller_id === sellerId || sharedKeep.has(String(r.id)))
         .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string, ownerSellerId: (r.owner_seller_id as string) || null,
           captured: !!r.locked && r.locked_date === today, capturedBy: (!!r.locked && r.locked_date === today) ? (r.locked_by || null) : null }));
       if (rows.length === 0) return res.json([]);
@@ -2410,7 +2452,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
           ownerSellerId: r.ownerSellerId,
           isOwner: !!r.ownerSellerId && r.ownerSellerId === sellerId,
           // Cópia do DONO: o card aparece na rota do dono, mas está atribuído a outro habilitado.
-          isOwnerCopy: r.assignedUserId !== sellerId,
+          isOwnerCopy: r.ownerSellerId === sellerId && r.assignedUserId !== sellerId,
+          // Carteira COMPARTILHADA: este atendente recebe a carteira no painel (não é o atribuído nem o dono).
+          isShared: r.assignedUserId !== sellerId && r.ownerSellerId !== sellerId,
           assignedToName: r.assignedUserId !== sellerId ? (assigneeNameById.get(r.assignedUserId) || null) : null,
           // FASE 4 — atribuição do pedido: quem colocou o pedido (venda) do cliente hoje fica
           // com a venda; o card na rota de quem NÃO colocou fica inativo/desabilitado.
@@ -2425,7 +2469,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
           capturedByName: r.capturedBy ? (assigneeNameById.get(r.capturedBy) || null) : null,
           canRelease: isAdmin || (!!r.capturedBy && r.capturedBy === user.id),
         };
-      }).filter((it: any) => isAdmin || !(it.captured && it.capturedBy && it.capturedBy !== user.id)));
+      // Capturado por OUTRO atendente some desta rota (o dono da carteira continua vendo o card
+      // duplo, p/ o fechamento; o admin vê tudo com o selo "capturado por").
+      }).filter((it: any) => isAdmin || it.isOwner || !(it.captured && it.capturedBy && it.capturedBy !== sellerId)));
     } catch (e: any) {
       console.error('GET /api/repescagem/route-overlay', e);
       res.status(500).json({ message: e?.message || 'erro' });
