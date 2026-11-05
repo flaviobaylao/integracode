@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient, QueryClientProvider } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -10,6 +10,7 @@ import MobileNav from "@/components/mobile-nav";
 import PWAInstallBanner from "@/components/PWAInstallBanner";
 import PersistentSectionSidebar from "@/components/PersistentSectionSidebar";
 import PersistentHeader from "@/components/PersistentHeader";
+import PageBreadcrumb from "@/components/PageBreadcrumb";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
 import Login from "@/pages/login";
@@ -154,6 +155,7 @@ import ContabilidadeContabil from "@/pages/ContabilidadeContabil";
 const NO_SIDEBAR_PATHS = ["/", "/login", "/set-password", "/admin-login", "/limpar-cache", "/pedido-rapido"];
 function AppShell({ isAuthenticated, children }: { isAuthenticated: boolean; children: React.ReactNode }) {
   const [location] = useLocation();
+  const contentRef = useRef<HTMLDivElement>(null);
   const path = location.split("?")[0].split("#")[0];
   if (!isAuthenticated || NO_SIDEBAR_PATHS.includes(path)) {
     return <>{children}</>;
@@ -163,7 +165,10 @@ function AppShell({ isAuthenticated, children }: { isAuthenticated: boolean; chi
       <PersistentHeader />
       <div className="flex items-stretch">
         <PersistentSectionSidebar />
-        <div className="flex-1 min-w-0">{children}</div>
+        <div className="flex-1 min-w-0" ref={contentRef}>
+          <PageBreadcrumb contentRef={contentRef} />
+          {children}
+        </div>
       </div>
     </div>
   );
