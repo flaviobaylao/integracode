@@ -948,6 +948,13 @@ export default function SalesCards() {
           setSelectedCardForNoSale(card);
           setShowNoSaleModal(true);
         }}
+        // Rascunho: mesmo fluxo do botão "Retomar" da lista (SaleModal com os itens salvos).
+        onResumeDraft={(card) => {
+          setShowDetailsModal(false);
+          setSelectedCardForDetails(null);
+          setSelectedCardForSale(card);
+          setShowSaleModal(true);
+        }}
       />
 
       {/* Sale Edit Modal */}
