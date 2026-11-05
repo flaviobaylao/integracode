@@ -155,7 +155,13 @@ export default function CampanhaOutubro() {
           <div>
             <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">honest · campanha de vendas</div>
             <h2 className="mt-1 text-2xl font-bold tracking-tight text-gray-800">Campanha de {nomeDoMes(ym)}</h2>
-            <p className="mt-1 max-w-2xl text-sm text-gray-600">Bonificação por novos clientes, positivação e meta de faturamento — por vendedor.</p>
+            {/* A frase segue as premissas LIGADAS no mês: fixa, ela anunciava
+                bônus de meta em novembro, mês em que a meta está desligada. */}
+            <p className="mt-1 max-w-2xl text-sm text-gray-600">
+              {premissas.filter((p) => p.ativa).length
+                ? <>Bonificação por {premissas.filter((p) => p.ativa).map((p) => p.label).join(", ").replace(/, ([^,]*)$/, " e $1")} — por vendedor.</>
+                : <>Nenhuma premissa ligada neste mês — a campanha não paga nada.</>}
+            </p>
           </div>
           <div className="flex flex-col items-end gap-1.5 text-xs">
             {/* Mês considerado na apuração: tudo nesta aba segue este seletor. */}
