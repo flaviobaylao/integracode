@@ -9,7 +9,8 @@ import { Card, CardContent } from "@/components/ui/card";
 
 type Seller = {
   seller: string; novosAptos: number; emValidacao: number; carteira: number; positivados: number;
-  positivacao: number; faturamento: number; meta: number;
+  // null = fora da premissa de positivação (carteira em formação).
+  positivacao: number | null; positivacaoElegivel?: boolean; faturamento: number; meta: number;
   bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number;
 };
 // Premissa da campanha no mês: o bloco de planejamento e a coluna da tabela
@@ -27,7 +28,7 @@ type Resp = {
   asOf: string; ym: string; ativo: boolean; meses?: string[]; admin?: boolean;
   premissas: Premissa[];
   sellers: Seller[];
-  totais: { novosAptos: number; emValidacao: number; bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number; comPositivacao: number; comMeta: number; vendedores: number };
+  totais: { novosAptos: number; emValidacao: number; bonusNovos: number; bonusPos: number; bonusMeta: number; bonusTotal: number; comPositivacao: number; elegiveisPositivacao?: number; comMeta: number; vendedores: number };
 };
 
 function brl(n: number): string {
@@ -36,11 +37,12 @@ function brl(n: number): string {
 
 // O pedido mínimo saiu daqui: virou o gatilho editável da premissa e já entra
 // na lista pelo valor do mês. Mantê-lo fixo mostrava "Pedido mín." duas vezes.
+// "Bônus após boleto pago (7 dias)" saiu em 05/nov/2026, a pedido do Flavio:
+// basta a venda faturada dentro do raio logístico.
 const REGRAS = [
   "Só em regiões já atendidas",
   "Dentro do raio logístico",
   "Cliente consistente e validado",
-  "Bônus após boleto pago (7 dias)",
 ];
 
 function Check() {
@@ -136,15 +138,15 @@ export default function CampanhaOutubro() {
 
   // PARTICIPANTES (05/nov/2026): quem entra na campanha se liga/desliga aqui,
   // não no código. Só o admin vê e mexe; a tabela do mês acompanha na hora.
-  type Participante = { id: string; nome: string; role: string; incluir: boolean };
+  type Participante = { id: string; nome: string; role: string; incluir: boolean; positivacao: boolean };
   const { data: partData, refetch: refetchPart } = useQuery<{ participantes: Participante[] }>({
     queryKey: ["/api/campanha/outubro/participantes"],
     queryFn: () => apiRequest("GET", "/api/campanha/outubro/participantes"),
     enabled: admin,
   });
   const participantes: Participante[] = partData?.participantes || [];
-  const alternarParticipante = async (p: Participante) => {
-    await apiRequest("POST", "/api/campanha/outubro/participante", { userId: p.id, incluir: !p.incluir });
+  const alternarParticipante = async (p: Participante, campo: "incluir" | "positivacao") => {
+    await apiRequest("POST", "/api/campanha/outubro/participante", { userId: p.id, [campo]: !p[campo] });
     await refetchPart();
     refetch();
   };
@@ -327,25 +329,40 @@ export default function CampanhaOutubro() {
                 </span>
               </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
               {participantes.map((p) => (
-                <button key={p.id} type="button" onClick={() => alternarParticipante(p)}
-                  title={p.incluir ? `Desligar ${p.nome} da campanha` : `Incluir ${p.nome} na campanha`}
-                  data-testid={`participante-${p.id}`}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition ${
-                    p.incluir
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                      : "border-gray-200 bg-gray-50 text-gray-400 line-through hover:bg-gray-100"}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${p.incluir ? "bg-emerald-500" : "bg-gray-300"}`} />
-                  {p.nome}
-                  <span className="text-[9px] uppercase opacity-60">{p.role === "telemarketing" ? "int" : "ext"}</span>
-                </button>
+                <div key={p.id} data-testid={`participante-${p.id}`}
+                  className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-[12px] ${
+                    p.incluir ? "border-gray-200 bg-white" : "border-gray-100 bg-gray-50 text-gray-400"}`}>
+                  <span className={`truncate ${p.incluir ? "text-gray-800" : "line-through"}`}>
+                    {p.nome}
+                    <span className="ml-1 text-[9px] uppercase text-gray-400">{p.role === "telemarketing" ? "int" : "ext"}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    <label className="flex cursor-pointer items-center gap-1 text-[10px] text-gray-500" title="Entra na campanha">
+                      <input type="checkbox" checked={p.incluir} onChange={() => alternarParticipante(p, "incluir")}
+                        className="h-3.5 w-3.5 accent-emerald-600" data-testid={`participante-incluir-${p.id}`} />
+                      campanha
+                    </label>
+                    {/* Positivação só faz sentido para quem está dentro: fora da
+                        campanha o interruptor some em vez de ficar cinza. */}
+                    {p.incluir && (
+                      <label className="flex cursor-pointer items-center gap-1 text-[10px] text-gray-500"
+                        title={p.positivacao ? "Conta na positivação" : "Fora da positivação: carteira ainda em formação"}>
+                        <input type="checkbox" checked={p.positivacao} onChange={() => alternarParticipante(p, "positivacao")}
+                          className="h-3.5 w-3.5 accent-emerald-600" data-testid={`participante-positivacao-${p.id}`} />
+                        positivação
+                      </label>
+                    )}
+                  </span>
+                </div>
               ))}
             </div>
             <p className="mt-2 text-[10px] leading-relaxed text-gray-400">
-              Quem está ligado aparece na tabela mesmo sem venda no mês. Quem está desligado some da tabela,
-              não gera cadastro de novo cliente e não recebe bônus. Contas de canal (Hotsite, Instagram, Honest)
-              ficam sempre fora.
+              <b>Campanha</b> desligada: a pessoa some da tabela, não gera cadastro de novo cliente e não recebe
+              bônus. <b>Positivação</b> desligada: a pessoa continua na campanha (novo cliente conta), mas fica fora
+              da premissa de positivação — é para quem ainda está formando a carteira, em que um percentual não
+              mede nada. Contas de canal (Hotsite, Instagram, Honest) ficam sempre fora.
             </p>
           </div>
         )}
@@ -387,7 +404,7 @@ export default function CampanhaOutubro() {
                   {sellers.map((s) => {
                     const metaOk = s.meta > 0 && s.faturamento >= (s.meta * metaPct) / 100;
                     const fatPct = s.meta > 0 ? Math.round((s.faturamento / s.meta) * 100) : 0;
-                    const posOk = s.positivacao >= posMeta;
+                    const posOk = s.positivacao !== null && s.positivacao >= posMeta;
                     return (
                       <tr key={s.seller} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
                         <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap">{s.seller}</td>
@@ -400,8 +417,16 @@ export default function CampanhaOutubro() {
                         {pNovos?.ativa && <td className="px-3 py-2.5 text-center font-semibold tabular-nums">{brl(s.bonusNovos)}</td>}
                         {pPos?.ativa && (
                           <td className="px-3 py-2.5">
-                            <div className="flex items-center justify-between gap-2"><span className="font-medium tabular-nums">{s.positivacao}%</span>{posOk && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">+{brl(s.bonusPos)}</span>}</div>
-                            <Bar pct={s.positivacao} ok={posOk} />
+                            {s.positivacao === null ? (
+                              <span className="text-[11px] text-gray-400" title="Fora da positivação neste mês: carteira ainda em formação">
+                                — <span className="ml-1">carteira em formação</span>
+                              </span>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between gap-2"><span className="font-medium tabular-nums">{s.positivacao}%</span>{posOk && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">+{brl(s.bonusPos)}</span>}</div>
+                                <Bar pct={s.positivacao} ok={posOk} />
+                              </>
+                            )}
                           </td>
                         )}
                         {pMeta?.ativa && (
@@ -424,7 +449,7 @@ export default function CampanhaOutubro() {
                       <td className="px-3 py-2.5">Equipe ({t.vendedores})</td>
                       {pNovos?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{t.novosAptos} / {t.emValidacao}</td>}
                       {pNovos?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusNovos)}</td>}
-                      {pPos?.ativa && <td className="px-3 py-2.5 text-gray-500">{t.comPositivacao} de {t.vendedores} com {posMeta}%</td>}
+                      {pPos?.ativa && <td className="px-3 py-2.5 text-gray-500">{t.comPositivacao} de {t.elegiveisPositivacao ?? t.vendedores} com {posMeta}%</td>}
                       {pMeta?.ativa && <td className="px-3 py-2.5 text-gray-500">{t.comMeta} de {t.vendedores} na meta</td>}
                       {pPos?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusPos)}</td>}
                       {pMeta?.ativa && <td className="px-3 py-2.5 text-center tabular-nums">{brl(t.bonusMeta)}</td>}
