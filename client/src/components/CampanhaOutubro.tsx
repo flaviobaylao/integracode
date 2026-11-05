@@ -22,6 +22,8 @@ export type Premissa = {
   // Segundo parâmetro, só nas premissas que o declaram. Na positivação é o
   // pedido mínimo para o cliente PJ contar como positivado; 0 = sem mínimo.
   pedidoMin?: number; pedidoMinLabel?: string;
+  // Piso próprio do cliente PF (CPF); 0 = PF positiva com qualquer valor.
+  pedidoMinPf?: number; pedidoMinPfLabel?: string;
 };
 
 type Resp = {
@@ -33,6 +35,17 @@ type Resp = {
 
 function brl(n: number): string {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// A mesma frase no bloco e no cabeçalho da coluna: a regra explicada de dois
+// jeitos diferentes vira duas regras na cabeça do vendedor.
+function regraMinimos(pj: number, pf: number): string {
+  const parte = (tipo: string, v: number) => v > 0
+    ? `cliente ${tipo} só positiva com pedido de ${brl(v)} ou mais no dia`
+    : `cliente ${tipo} positiva com qualquer valor`;
+  if (pj <= 0 && pf <= 0) return "Sem mínimo: qualquer compra positiva o cliente.";
+  const t = `${parte("PJ", pj)}; ${parte("PF", pf)}.`;
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 // O pedido mínimo saiu daqui: virou o gatilho editável da premissa e já entra
@@ -160,6 +173,7 @@ export default function CampanhaOutubro() {
       // Vai só quando a premissa tem o parâmetro: ausente, o servidor mantém o
       // que está gravado em vez de zerar.
       ...(novo.pedidoMin === undefined ? {} : { pedidoMin: novo.pedidoMin }),
+      ...(novo.pedidoMinPf === undefined ? {} : { pedidoMinPf: novo.pedidoMinPf }),
     });
     refetch();
   };
@@ -271,8 +285,8 @@ export default function CampanhaOutubro() {
                       data-testid={`premissa-gatilho-${p.chave}`} />
                   </label>
                   {p.pedidoMin !== undefined && (
-                    <label className="col-span-2 text-[11px] text-gray-500">
-                      {p.pedidoMinLabel || "Pedido mínimo"} (R$)
+                    <label className="text-[11px] text-gray-500">
+                      {p.pedidoMinLabel || "Pedido mínimo (PJ)"} (R$)
                       <input type="text" inputMode="decimal" defaultValue={String(p.pedidoMin).replace(".", ",")}
                         key={`pm-${p.chave}-${p.pedidoMin}`}
                         onBlur={(e) => {
@@ -281,13 +295,25 @@ export default function CampanhaOutubro() {
                         }}
                         className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
                         data-testid={`premissa-pedidomin-${p.chave}`} />
-                      <span className="mt-0.5 block text-[10px] leading-relaxed text-gray-400">
-                        {(p.pedidoMin || 0) > 0
-                          ? <>Compra de cliente <b>PJ</b> abaixo de {brl(p.pedidoMin)} no dia não positiva.
-                              Cliente <b>PF</b> positiva com qualquer valor.</>
-                          : <>Sem mínimo: qualquer compra positiva o cliente.</>}
-                      </span>
                     </label>
+                  )}
+                  {p.pedidoMinPf !== undefined && (
+                    <label className="text-[11px] text-gray-500">
+                      {p.pedidoMinPfLabel || "Pedido mínimo (PF)"} (R$)
+                      <input type="text" inputMode="decimal" defaultValue={String(p.pedidoMinPf).replace(".", ",")}
+                        key={`pmpf-${p.chave}-${p.pedidoMinPf}`}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value.replace(",", ".")) || 0;
+                          if (v !== p.pedidoMinPf) salvarPremissa(p, { pedidoMinPf: v });
+                        }}
+                        className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
+                        data-testid={`premissa-pedidominpf-${p.chave}`} />
+                    </label>
+                  )}
+                  {(p.pedidoMin !== undefined || p.pedidoMinPf !== undefined) && (
+                    <span className="col-span-2 -mt-1 block text-[10px] leading-relaxed text-gray-400">
+                      {regraMinimos(p.pedidoMin || 0, p.pedidoMinPf || 0)}
+                    </span>
                   )}
                   <p className="col-span-2 text-[10px] leading-relaxed text-gray-400">
                     Em <b>%</b>, o prêmio é calculado sobre o {p.base}. Vale só para{" "}
@@ -383,13 +409,14 @@ export default function CampanhaOutubro() {
                     {pNovos?.ativa && <th className="px-3 py-2.5 text-center font-semibold">Bônus novos</th>}
                     {pPos?.ativa && (
                       <th className="px-3 py-2.5 font-semibold"
-                        title={(pPos.pedidoMin || 0) > 0
-                          ? `Clientes da carteira que compraram no mês, sobre o total da carteira ativa. Cliente PJ só conta com pedido de ${brl(pPos.pedidoMin || 0)} ou mais no dia; cliente PF conta com qualquer valor.`
-                          : "Clientes da carteira que compraram no mês, sobre o total da carteira ativa. Qualquer valor de compra positiva."}>
+                        title={`Clientes da carteira que compraram no mês, sobre o total da carteira ativa. ${regraMinimos(pPos.pedidoMin || 0, pPos.pedidoMinPf || 0)}`}>
                         Positivação (meta {posMeta}%)
-                        {(pPos.pedidoMin || 0) > 0 && (
+                        {((pPos.pedidoMin || 0) > 0 || (pPos.pedidoMinPf || 0) > 0) && (
                           <span className="ml-1 font-normal text-[10px] text-gray-400">
-                            pedido ≥ {brl(pPos.pedidoMin || 0)} (PJ)
+                            pedido ≥ {[
+                              (pPos.pedidoMin || 0) > 0 ? `${brl(pPos.pedidoMin || 0)} (PJ)` : "",
+                              (pPos.pedidoMinPf || 0) > 0 ? `${brl(pPos.pedidoMinPf || 0)} (PF)` : "",
+                            ].filter(Boolean).join(" · ")}
                           </span>
                         )}
                       </th>
