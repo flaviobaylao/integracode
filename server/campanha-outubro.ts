@@ -160,82 +160,99 @@ const achaPremissa = (ps: Premissa[], chave: string) => ps.find((p) => p.chave =
 const chaveExcl = (s: string) => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 // Só contas que NÃO SÃO PESSOAS ficam fixas aqui. Pessoa fora da campanha é
 // decisão do gestor e mudou de lugar (05/nov/2026): está na tabela
-// campanha_participantes e se liga/desliga na tela. Até então cada "tira o
-// fulano" era um deploy, e a lista de nomes aqui era a prova disso.
+// campanha_participantes_mes e se liga/desliga na tela.
 const EXCLUIDOS = new Set(["hotsite", "instagram", "honest colaboradores", "honest admin", "honest fornecedores"].map(chaveExcl));
-// Pessoas que estavam fixas no código quando a tabela nasceu: viram linhas
-// "incluir = false" na primeira subida, para ninguém voltar sem querer.
-const DESLIGADOS_INICIAIS = ["maria e.", "natalia b.", "vinicius leal", "wellington s", "wilson m"];
 function excluido(nome: string): boolean { return EXCLUIDOS.has(chaveExcl(nome)); }
 
 // ---------------------------------------------------------------------------
 // PARTICIPANTES. Entra na campanha quem é usuário ativo com papel vendedor ou
-// telemarketing, salvo quem o gestor desligou. Quem está ligado aparece na
-// tabela MESMO sem carteira, sem venda e sem novo cliente no mês — uma linha
-// zerada diz "não produziu"; linha ausente só levanta a dúvida de se a pessoa
-// participa ou não (foi o caso da Virgínia).
-// ---------------------------------------------------------------------------
+// telemarketing, salvo quem o gestor desligou.
+//
 // `positivacao` = entra na premissa de positivação. Quem ainda está formando a
-// carteira fica fora (05/nov/2026): 0% de uma carteira de 1 cliente não mede
-// nada, e "X de N com 90%" ficava inflado no N.
+// carteira fica fora: 0% de uma carteira de 1 cliente não mede nada.
+//
+// DECISÃO COM VIGÊNCIA (05/nov/2026). A primeira versão guardava UMA decisão
+// por pessoa, valendo para todos os meses — e com isso reescrevia outubro:
+// tirar o Wilson de novembro apagou os R$ 30 de novo cliente dele em outubro;
+// tirar Amanda e Virgínia da positivação de novembro apagou a positivação delas
+// em outubro. Agora cada decisão vale A PARTIR do mês em que foi tomada (o mês
+// aberto na tela), igual à vigência da remuneração: o estado de uma pessoa num
+// mês é a última decisão com desde <= aquele mês; sem decisão, está dentro.
+// ---------------------------------------------------------------------------
 type Participante = { id: string; nome: string; role: string; incluir: boolean; positivacao: boolean };
-// Quem começou fora da positivação. Só vale na primeira subida (NULL = nunca
-// decidido); depois que o gestor mexe na tela, a tela manda.
-const SEM_POSITIVACAO_INICIAL = ["virginia t", "amanda c"];
+const CHAVE_USUARIO =
+  "regexp_replace(translate(lower(COALESCE(first_name,'')||COALESCE(last_name,'')),'áàâãéêíóôõúç','aaaaeeiooouc'),'[^a-z0-9]','','g')";
+// Estavam fora da campanha NO CÓDIGO desde outubro: a decisão vale desde sempre.
+const FORA_DESDE_SEMPRE = ["maria e.", "natalia b.", "vinicius leal", "wellington s"];
+/** usuários cuja chave de nome aponta para UM único usuário */
+const usuariosPorChave = (nomes: string[]) =>
+  "SELECT MIN(id) AS uid FROM (SELECT id, " + CHAVE_USUARIO + " AS k FROM users) x" +
+  " WHERE k IN (" + nomes.map((n) => "'" + chaveExcl(n) + "'").join(",") + ") GROUP BY k HAVING COUNT(*) = 1";
+
 let _participantesOk = false;
 async function ensureParticipantes(): Promise<void> {
   if (_participantesOk) return;
+  // Tabela da 1ª versão (uma decisão por pessoa, sem mês). Só é lida para a
+  // migração abaixo; continua existindo para a migração rodar num banco novo.
   await db.execute(sql`CREATE TABLE IF NOT EXISTS campanha_participantes (
     user_id varchar PRIMARY KEY,
     incluir boolean NOT NULL DEFAULT true,
     updated_by varchar, updated_at timestamptz DEFAULT now()
   )`);
-  // Nullable de propósito: NULL é "nunca decidido" e lê como true.
   await db.execute(sql`ALTER TABLE campanha_participantes ADD COLUMN IF NOT EXISTS positivacao boolean`);
-  // Semente única: só quando a chave de nome aponta para UM usuário, e só se
-  // ainda não há decisão gravada para ele.
-  const lista = DESLIGADOS_INICIAIS.map((n) => "'" + chaveExcl(n) + "'").join(",");
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS campanha_participantes_mes (
+    user_id varchar NOT NULL,
+    desde varchar(7) NOT NULL,
+    incluir boolean NOT NULL DEFAULT true,
+    positivacao boolean NOT NULL DEFAULT true,
+    updated_by varchar, updated_at timestamptz DEFAULT now(),
+    PRIMARY KEY (user_id, desde)
+  )`);
+  // 1) Quem já estava fora no código desde outubro: fora desde sempre.
   await db.execute(sql.raw(
-    "INSERT INTO campanha_participantes (user_id, incluir, updated_by)" +
-    " SELECT uid, false, 'sistema' FROM (" +
-    "   SELECT MIN(id) AS uid, COUNT(*) AS n FROM (" +
-    "     SELECT id, regexp_replace(translate(lower(COALESCE(first_name,'')||COALESCE(last_name,'')),'áàâãéêíóôõúç','aaaaeeiooouc'),'[^a-z0-9]','','g') AS k FROM users" +
-    "   ) x WHERE k IN (" + lista + ") GROUP BY k" +
-    " ) m WHERE m.n = 1 ON CONFLICT (user_id) DO NOTHING"
+    "INSERT INTO campanha_participantes_mes (user_id, desde, incluir, positivacao, updated_by)" +
+    " SELECT uid, '2000-01', false, true, 'sistema' FROM (" + usuariosPorChave(FORA_DESDE_SEMPRE) + ") m" +
+    " ON CONFLICT (user_id, desde) DO NOTHING"
   ));
-  const listaPos = SEM_POSITIVACAO_INICIAL.map((n) => "'" + chaveExcl(n) + "'").join(",");
+  // 2) Todas as outras decisões da 1ª versão foram tomadas para novembro
+  //    (Wilson fora, Amanda e Virgínia sem positivação, Cleber fora): passam a
+  //    valer de 2026-11 em diante, e outubro volta a ser o que foi.
   await db.execute(sql.raw(
-    "INSERT INTO campanha_participantes (user_id, incluir, positivacao, updated_by)" +
-    " SELECT uid, true, false, 'sistema' FROM (" +
-    "   SELECT MIN(id) AS uid, COUNT(*) AS n FROM (" +
-    "     SELECT id, regexp_replace(translate(lower(COALESCE(first_name,'')||COALESCE(last_name,'')),'áàâãéêíóôõúç','aaaaeeiooouc'),'[^a-z0-9]','','g') AS k FROM users" +
-    "   ) x WHERE k IN (" + listaPos + ") GROUP BY k" +
-    " ) m WHERE m.n = 1" +
-    " ON CONFLICT (user_id) DO UPDATE SET positivacao = false WHERE campanha_participantes.positivacao IS NULL"
+    "INSERT INTO campanha_participantes_mes (user_id, desde, incluir, positivacao, updated_by, updated_at)" +
+    " SELECT p.user_id, '2026-11', p.incluir, COALESCE(p.positivacao, true), p.updated_by, p.updated_at" +
+    " FROM campanha_participantes p" +
+    " WHERE p.user_id NOT IN (" + usuariosPorChave(FORA_DESDE_SEMPRE) + ")" +
+    " ON CONFLICT (user_id, desde) DO NOTHING"
   ));
   _participantesOk = true;
 }
-/** Usuários elegíveis (ativos, vendedor/telemarketing) com a decisão do gestor. */
-async function listarParticipantes(): Promise<Participante[]> {
+/** Usuários elegíveis no mês (ativos, vendedor/telemarketing, já cadastrados até
+ *  o fim do mês) com a decisão do gestor que vale NAQUELE mês. */
+async function listarParticipantes(ym: string): Promise<Participante[]> {
   await ensureParticipantes();
+  const Y = /^\d{4}-\d{2}$/.test(ym) ? ym : mesAtual();
   const rows = await rawq(
     "SELECT u.id, NULLIF(TRIM(COALESCE(u.first_name,'')||' '||COALESCE(u.last_name,'')),'') AS nome, u.role::text AS role," +
-    " COALESCE(p.incluir, true) AS incluir, COALESCE(p.positivacao, true) AS positivacao" +
-    " FROM users u LEFT JOIN campanha_participantes p ON p.user_id = u.id" +
+    " COALESCE(h.incluir, true) AS incluir, COALESCE(h.positivacao, true) AS positivacao" +
+    " FROM users u" +
+    " LEFT JOIN LATERAL (SELECT incluir, positivacao FROM campanha_participantes_mes x" +
+    "   WHERE x.user_id = u.id AND x.desde <= '" + Y + "' ORDER BY x.desde DESC LIMIT 1) h ON true" +
     " WHERE u.role::text IN ('vendedor','telemarketing') AND u.is_active IS TRUE" +
-    " ORDER BY COALESCE(p.incluir, true) DESC, u.role::text, nome"
+    // Quem foi cadastrado depois do mês não existia nele.
+    " AND (u.created_at IS NULL OR u.created_at < ('" + Y + "-01'::date + INTERVAL '1 month'))" +
+    " ORDER BY COALESCE(h.incluir, true) DESC, u.role::text, nome"
   );
   return rows
     .map((r: any) => ({ id: String(r.id), nome: String(r.nome || ""), role: String(r.role || ""), incluir: r.incluir !== false, positivacao: r.positivacao !== false }))
     .filter((p) => p.nome && !excluido(p.nome));
 }
-/** Nomes de quem está DENTRO da campanha. */
-async function nomesParticipantes(): Promise<Set<string>> {
-  return new Set((await listarParticipantes()).filter((p) => p.incluir).map((p) => p.nome));
+/** Nomes de quem está DENTRO da campanha no mês. */
+async function nomesParticipantes(ym: string): Promise<Set<string>> {
+  return new Set((await listarParticipantes(ym)).filter((p) => p.incluir).map((p) => p.nome));
 }
-/** Nomes de quem está na campanha mas FORA da positivação (carteira em formação). */
-async function nomesSemPositivacao(): Promise<Set<string>> {
-  return new Set((await listarParticipantes()).filter((p) => p.incluir && !p.positivacao).map((p) => p.nome));
+/** Nomes de quem está na campanha no mês mas FORA da positivação. */
+async function nomesSemPositivacao(ym: string): Promise<Set<string>> {
+  return new Set((await listarParticipantes(ym)).filter((p) => p.incluir && !p.positivacao).map((p) => p.nome));
 }
 
 const rawq = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
@@ -398,7 +415,7 @@ export async function detectNovos(ym: string): Promise<number> {
   const docUid: Record<string, string> = {};
   for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) { docSeller[d] = String(r.seller || ""); docUid[d] = String(r.uid || ""); } }
   const janelas = await janelasDelegacao(ym);
-  const dentro = await nomesParticipantes();
+  const dentro = await nomesParticipantes(ym);
 
   let n = 0;
   for (const r of novos) {
@@ -549,11 +566,13 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   const bateuMeta = (fat: number, meta: number) => meta > 0 && fat >= (meta * metaPct) / 100;
 
   // Quem está na campanha: vendedor/telemarketing ativo que o gestor não desligou.
-  const vendSet = await nomesParticipantes();
-  const semPos = await nomesSemPositivacao();
+  const vendSet = await nomesParticipantes(ym);
+  const semPos = await nomesSemPositivacao(ym);
 
-  // Todo participante ligado tem linha, produzindo ou não.
-  const names = new Set<string>(vendSet);
+  // Todo participante ligado tem linha, produzindo ou não — a partir de
+  // novembro, quando a regra nasceu. Outubro segue mostrando só quem teve
+  // movimento, como foi apresentado à equipe.
+  const names = new Set<string>(ym >= "2026-11" ? vendSet : []);
   Object.keys(carteiraCount).forEach((s) => names.add(s));
   Object.keys(novosAptos).forEach((s) => names.add(s));
   Object.keys(emValidacao).forEach((s) => names.add(s));
@@ -738,9 +757,11 @@ export function registerCampanhaRoutes(app: Express): void {
     try {
       const { role } = await resolveUser(req);
       if (role !== "admin") return res.status(403).json({ error: "forbidden" });
-      res.json({ participantes: await listarParticipantes() });
+      res.json({ participantes: await listarParticipantes(mesDaQuery(req)) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
+  // A decisão vale a partir do mês aberto na tela (b.ym) — meses anteriores
+  // ficam como estavam; meses seguintes que já tenham decisão própria também.
   app.post("/api/campanha/outubro/participante", async (req, res) => {
     try {
       const { role } = await resolveUser(req);
@@ -749,17 +770,18 @@ export function registerCampanhaRoutes(app: Express): void {
       const b = (req.body || {}) as any;
       const userId = String(b.userId || "").replace(/[^a-zA-Z0-9-]/g, "");
       if (!userId) return res.status(400).json({ error: "usuário inválido" });
-      // Cada campo só muda quando vem no corpo: a tela alterna um de cada vez.
-      const atual = (await listarParticipantes()).find((p) => p.id === userId);
+      const ym = /^\d{4}-\d{2}$/.test(String(b.ym || "")) ? String(b.ym) : mesAtual();
+      // Cada campo só muda quando vem no corpo; o outro mantém o estado do mês.
+      const atual = (await listarParticipantes(ym)).find((p) => p.id === userId);
       const incluir = b.incluir === undefined ? (atual ? atual.incluir : true) : b.incluir !== false;
       const positivacao = b.positivacao === undefined ? (atual ? atual.positivacao : true) : b.positivacao !== false;
       await db.execute(sql`
-        INSERT INTO campanha_participantes (user_id, incluir, positivacao, updated_by, updated_at)
-        VALUES (${userId}, ${incluir}, ${positivacao}, ${String((req as any)?.session?.userId || "") || null}, now())
-        ON CONFLICT (user_id) DO UPDATE SET
+        INSERT INTO campanha_participantes_mes (user_id, desde, incluir, positivacao, updated_by, updated_at)
+        VALUES (${userId}, ${ym}, ${incluir}, ${positivacao}, ${String((req as any)?.session?.userId || "") || null}, now())
+        ON CONFLICT (user_id, desde) DO UPDATE SET
           incluir = EXCLUDED.incluir, positivacao = EXCLUDED.positivacao,
           updated_by = EXCLUDED.updated_by, updated_at = now()`);
-      res.json({ ok: true, participantes: await listarParticipantes() });
+      res.json({ ok: true, participantes: await listarParticipantes(ym) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
