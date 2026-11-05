@@ -2150,13 +2150,19 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       } catch (e: any) { console.warn('[BILLING-PIPELINE] enriquecimento de fotos da troca (segue):', e?.message); }
       // Recorrência das trocas (selo no card), só para trocas ainda não entregues.
+      // Selo "Troca - Desconto em Boleto" (05/11/2026): vale em TODAS as etapas — o financeiro
+      // precisa enxergá-lo depois do faturamento para aplicar o desconto manualmente.
       try {
-        const trocas = (items as any[]).filter(i => i.salesCardId && String(i.operationType || '').toLowerCase() === 'troca'
-          && !['entregue', 'lixeira'].includes(String(i.stage || '')));
+        const trocas = (items as any[]).filter(i => i.salesCardId && String(i.operationType || '').toLowerCase() === 'troca');
         if (trocas.length) {
           const { recorrenciaPorCards } = await import('./troca-registros-routes.js');
           const m = await recorrenciaPorCards(trocas.map((i: any) => String(i.salesCardId)));
-          for (const it of trocas) { const r = m.get(String(it.salesCardId)); if (r) (it as any).trocaRecorrencia = r; }
+          for (const it of trocas) {
+            const r = m.get(String(it.salesCardId));
+            if (!r) continue;
+            if (r.descontoBoleto) (it as any).trocaDescontoBoleto = true;
+            if (!['entregue', 'lixeira'].includes(String(it.stage || ''))) (it as any).trocaRecorrencia = r;
+          }
         }
       } catch (e: any) { console.warn('[BILLING-PIPELINE] recorrencia troca (segue):', e?.message); }
       res.json(items);

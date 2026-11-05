@@ -89,6 +89,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // Recorrência (30/10/2026): da 2ª troca do mesmo motivo em 60 dias, ação com o cliente obrigatória.
   const [trocaAcao, setTrocaAcao] = useState('');
   const [trocaExigeAcao, setTrocaExigeAcao] = useState(false);
+  // Compensação da troca por DESCONTO EM BOLETO (05/11/2026): só marca o selo
+  // "Troca - Desconto em Boleto" no pipeline; o financeiro aplica o desconto manualmente.
+  const [trocaDescontoBoleto, setTrocaDescontoBoleto] = useState(false);
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -789,7 +792,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ motivo: trocaMotivo, acaoCliente: trocaExigeAcao ? trocaAcao : undefined }),
+            body: JSON.stringify({ motivo: trocaMotivo, acaoCliente: trocaExigeAcao ? trocaAcao : undefined, descontoBoleto: trocaDescontoBoleto }),
           });
           if (!_r.ok) throw new Error((await _r.json().catch(() => ({})))?.message || 'Falha ao registrar o motivo');
           const _d = await _r.json();
@@ -1857,6 +1860,20 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   {trocaMotivo === 'vencido' && (
                     <TrocaPreviaDesconto cardId={card?.id} products={products} />
                   )}
+                  {/* Compensação por desconto em boleto (05/11/2026): só o selo no pipeline. */}
+                  <label htmlFor="troca-desconto-boleto" className="flex items-start gap-2 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm cursor-pointer">
+                    <Checkbox
+                      id="troca-desconto-boleto"
+                      checked={trocaDescontoBoleto}
+                      onCheckedChange={(v) => setTrocaDescontoBoleto(v === true)}
+                      className="mt-0.5"
+                      data-testid="checkbox-troca-desconto-boleto"
+                    />
+                    <span>
+                      <span className="font-medium">Desconto em boleto</span>
+                      <span className="block text-xs text-gray-600">O cliente será compensado com desconto em um boleto, aplicado pelo financeiro. O card segue no pipeline como "Troca - Desconto em Boleto".</span>
+                    </span>
+                  </label>
                 </div>
               )}
 

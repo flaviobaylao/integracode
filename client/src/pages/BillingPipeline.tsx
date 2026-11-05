@@ -75,6 +75,7 @@ interface BillingPipelineItem {
   trocaPhotoUrl?: string | null; // 1ª foto da troca (compatibilidade)
   trocaPhotoUrls?: string[];     // todas as fotos dos produtos anexadas na troca (até 3)
   trocaRecorrencia?: { motivoLabel: string; n: number; ordinal: string; janelaDias: number; exigeObsAdmin?: boolean } | null;
+  trocaDescontoBoleto?: boolean; // 05/11/2026: troca compensada por desconto em boleto (aplicado manualmente pelo financeiro)
   omieInstanceId: string | null;
   omieInstanceName: string | null;
   scheduledBillingDate: string | null;
@@ -206,6 +207,13 @@ const CATEGORY_LABELS: Record<string, string> = {
   troca: 'Troca',
   reposicao: 'Reposição',
 };
+// Selo da operação no card: troca compensada por desconto em boleto (05/11/2026) ganha rótulo
+// próprio — o financeiro aplica o desconto MANUALMENTE; o sistema não altera título nem boleto.
+const TROCA_DESCONTO_BOLETO_LABEL = 'Troca - Desconto em Boleto';
+function operationLabel(item: any, cat: string | null): string {
+  if (cat === 'troca' && item?.trocaDescontoBoleto) return TROCA_DESCONTO_BOLETO_LABEL;
+  return (cat && (CATEGORY_LABELS[cat] || OPERATION_LABELS[cat])) || cat || '';
+}
 const CATEGORY_ORDER = ['venda', 'cancelado', 'devolvida', 'devolucao', 'amostra', 'bonificacao', 'troca', 'reposicao'];
 
 /** CNPJ/CPF pontuado — o financeiro confere a raiz do CNPJ a olho. */
@@ -1034,6 +1042,7 @@ export default function BillingPipeline() {
           trocaPhotoUrl: b.trocaPhotoUrl ?? null,
           trocaPhotoUrls: Array.isArray(b.trocaPhotoUrls) ? b.trocaPhotoUrls : (b.trocaPhotoUrl ? [b.trocaPhotoUrl] : []),
           trocaRecorrencia: b.trocaRecorrencia ?? null,
+          trocaDescontoBoleto: b.trocaDescontoBoleto === true,
           omieInstanceId: null,
           omieInstanceName: null,
           stageHistory: [],
@@ -2096,7 +2105,9 @@ export default function BillingPipeline() {
                         <option value="">-</option>
                         {Object.entries(OPERATION_LABELS).map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
                       </select>
-                    ) : (<p className="text-sm">{OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-'}</p>)}
+                    ) : (<p className="text-sm">{String(detailItem.operationType || '').toLowerCase() === 'troca' && detailItem.trocaDescontoBoleto
+                      ? TROCA_DESCONTO_BOLETO_LABEL
+                      : (OPERATION_LABELS[detailItem.operationType || ''] || detailItem.operationType || '-')}</p>)}
                   </div>
                   {/* PRAZO DO BOLETO: só aparece quando o pagamento é boleto. O admin pode alterar o
                       prazo nos pedidos BLOQUEADOS (ex.: boleto acima de 7 dias). */}
@@ -3024,8 +3035,10 @@ function KanbanCard({
             const cat = operationCategory(item);
             if (!cat) return null;
             return (
-              <Badge variant="outline" className={`text-[10px] ${operationBadgeClass(cat)}`}>
-                {CATEGORY_LABELS[cat] || OPERATION_LABELS[cat] || cat}
+              <Badge variant="outline" className={`text-[10px] ${operationBadgeClass(cat)}${cat === 'troca' && item.trocaDescontoBoleto ? ' font-semibold border-yellow-500' : ''}`}
+                title={cat === 'troca' && item.trocaDescontoBoleto ? 'Troca compensada por desconto em boleto — o financeiro aplica o desconto manualmente' : undefined}
+                data-testid={cat === 'troca' && item.trocaDescontoBoleto ? `badge-troca-desconto-boleto-${item.id}` : undefined}>
+                {operationLabel(item, cat)}
                 {cat === 'troca' && item.trocaRecorrencia ? ` · ${item.trocaRecorrencia.motivoLabel}${item.trocaRecorrencia.n >= 2 ? ` · ${item.trocaRecorrencia.ordinal} em ${item.trocaRecorrencia.janelaDias} dias` : ''}` : ''}
               </Badge>
             );
