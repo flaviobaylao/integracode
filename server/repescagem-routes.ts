@@ -2991,6 +2991,79 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
+  // 📋 Report diário "Repescagem não atendida": gerar agora (admin) — o agendador faz às 18h.
+  app.post('/api/repescagem/nao-atendidos/gerar', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const r = await gerarReportRepescagemNaoAtendida(req.body?.date ? String(req.body.date) : undefined);
+      res.json({ ok: true, ...r });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/nao-atendidos/gerar', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // 📋 Admin decide: os clientes do report VOLTAM para a repescagem (todos ou os marcados).
+  // Entram no sorteio seguinte (dia seguinte ao report) por decisão do Admin e são redistribuídos
+  // conforme o painel de carteiras. Se esse dia já é HOJE (decisão tomada depois das 00:10), refaz
+  // a distribuição de hoje para eles entrarem já. Fecha o report (vai para Resolvidas).
+  app.post('/api/repescagem/nao-atendidos/:reportId/devolver', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+      const reportId = String(req.params.reportId || '');
+      const rep = rowsOf(await db.execute(sql`SELECT id, status, details FROM change_requests WHERE id = ${reportId} LIMIT 1`))[0];
+      if (!rep) return res.status(404).json({ message: 'Report não encontrado' });
+      const det = rep.details || {};
+      if (det.reportKind !== REP_NAO_ATENDIDA_KIND) return res.status(400).json({ message: 'Este report não é de repescagem não atendida' });
+      const todos: string[] = Array.isArray(det.clientes) ? det.clientes.map((c: any) => String(c.customerId)) : [];
+      const pedidos: string[] = Array.isArray(req.body?.customerIds) ? req.body.customerIds.map((x: any) => String(x)) : todos;
+      const ids = Array.from(new Set(pedidos.filter((x) => todos.includes(x))));
+      if (ids.length === 0) return res.status(400).json({ message: 'Nenhum cliente selecionado' });
+
+      const today = brTodayStr();
+      const diaSeguinte = (() => { const d = new Date(String(det.data || today) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
+      const forcedDate = diaSeguinte < today ? today : diaSeguinte;
+      await ensureRepescagemForcedTable();
+      let devolvidos = 0;
+      for (const cid of ids) {
+        const ativo = rowsOf(await db.execute(sql`SELECT 1 FROM customers WHERE id = ${cid} AND is_active IS NOT FALSE LIMIT 1`));
+        if (!ativo.length) continue;
+        await db.execute(sql`
+          INSERT INTO repescagem_forced (customer_id, forced_date, source_report_id, created_by)
+          VALUES (${cid}, ${forcedDate}, ${reportId}, ${(req.currentUser?.id || null)})
+          ON CONFLICT (customer_id, forced_date) DO NOTHING`);
+        devolvidos++;
+        try {
+          await logCustomerNote({
+            customerId: cid, label: 'Repescagem (decisão do Admin)',
+            text: `Não atendido na repescagem de ${fmtBR(String(det.data || ''))}: devolvido à repescagem de ${fmtBR(forcedDate)} para ser redistribuído (decisão do Admin no report das 18h).`,
+            actor: { id: req.currentUser?.id || 'admin', name: req.currentUser?.name || 'Admin' } as any,
+            source: 'repescagem',
+          });
+        } catch { /* nota é best-effort */ }
+      }
+      // Decisão tomada no próprio dia do sorteio (depois das 00:10): redistribui hoje já.
+      let redistribuidoAgora = false;
+      if (forcedDate === today) {
+        try { await runDailyDraw({ drawDate: today, force: true }); redistribuidoAgora = true; } catch (e) { console.warn('[REP-NAO-ATENDIDA] redistribuição hoje:', (e as any)?.message); }
+      }
+      const adminNome = req.currentUser ? (`${req.currentUser.firstName || ''} ${req.currentUser.lastName || ''}`.trim() || req.currentUser.email || 'Admin') : 'Admin';
+      const texto = `✅ ${devolvidos} de ${todos.length} cliente(s) devolvido(s) à repescagem de ${fmtBR(forcedDate)} para redistribuição` +
+        (redistribuidoAgora ? ' (redistribuídos agora).' : ' (entram no sorteio das 00:10).');
+      const msg = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, role: 'admin', by: req.currentUser?.id || null, byName: adminNome, text: texto, at: new Date().toISOString(), kind: 'system' };
+      const novoDet = { ...det, devolvidos: ids, devolvidoPara: forcedDate };
+      await db.execute(sql`
+        UPDATE change_requests
+           SET status = 'lido', resolved_at = NOW(), resolved_by = ${req.currentUser?.id || null}, resolved_by_name = ${adminNome},
+               resolution_note = ${texto}, details = ${JSON.stringify(novoDet)}::jsonb,
+               messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([msg])}::jsonb
+         WHERE id = ${reportId}`);
+      res.json({ ok: true, devolvidos, total: todos.length, forcedDate, redistribuidoAgora });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/nao-atendidos/:reportId/devolver', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
   app.get('/api/repescagem/stats', authenticateUser, requireRole(ALLOWED_ROLES), async (req, res) => {
     try {
       const startDate = String(req.query.startDate || '');
@@ -3035,6 +3108,93 @@ export function registerRepescagemRoutes(app: Express, opts: {
 // telemarketings sem depender de alguém abrir a tela.
 export async function releaseRepescagemCapturesEndOfDay(): Promise<void> {
   await releaseExpiredCaptures({ endOfDay: true });
+}
+
+// ============================================================================
+// 📋 REPORT DIÁRIO (18h) — REPESCAGEM DO DIA NÃO ATENDIDA (nov/2026, pedido do Flavio).
+// Às 18:00 (BRT) fecha os atendidos do dia (mesma regra oficial: atendimento virtual,
+// check-in de rota ou pedido no dia) e manda ao Inbox do admin UM ÚNICO report com todos os
+// clientes que caíram na repescagem do dia e continuam sem atendimento. No report o admin
+// escolhe se eles VOLTAM para a repescagem (entram no próximo sorteio, redistribuídos conforme
+// o painel de carteiras) — mesmo mecanismo do botão "Repescagem" dos reports.
+// ============================================================================
+const REP_NAO_ATENDIDA_KIND = 'repescagem_nao_atendida';
+const repNaoAtendidaEntityId = (date: string) => `repescagem-nao-atendida-${date}`;
+const fmtBR = (d: string) => String(d).split('-').reverse().join('/');
+
+export async function gerarReportRepescagemNaoAtendida(dateArg?: string): Promise<{ date: string; total: number; reportId: string | null; created: boolean }> {
+  const date = dateArg && /^\d{4}-\d{2}-\d{2}$/.test(dateArg) ? dateArg : brTodayStr();
+  const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+  // 1) Fecha os atendidos do dia antes de listar (não expira os de hoje).
+  try { await closeAndExpireRepescagem(date); } catch (e) { console.warn('[REP-NAO-ATENDIDA] fechamento:', (e as any)?.message); }
+  // 2) Clientes da repescagem do dia que continuam sem atendimento.
+  const rows = rowsOf(await db.execute(sql`
+    SELECT DISTINCT ON (ra.customer_id)
+           ra.customer_id, ra.assigned_user_id, ra.phase, ra.last_red_date,
+           COALESCE(NULLIF(TRIM(c.fantasy_name), ''), c.name) AS nome,
+           c.seller_id, c.city, c.visit_periodicity
+      FROM repescagem_assignments ra
+      JOIN customers c ON c.id = ra.customer_id
+     WHERE ra.draw_date = ${date} AND ra.status = 'in_route'
+       AND c.is_supplier IS NOT TRUE AND c.is_active IS NOT FALSE
+     ORDER BY ra.customer_id, ra.assigned_at DESC NULLS LAST`));
+  const nomeUser = new Map<string, string>();
+  try {
+    for (const u of rowsOf(await db.execute(sql`SELECT id, omie_vendor_code AS code, TRIM(CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,''))) AS nm FROM users`))) {
+      const nm = u.nm || String(u.id);
+      nomeUser.set(String(u.id), nm);
+      if (u.code) { nomeUser.set(String(u.code), nm); nomeUser.set('omie-vendor-' + String(u.code), nm); }
+    }
+  } catch { /* sem nomes */ }
+  const clientes = rows.map((r: any) => ({
+    customerId: String(r.customer_id),
+    nome: r.nome || String(r.customer_id),
+    vendedor: r.seller_id ? (nomeUser.get(String(r.seller_id)) || String(r.seller_id)) : '(sem vendedor)',
+    atendente: r.assigned_user_id ? (nomeUser.get(String(r.assigned_user_id)) || String(r.assigned_user_id)) : null,
+    fase: r.phase || null,
+    periodicidade: r.visit_periodicity || null,
+    cidade: r.city || null,
+    caiuEm: r.last_red_date || null,
+  })).sort((a: any, b: any) => String(a.vendedor).localeCompare(String(b.vendedor)) || String(a.nome).localeCompare(String(b.nome)));
+
+  const { ensureTables } = await import('./change-requests-routes');
+  await ensureTables();
+  const entityId = repNaoAtendidaEntityId(date);
+  const existente = rowsOf(await db.execute(sql`
+    SELECT id, status FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${entityId}
+    ORDER BY created_at DESC LIMIT 1`))[0];
+  // Já decidido pelo admin (resolvido): não recria o report do dia.
+  if (existente && existente.status !== 'pending') return { date, total: clientes.length, reportId: existente.id, created: false };
+  if (clientes.length === 0) return { date, total: 0, reportId: existente?.id || null, created: false };
+
+  const porVendedor = new Map<string, number>();
+  for (const c of clientes) porVendedor.set(c.vendedor, (porVendedor.get(c.vendedor) || 0) + 1);
+  const resumo = `${clientes.length} cliente(s) caíram na repescagem de ${fmtBR(date)} e não foram atendidos até as 18h ` +
+    `(sem atendimento virtual, check-in de rota ou pedido no dia). Por carteira: ` +
+    Array.from(porVendedor.entries()).sort((a, b) => b[1] - a[1]).map(([v, n]) => `${v} ${n}`).join(', ') + '. ' +
+    `Escolha se eles voltam para a repescagem para serem redistribuídos.`;
+  const nomeCard = `Repescagem não atendida — ${fmtBR(date)} (${clientes.length})`;
+  const details = { reportKind: REP_NAO_ATENDIDA_KIND, reportLabel: 'Repescagem não atendida', data: date, total: clientes.length, texto: resumo, clientes };
+  const msg = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, role: 'admin', by: null, byName: 'Sistema', text: resumo, at: new Date().toISOString(), kind: 'system' };
+
+  if (existente) {
+    await db.execute(sql`
+      UPDATE change_requests
+         SET entity_name = ${nomeCard}, details = ${JSON.stringify(details)}::jsonb,
+             messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([{ ...msg, text: '🔄 Lista atualizada. ' + resumo }])}::jsonb
+       WHERE id = ${existente.id}`);
+    return { date, total: clientes.length, reportId: existente.id, created: false };
+  }
+  const ins = rowsOf(await db.execute(sql`
+    INSERT INTO change_requests
+      (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+       types, details, status, kind, requested_by, requested_by_name, messages)
+    VALUES
+      ('repescagem', ${entityId}, NULL, ${nomeCard}, NULL, NULL,
+       ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
+       ${JSON.stringify([msg])}::jsonb)
+    RETURNING id`));
+  return { date, total: clientes.length, reportId: ins[0]?.id || null, created: true };
 }
 
 // Exportado para o agendador (scheduler.ts): roda a distribuicao/sorteio da repescagem

@@ -539,7 +539,12 @@ cron.schedule('10 0 * * *', async () => {
 // de alguém abrir a tela (antes só liberava no próximo carregamento depois das 18h).
 cron.schedule('0 18 * * *', async () => {
   try {
-    const { releaseRepescagemCapturesEndOfDay } = await import('./repescagem-routes');
+    const { releaseRepescagemCapturesEndOfDay, gerarReportRepescagemNaoAtendida } = await import('./repescagem-routes');
+    // 📋 Report único no Inbox: clientes da repescagem do dia que não foram atendidos (18h).
+    try {
+      const r = await gerarReportRepescagemNaoAtendida();
+      console.log(`📋 [REPESCAGEM-18H] Report "Repescagem não atendida" ${r.date}: ${r.total} cliente(s)${r.created ? ' (novo no Inbox)' : ''}.`);
+    } catch (e: any) { console.error('❌ [REPESCAGEM-18H] report não atendidos:', e?.message || e); }
     await releaseRepescagemCapturesEndOfDay();
     console.log('🔓 [REPESCAGEM-18H] Capturas de atendimento liberadas (encerramento do dia).');
   } catch (e: any) {
