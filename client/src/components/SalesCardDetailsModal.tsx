@@ -51,11 +51,14 @@ interface SalesCardDetailsModalProps {
   card: SalesCardWithRelations | null;
   onStartSale?: (card: SalesCardWithRelations) => void;
   onStartNoSale?: (card: SalesCardWithRelations) => void;
+  // RASCUNHO: abre a venda salva para revisar e finalizar (envia ao faturamento). Sem este
+  // callback, cai em onStartSale.
+  onResumeDraft?: (card: SalesCardWithRelations) => void;
   // Debito em aberto do cliente (repassado ao check-in para a caixa de explicacao).
   customerDebt?: number;
 }
 
-export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale, customerDebt = 0 }: SalesCardDetailsModalProps) {
+export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale, onResumeDraft, customerDebt = 0 }: SalesCardDetailsModalProps) {
   // ✏️ Editar cadastro do cliente direto do card (nov/2026). O que cada um pode alterar segue o
   // papel/acessos: o servidor valida (PUT /api/customers/:id) e o modal envia só o permitido.
   const perms = usePermissions();
@@ -735,6 +738,26 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
 
           {/* Bloco de integracao com ERP removido do formulario da Rota do Dia (04/08/2026). */}
         </div>
+
+        {/* RASCUNHO: antes não havia NENHUM botão de ação para status 'draft' (só Editar Cadastro /
+            Solicitar Alteração / Fechar) — o pedido salvo não tinha como seguir para o faturamento
+            por aqui. "Retomar rascunho" abre a venda com os itens salvos; lá, "Confirmar e Finalizar"
+            envia ao faturamento (com as mesmas travas: telefone, foto da troca, etc.). */}
+        {card.status === 'draft' && (onResumeDraft || onStartSale) && (
+          <div className="border-t pt-4 space-y-2">
+            <Button
+              onClick={() => { const c = displayCard || card; if (onResumeDraft) onResumeDraft(c); else if (onStartSale) onStartSale(c); }}
+              className="w-full bg-green-600 hover:bg-green-700 text-white"
+              data-testid="button-resume-draft"
+            >
+              <Send className="h-4 w-4 mr-2" />
+              Retomar rascunho e enviar para faturamento
+            </Button>
+            <p className="text-xs text-gray-500 text-center">
+              Abre a venda com os itens salvos. Revise e clique em <strong>Confirmar e Finalizar</strong> para enviar ao faturamento.
+            </p>
+          </div>
+        )}
 
         {/* Botões para Pedidos Finalizados (venda concluída OU não-venda) */}
         {(card.status === 'completed' || card.status === 'no_sale') && (
