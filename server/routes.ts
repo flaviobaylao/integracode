@@ -13453,11 +13453,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Todos os usuários podem visualizar as rotas de entrega
   app.get("/api/delivery-routes", authenticateUser, requireRole(['admin', 'coordinator', 'administrative', 'vendedor', 'telemarketing', 'motorista']), async (req: any, res) => {
     try {
-      const { status, routeDate, driverId, savedOnly } = req.query;
+      const { status, routeDate, dateFrom, dateTo, driverId, savedOnly } = req.query;
       
       const filters: any = {};
       if (status) filters.status = status;
       if (routeDate) filters.routeDate = routeDate; // Manter como string YYYY-MM-DD
+      if (dateFrom) filters.dateFrom = String(dateFrom);
+      if (dateTo) filters.dateTo = String(dateTo);
       if (driverId) filters.driverId = driverId;
       if (savedOnly === 'true') filters.savedOnly = true;
       
