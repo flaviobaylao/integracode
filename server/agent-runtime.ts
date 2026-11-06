@@ -7,6 +7,7 @@ import { db } from './db';
 import { textoLogistica } from './ficha-logistica';
 import { sql } from 'drizzle-orm';
 import { whereDebitoVivoSql } from './divida-viva';
+import { TOOL_BUSCAR_CLIENTE, TOOL_VINCULAR_CLIENTE } from './ia-cliente-cadastro';
 
 const APP_URL = process.env.APP_URL || 'https://integracode-production.up.railway.app';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -52,6 +53,11 @@ const TOOL_DEFS: any[] = [
   { name: 'consultar_ficha_tecnica', description: 'Le a FICHA TECNICA oficial do produto (o PDF que a equipe anexou no catalogo) e devolve o conteudo dela em texto, mais o link do PDF. Use SEMPRE que o cliente perguntar composicao, ingredientes, informacao nutricional, calorias, acucar, conservante, corante, alergenico, gluten, lactose, se e vegano, validade, prazo de consumo, modo de conservacao, rendimento, embalagem, peso, registro/MAPA ou qualquer detalhe tecnico do produto. NAO responda esse tipo de pergunta de cabeca: consulte a ficha e responda SO com o que estiver escrita nela. Se o produto nao tiver ficha anexada, diga que vai confirmar com a equipe — nunca invente numero de rotulo. PESO, MEDIDAS DA GARRAFA, FARDO (quantas unidades, medidas, peso) e PALETIZACAO vem do cadastro do produto e aparecem no bloco LOGISTICA da resposta, com link da ficha logistica em PDF — use esses numeros para cliente de rede, distribuidor ou transportadora. Pode buscar tambem por atributo (ex.: "sem acucar") quando o cliente nao citar o produto pelo nome.', input_schema: { type: 'object', properties: { termo: { type: 'string', description: 'nome do produto, ou o atributo procurado quando o cliente nao citar o produto' } }, required: ['termo'] } },
 ];
 
+// Cadastro (nov/2026): cliente ativo nao preenche cadastro de novo — a IA consulta o
+// sistema (buscar_cliente) e liga a conversa ao cadastro com uma prova (vincular_cliente).
+// Ver server/ia-cliente-cadastro.ts.
+TOOL_DEFS.push(TOOL_BUSCAR_CLIENTE, TOOL_VINCULAR_CLIENTE);
+
 // Indicação (Plano 11/10): o cliente indica outro comércio; R$ 30 para os dois. Ver server/ia-indicacao.ts.
 TOOL_DEFS.push({ name: 'registrar_indicacao', description: 'Registra a INDICAÇÃO de outro comércio feita pelo cliente desta conversa (programa: R$ 30 de desconto para quem indica e R$ 30 para o indicado no primeiro pedido). Use quando o cliente mandar o nome e o WhatsApp de um estabelecimento. O sistema cria o lead para o vendedor, gera o cupom e já manda a primeira mensagem ao indicado — você só confirma ao cliente que a indicação foi registrada e que o desconto dele é liberado quando o indicado fizer o primeiro pedido.', input_schema: { type: 'object', properties: { nome_estabelecimento: { type: 'string', description: 'nome do comércio indicado' }, telefone: { type: 'string', description: 'WhatsApp do indicado, com DDD' }, contato: { type: 'string', description: 'nome da pessoa de contato, se informado' }, cidade: { type: 'string', description: 'cidade do indicado, se informada' } }, required: ['nome_estabelecimento', 'telefone'] } });
 
@@ -62,13 +68,13 @@ const ORDER_TOOL: any = {
   input_schema: {
     type: 'object',
     properties: {
-      tipo_cliente: { type: 'string', enum: ['consumidor', 'revenda'], description: 'perfil do cliente definido na triagem' },
+      tipo_cliente: { type: 'string', enum: ['consumidor', 'revenda'], description: 'perfil do cliente definido na triagem (cliente JA CADASTRADO: omita, vem do cadastro)' },
       regiao: { type: 'string', enum: ['goiania', 'interior', 'brasilia'], description: 'obrigatório para revenda: goiania=Goiânia; interior=interior de Goiás; brasilia=Brasília e entorno' },
       itens: { type: 'array', description: 'itens do pedido', items: { type: 'object', properties: { produto: { type: 'string', description: 'nome do produto do catálogo' }, quantidade: { type: 'number' } }, required: ['produto', 'quantidade'] } },
-      nome: { type: 'string', description: 'nome completo do cliente' },
-      documento: { type: 'string', description: 'CPF ou CNPJ' },
+      nome: { type: 'string', description: 'nome completo do cliente — SO para cliente NOVO; cadastrado: omita' },
+      documento: { type: 'string', description: 'CPF ou CNPJ — SO para cliente NOVO; cadastrado: omita' },
       telefone: { type: 'string', description: 'WhatsApp do cliente com DDD — OBRIGATORIO no Instagram (use o que ele ja informou)' },
-      endereco: { type: 'string', description: 'rua/avenida e número' },
+      endereco: { type: 'string', description: 'rua/avenida e número — SO para cliente NOVO; cadastrado: omita (o sistema usa o do cadastro)' },
       bairro: { type: 'string' },
       cidade: { type: 'string' },
       cep: { type: 'string' },
@@ -78,7 +84,10 @@ const ORDER_TOOL: any = {
       observacoes: { type: 'string' },
       cupom: { type: 'string', description: 'codigo de cupom de desconto, SOMENTE se o cliente informar ou se o contexto da conversa (bloco ESTE CLIENTE / mensagem de resgate) disser que ele tem um cupom' },
     },
-    required: ['tipo_cliente', 'itens', 'nome', 'documento', 'endereco', 'bairro', 'cidade', 'forma_pagamento', 'dia_entrega'],
+    // nov/2026: nome/documento/endereco/tipo NAO sao mais obrigatorios no schema — para
+    // cliente ja cadastrado o sistema completa pelo cadastro (registrarPedido). Para
+    // cliente novo a validacao continua no servidor e devolve o que falta.
+    required: ['itens', 'forma_pagamento', 'dia_entrega'],
   },
 };
 
@@ -190,6 +199,15 @@ export async function resolveCustomerId(ctx: any, documento?: string): Promise<s
   // e boletos). Sao tabelas diferentes, com ids diferentes. Usar aquele id direto fazia
   // toda consulta de pedido/boleto voltar vazia. Por isso: so vale se existir no ERP.
   if (ctx?.customerId && await existeNoErp(ctx.customerId)) return ctx.customerId;
+  // Vinculo feito pela IA nesta conversa (vincular_cliente, com prova) — vale mais que o telefone.
+  if (ctx?.erpCustomerId && await existeNoErp(String(ctx.erpCustomerId))) return String(ctx.erpCustomerId);
+  if (ctx?.conversationId) {
+    try {
+      const { clienteVinculadoDaConversa } = await import('./ia-cliente-cadastro');
+      const v = await clienteVinculadoDaConversa(String(ctx.conversationId));
+      if (v) { ctx.erpCustomerId = v; return v; }
+    } catch {}
+  }
 
   const d = onlyDigits(ctx?.phone);
   // 1) O cliente chegou respondendo um DISPARO nosso (aviso de pedido, cobranca, rota).
@@ -219,6 +237,14 @@ export async function resolveCustomerId(ctx: any, documento?: string): Promise<s
         LIMIT 1`);
       if (r.rows?.[0]?.id) return String(r.rows[0].id);
     }
+  } catch {}
+  // 3) Telefone CONFIRMADO pelo cliente (phone_verifications) ou campo de telefone com
+  //    mais de um numero. Sem isso cliente ativo com WhatsApp diferente do 1o telefone
+  //    do cadastro era tratado como desconhecido e o robo pedia o cadastro inteiro.
+  try {
+    const { clientePorTelefone } = await import('./ia-cliente-cadastro');
+    const id = await clientePorTelefone(d);
+    if (id) return id;
   } catch {}
   return null;
 }
@@ -420,6 +446,8 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
       return 'WhatsApp salvo: ' + r.numero + '. Confirme ao cliente em poucas palavras e siga o atendimento. Use esse numero no campo telefone do registrar_pedido.';
     }
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
+    if (name === 'buscar_cliente') { const { buscarCliente } = await import('./ia-cliente-cadastro'); return await buscarCliente(input || {}); }
+    if (name === 'vincular_cliente') { const { vincularCliente } = await import('./ia-cliente-cadastro'); return await vincularCliente(input || {}, ctx); }
     if (name === 'gerar_pix') return await gerarPix(input || {}, ctx);
     if (name === 'gerar_link_pagamento') return await gerarLinkPagamento(input || {}, ctx);
     return 'Ferramenta desconhecida.';
@@ -528,6 +556,28 @@ async function consultarFichaTecnica(input: any): Promise<string> {
 async function registrarPedido(input: any, ctx: any): Promise<string> {
   try {
     const inp = input || {};
+    // nov/2026: cliente JA cadastrado (identificado pelo numero ou vinculado na conversa)
+    // nao informa nada de cadastro — completa aqui com os dados do sistema. O que o cadastro
+    // tem PREVALECE para nome/documento/tipo/regiao; endereco so entra se o modelo nao mandou.
+    let clienteCadastro: any = null;
+    try {
+      const _cidPed = await resolveCustomerId(ctx, inp.documento);
+      if (_cidPed) {
+        const { dadosParaPedido } = await import('./ia-cliente-cadastro');
+        clienteCadastro = await dadosParaPedido(_cidPed);
+      }
+    } catch {}
+    if (clienteCadastro) {
+      inp.nome = clienteCadastro.nome || inp.nome;
+      if (clienteCadastro.documento) inp.documento = clienteCadastro.documento;
+      if (!String(inp.endereco || '').trim()) inp.endereco = clienteCadastro.endereco;
+      if (!String(inp.bairro || '').trim()) inp.bairro = clienteCadastro.bairro;
+      if (!String(inp.cidade || '').trim()) inp.cidade = clienteCadastro.cidade;
+      if (!onlyDigits(inp.cep)) inp.cep = clienteCadastro.cep;
+      if (!onlyDigits(inp.telefone) && clienteCadastro.telefone) inp.telefone = clienteCadastro.telefone;
+      inp.tipo_cliente = clienteCadastro.tipo;
+      if (clienteCadastro.tipo === 'revenda') inp.regiao = clienteCadastro.regiao;
+    }
     const tipo = String(inp.tipo_cliente || '').toLowerCase();
     const regiao = String(inp.regiao || '').toLowerCase();
     const itens: any[] = Array.isArray(inp.itens) ? inp.itens : [];
@@ -535,23 +585,28 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     const faltando: string[] = [];
     if (!itens.length) faltando.push('itens (produto + quantidade)');
     if (!String(inp.nome || '').trim()) faltando.push('nome');
-    if (!onlyDigits(inp.documento)) faltando.push('CPF/CNPJ');
-    if (!String(inp.endereco || '').trim()) faltando.push('endereço (rua e número)');
-    if (!String(inp.bairro || '').trim()) faltando.push('bairro');
-    if (!String(inp.cidade || '').trim()) faltando.push('cidade');
+    // Cliente cadastrado: o card vai para o id dele — documento/bairro/cidade vazios no
+    // cadastro nao travam o pedido (a equipe completa o cadastro no faturamento).
+    if (!clienteCadastro) {
+      if (!onlyDigits(inp.documento)) faltando.push('CPF/CNPJ');
+      if (!String(inp.endereco || '').trim()) faltando.push('endereço (rua e número)');
+      if (!String(inp.bairro || '').trim()) faltando.push('bairro');
+      if (!String(inp.cidade || '').trim()) faltando.push('cidade');
+    }
     if (!String(inp.forma_pagamento || '').trim()) faltando.push('forma de pagamento');
     if (!String(inp.dia_entrega || '').trim()) faltando.push('dia de entrega');
     if (tipo !== 'consumidor' && tipo !== 'revenda') faltando.push('tipo de cliente (consumidor ou revenda)');
     if (tipo === 'revenda' && !['goiania', 'interior', 'brasilia'].includes(regiao)) faltando.push('região da revenda (goiania, interior ou brasilia)');
     // Instagram: WhatsApp obrigatorio (out/2026). Usa o informado agora ou o ja salvo na conversa.
     const _ig = String(ctx?.channel || '') === 'instagram';
-    if (_ig) {
+    if (_ig && !(clienteCadastro && onlyDigits(inp.telefone).length >= 10)) {
       const { normalizarWhatsappBR, whatsappDaConversa } = await import('./ig-whatsapp');
       const _tel = normalizarWhatsappBR(inp.telefone) || normalizarWhatsappBR(ctx?.whatsapp) || (await whatsappDaConversa(ctx?.conversationId));
       if (_tel) inp.telefone = _tel;
       else faltando.push(inp.telefone ? 'WhatsApp com DDD valido (o informado nao e um numero valido)' : 'WhatsApp do cliente com DDD (obrigatorio no Instagram)');
     }
-    if (faltando.length) return 'Ainda faltam dados para registrar o pedido: ' + faltando.join('; ') + '. Pergunte ao cliente e só registre quando tiver tudo.';
+    if (faltando.length) return 'Ainda faltam dados para registrar o pedido: ' + faltando.join('; ') + '. Pergunte ao cliente e só registre quando tiver tudo.'
+      + (clienteCadastro ? '' : ' ANTES de pedir nome/documento/endereco: se o cliente disser que ja compra conosco, use buscar_cliente e vincular_cliente — cliente cadastrado nao preenche cadastro.');
 
     // Catálogo ativo + matcher por tokens (mesma lógica do consultar_produto).
     const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -673,7 +728,8 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     // dados corretos do cliente cadastrado, em vez de um id sintetico.
     let customer: any = null;
     const doc = onlyDigits(inp.documento);
-    if (doc) { try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
+    if (clienteCadastro) { try { customer = (await db.execute(sql`SELECT * FROM customers WHERE id = ${clienteCadastro.id} LIMIT 1`)).rows?.[0] || null; } catch {} }
+    if (!customer && doc) { try { customer = (await db.execute(sql`SELECT * FROM customers WHERE regexp_replace(COALESCE(cnpj,''),'[^0-9]','','g')=${doc} OR regexp_replace(COALESCE(cpf,''),'[^0-9]','','g')=${doc} LIMIT 1`)).rows?.[0] || null; } catch {} }
     if (!customer && inp.telefone) { try { customer = await storage.getCustomerByPhone(onlyDigits(inp.telefone)); } catch {} }
     // Carteira do cliente: se JÁ existe cadastro vinculado a um vendedor REAL (não IA/instagram),
     // a venda deve ir para a carteira desse vendedor. Se não, é lead a capturar.
@@ -1222,8 +1278,19 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
       _cal = blocoCalendario();
       if (ctx) {
         const _cid = await resolveCustomerId(ctx, undefined).catch(() => null);
-        if (_cid) _cli = await contextoDoCliente(_cid);
-        else if (ctx.phone) { try { const { contextoDoLead } = await import('./ia-sdr-mapa'); _cli = await contextoDoLead(String(ctx.phone)); } catch {} }
+        if (_cid) {
+          _cli = await contextoDoCliente(_cid);
+          try { const { blocoCadastroCliente } = await import('./ia-cliente-cadastro'); const _cad = await blocoCadastroCliente(_cid); if (_cad) _cli = (_cli ? _cli + '\n\n' : '') + _cad; } catch {}
+        } else {
+          if (ctx.phone) { try { const { contextoDoLead } = await import('./ia-sdr-mapa'); _cli = await contextoDoLead(String(ctx.phone)); } catch {} }
+          _cli = (_cli ? _cli + '\n\n' : '') + [
+            '# CLIENTE NAO IDENTIFICADO PELO NUMERO',
+            'O numero desta conversa nao bateu com nenhum cadastro. Isso NAO quer dizer que e cliente novo.',
+            '- Se ele disser que ja compra conosco, citar a loja/empresa ou pedir algo de pedido/boleto: use buscar_cliente (nome da loja, CNPJ ou outro telefone) ANTES de pedir qualquer dado.',
+            '- Achou: confirme qual e ("e a <nome> do <bairro>?") e chame vincular_cliente com UMA prova (CNPJ/CPF, CEP ou telefone do cadastro). Depois disso nao peca mais nada de cadastro.',
+            '- So peca nome, documento e endereco completos a quem for realmente cliente novo.',
+          ].join('\n');
+        }
       }
     } catch (e: any) { console.error('[CTX-CLIENTE]', e?.message || e); }
     let _igwa = '';
@@ -1271,7 +1338,9 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
     try {
       const permitidas: string[] = Array.isArray(agent.ferramentas) ? agent.ferramentas.map(String)
         : (typeof agent.ferramentas === 'string' ? JSON.parse(agent.ferramentas || '[]') : []);
-      if (tools && permitidas.length) tools = tools.filter((t: any) => t.name === 'transferir_humano' || permitidas.includes(t.name));
+      // buscar_cliente/vincular_cliente ficam sempre: sem elas o robo volta a pedir cadastro a cliente ativo.
+      const _sempre = ['transferir_humano', 'buscar_cliente', 'vincular_cliente'];
+      if (tools && permitidas.length) tools = tools.filter((t: any) => _sempre.includes(t.name) || permitidas.includes(t.name));
     } catch {}
     const usedTools: string[] = [];
     // Buraco 7: o custo de UMA resposta e a soma de TODAS as rodadas de tool-use.
