@@ -1,5 +1,5 @@
 // client/src/components/CampanhaInboxPanel.tsx
-// Painel da Campanha de Outubro dentro do Inbox (Solicitacoes de Alteracao):
+// Painel da campanha do mês dentro do Inbox (Solicitacoes de Alteracao):
 // lista os novos clientes do mes para o admin APROVAR (conta como cliente novo da
 // campanha) ou REJEITAR (com justificativa obrigatoria). Cliente e pedido valem na
 // carteira nos dois casos. A resposta aparece para o vendedor na rota do dia.
@@ -15,7 +15,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { CheckCircle2, XCircle, Loader2, Trophy } from "lucide-react";
 
 type Row = { id: string; cliente: string; vendedor: string; regiao: string; pedido: number; data: string; status: string; justificativa: string };
-type Resp = { ativo: boolean; rows: Row[] };
+type Resp = { ativo: boolean; ym?: string; rows: Row[] };
+
+// "Campanha de Novembro de 2026": o título era fixo em outubro e foi o motivo de
+// o painel ter sido tirado do Inbox quando outubro acabou.
+function nomeDoMes(ym?: string): string {
+  const [a, m] = String(ym || "").split("-").map(Number);
+  if (!a || !m) return "";
+  const n = new Date(Date.UTC(a, m - 1, 1)).toLocaleDateString("pt-BR", { month: "long", timeZone: "UTC" });
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
 
 const INBOX_URL = "/api/campanha/outubro/inbox";
 
@@ -111,7 +120,7 @@ export default function CampanhaInboxPanel() {
     <Card className="border-emerald-200 bg-emerald-50/40 p-3 space-y-2">
       <div className="flex items-center gap-2">
         <Trophy className="h-5 w-5 text-emerald-600" />
-        <div className="font-semibold text-sm">Campanha de Outubro — novos clientes</div>
+        <div className="font-semibold text-sm">Campanha de {nomeDoMes(data.ym) || "vendas"} — novos clientes</div>
         {pend.length > 0 && <Badge className="bg-emerald-600">{pend.length} pendente{pend.length > 1 ? "s" : ""}</Badge>}
       </div>
       <p className="text-xs text-muted-foreground">Cliente e pedido valem na carteira nos dois casos — aqui você define se ele <b>conta como cliente novo da campanha</b>. A resposta vai para a <b>rota do dia</b> do vendedor.</p>
