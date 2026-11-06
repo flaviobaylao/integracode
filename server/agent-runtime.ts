@@ -8,6 +8,7 @@ import { textoLogistica } from './ficha-logistica';
 import { sql } from 'drizzle-orm';
 import { whereDebitoVivoSql } from './divida-viva';
 import { TOOL_BUSCAR_CLIENTE, TOOL_VINCULAR_CLIENTE } from './ia-cliente-cadastro';
+import { resolverProduto } from './produto-matcher';
 
 const APP_URL = process.env.APP_URL || 'https://integracode-production.up.railway.app';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -625,6 +626,15 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       const termo = String(it?.produto || '').trim();
       const qtd = Math.max(1, parseInt(String(it?.quantidade || '1'), 10) || 1);
       if (!termo) continue;
+      // nov/2026: casamento por SABOR + TAMANHO (server/produto-matcher.ts). O antigo, por
+      // substring, achava "Maracuja" dentro de "MORANGO COM MARACUJA" e mandava "Limao" para
+      // "MORANGO COM LIMAO". O antigo so fica de reserva quando o novo nao acha nada.
+      const rp = resolverProduto(termo, catalog);
+      if (rp.tipo === 'ok') { resolved.push({ p: rp.produto, qtd }); continue; }
+      if (rp.tipo === 'ambiguo') {
+        ambig.push(`"${termo}" pode ser: ${rp.opcoes.slice(0, 5).map((p: any) => p.name).join(' / ')}`);
+        continue;
+      }
       const m = matchP(termo);
       if (!m.length) { naoEnc.push(termo); continue; }
       if (m.length > 1) {
