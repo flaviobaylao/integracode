@@ -42,6 +42,7 @@ const fmtTamanho = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} M
 const ehImagem = (m: string) => /^image\//.test(m || "");
 
 const COR_PADRAO = "#2a78d6";
+const COR_HORA_MARCADA = "#db2777"; // evento com hora marcada fica rosa; ao desmarcar volta ao azul padrão
 // Cores por vendedor no modo Clientes (fixas por posicao na lista).
 const CORES_VEND = ["#2a78d6", "#16a34a", "#d03b3b", "#7c3aed", "#eda100", "#0891b2", "#db2777", "#475569", "#65a30d", "#c2410c"];
 type CliRota = { dia: string; id: string; nome: string; cidade: string; bairro: string; periodicidade: string; semana: string | null; virtual: boolean; sellerId: string; sellerNome: string };
@@ -510,7 +511,7 @@ export default function MinhaAgenda() {
         const paraTxt = `${fmtDia(c.novoInicio)}${c.allDay ? " (dia inteiro)" : ` às ${hm(c.novoInicio)}${c.novoFim ? "–" + hm(c.novoFim) : ""}`}`;
         const aplicar = (manter: boolean) => {
           alterar.mutate(
-            { id: c.ev.id, start: c.novoInicio, end: c.novoFim, allDay: c.allDay, fixedTime: manter && !c.allDay },
+            { id: c.ev.id, start: c.novoInicio, end: c.novoFim, allDay: c.allDay, fixedTime: manter && !c.allDay, color: manter && !c.allDay ? COR_HORA_MARCADA : COR_PADRAO },
             { onError: () => c.revert() },
           );
           setConfirmaMover(null);
@@ -677,9 +678,9 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
           <label className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Título
             <Input id="agenda-f-titulo" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Adicionar título" autoFocus /></label>
           <div className="sm:col-span-2 flex items-center gap-5 flex-wrap text-sm">
-            <label className="flex items-center gap-2"><Checkbox checked={allDay} onCheckedChange={(v) => { toggleAllDay(!!v); if (v) setHoraMarcada(false); }} /> Dia inteiro</label>
+            <label className="flex items-center gap-2"><Checkbox checked={allDay} onCheckedChange={(v) => { toggleAllDay(!!v); if (v && horaMarcada) { setHoraMarcada(false); setCor(COR_PADRAO); } }} /> Dia inteiro</label>
             <label className={`flex items-center gap-2 ${allDay ? "opacity-50" : ""}`} title="Data e hora combinadas com o cliente/pessoa: ao arrastar o evento, o sistema pede confirmação">
-              <Checkbox id="agenda-f-hora-marcada" checked={horaMarcada && !allDay} disabled={allDay} onCheckedChange={(v) => setHoraMarcada(!!v)} data-testid="agenda-f-hora-marcada" />
+              <Checkbox id="agenda-f-hora-marcada" checked={horaMarcada && !allDay} disabled={allDay} onCheckedChange={(v) => { setHoraMarcada(!!v); setCor(v ? COR_HORA_MARCADA : COR_PADRAO); }} data-testid="agenda-f-hora-marcada" />
               <Lock className="h-3.5 w-3.5 text-amber-600" /> Hora marcada
             </label>
           </div>
