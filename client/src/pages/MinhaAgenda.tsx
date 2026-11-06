@@ -490,8 +490,8 @@ export default function MinhaAgenda() {
           <p className="text-sm text-muted-foreground mt-1">
             {fmtDia(new Date(sel.ev.start))}{sel.ev.allDay ? " · dia inteiro" : ` · ${hm(new Date(sel.ev.start))}${sel.ev.end ? " – " + hm(new Date(sel.ev.end)) : ""}`}
           </p>
-          {sel.ev.location && <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{sel.ev.location}</p>}
-          {sel.ev.description && <p className="text-sm mt-2 whitespace-pre-wrap">{sel.ev.description}</p>}
+          {sel.ev.location && <p className="text-sm text-muted-foreground mt-1 flex items-start gap-1 break-all"><MapPin className="h-3.5 w-3.5 mt-0.5 flex-none" /><span><ComLinks texto={sel.ev.location} /></span></p>}
+          {sel.ev.description && <p className="text-sm mt-2 whitespace-pre-wrap break-words"><ComLinks texto={sel.ev.description} /></p>}
           {sel.ev.fixedTime && <p className="text-xs mt-2 flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400"><Lock className="h-3.5 w-3.5" />Hora marcada</p>}
           <p className="text-xs text-muted-foreground mt-2">{sel.ev.status === "done" ? "✓ Concluído" : "Pendente"}</p>
           <AnexosResumo itemId={sel.ev.id} />
@@ -780,5 +780,27 @@ function AnexosResumo({ itemId }: { itemId: string }) {
         </a>
       ))}
     </div>
+  );
+}
+
+// Transforma endereços web (https://..., http://..., www....) em links que abrem em aba nova.
+const RE_URL = /((?:https?:\/\/|www\.)[^\s<>"']+)/gi;
+function ComLinks({ texto }: { texto: string }) {
+  const partes = texto.split(RE_URL);
+  return (
+    <>
+      {partes.map((p, i) => {
+        if (i % 2 === 0) return <span key={i}>{p}</span>;
+        // pontuação final (.,;:!?)) não faz parte do link
+        const m = p.match(/^(.*?)([.,;:!?)\]]*)$/);
+        const url = m ? m[1] : p, resto = m ? m[2] : "";
+        const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+        return (
+          <span key={i}>
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline underline-offset-2 hover:text-blue-700 break-all" onClick={(e) => e.stopPropagation()}>{url}</a>{resto}
+          </span>
+        );
+      })}
+    </>
   );
 }
