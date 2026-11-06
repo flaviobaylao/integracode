@@ -807,7 +807,9 @@ export function registerCampanhaRoutes(app: Express): void {
       const ym = mesDaQuery(req);
       if (ym <= mesAtual()) { try { await detectNovos(ym); } catch (e) {} }
       const rows = await inboxPendentes(ym);
-      res.json({ ativo: campaignActive(ym), ym, meses: mesesDaCampanha(), rows });
+      // Sem premissa de novo cliente no mês não há o que aprovar: o painel some.
+      const pNovos = achaPremissa(await premissasDoMes(ym), "novos");
+      res.json({ ativo: campaignActive(ym) && pNovos?.ativa !== false, ym, meses: mesesDaCampanha(), rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 
