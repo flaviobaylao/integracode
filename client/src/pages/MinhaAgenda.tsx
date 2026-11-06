@@ -214,6 +214,19 @@ export default function MinhaAgenda() {
     return { left: px, top: py, maxHeight: "calc(100vh - 24px)", overflowY: "auto" };
   };
 
+  // Depois de renderizar, mede a altura real do popup e sobe se estiver passando do rodapé da tela
+  const encaixar = useCallback((el: HTMLDivElement | null) => {
+    if (!el || window.innerWidth < 640) return;
+    const fit = () => {
+      const r = el.getBoundingClientRect();
+      const max = window.innerHeight - 12;
+      if (r.bottom > max) el.style.top = `${Math.max(12, max - r.height)}px`;
+    };
+    fit();
+    (el as any)._ro?.disconnect();
+    const ro = new ResizeObserver(fit); ro.observe(el); (el as any)._ro = ro;
+  }, []);
+
   const abrirNovo = () => {
     const s = new Date(); s.setMinutes(0, 0, 0); s.setHours(s.getHours() + 1);
     const e = new Date(s); e.setHours(e.getHours() + 1);
@@ -485,7 +498,7 @@ export default function MinhaAgenda() {
 
       {/* popup rápido de criação */}
       {quick && (
-        <div className="fixed z-50 w-[340px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(quick.x, quick.y)} data-testid="agenda-quick">
+        <div className="fixed z-50 w-[340px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(quick.x, quick.y)} key={`${quick.x},${quick.y}`} ref={encaixar} data-testid="agenda-quick">
           <button className="absolute right-2 top-2 h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center" onClick={fechar} aria-label="Fechar"><X className="h-4 w-4" /></button>
           <input id="agenda-quick-titulo" autoFocus value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") salvarQuick(); }} placeholder="Adicionar título"
@@ -501,7 +514,7 @@ export default function MinhaAgenda() {
 
       {/* resumo do cliente da rota */}
       {cliSel && (
-        <div className="fixed z-50 w-[320px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(cliSel.x, cliSel.y, 320, 200)} data-testid="agenda-cliente">
+        <div className="fixed z-50 w-[320px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(cliSel.x, cliSel.y, 320, 200)} key={`${cliSel.x},${cliSel.y}`} ref={encaixar} data-testid="agenda-cliente">
           <button className="absolute right-2 top-2 h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center" onClick={() => setCliSel(null)} aria-label="Fechar"><X className="h-4 w-4" /></button>
           <h3 className="text-base font-semibold pr-7 mt-1">{cliSel.c.nome}</h3>
           <p className="text-sm text-muted-foreground mt-1">{fmtDia(new Date(cliSel.c.dia + "T12:00:00"))}</p>
@@ -515,7 +528,7 @@ export default function MinhaAgenda() {
 
       {/* resumo do evento */}
       {sel && (
-        <div className="fixed z-50 w-[340px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(sel.x, sel.y)} data-testid="agenda-resumo">
+        <div className="fixed z-50 w-[340px] max-w-[calc(100vw-32px)] rounded-xl border bg-background shadow-xl p-4" style={posicionar(sel.x, sel.y)} key={`${sel.x},${sel.y}`} ref={encaixar} data-testid="agenda-resumo">
           <button className="absolute right-2 top-2 h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center" onClick={fechar} aria-label="Fechar"><X className="h-4 w-4" /></button>
           <h3 className="text-base font-semibold flex items-center gap-2 pr-7 mt-1">
             <span className="h-3.5 w-3.5 rounded flex-none" style={{ background: sel.ev.color }} />{sel.ev.title}
@@ -528,7 +541,7 @@ export default function MinhaAgenda() {
           {sel.ev.fixedTime && <p className="text-xs mt-2 flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400"><Lock className="h-3.5 w-3.5" />Hora marcada</p>}
           <p className="text-xs text-muted-foreground mt-2">{sel.ev.status === "done" ? "✓ Concluído" : "Pendente"}</p>
           <AnexosResumo itemId={sel.ev.id} />
-          <div className="flex gap-1.5 mt-3 flex-wrap">
+          <div className="flex gap-1.5 mt-3 flex-wrap sticky -bottom-4 -mx-4 -mb-4 px-4 pt-2 pb-4 bg-background border-t">
             <Button variant="outline" size="sm" onClick={() => { const ev = sel.ev; setSel(null); setModal({ draft: { ...ev, start: new Date(ev.start), end: ev.end ? new Date(ev.end) : null }, mode: "edit" }); }}><Pencil className="h-3.5 w-3.5 mr-1" />Editar</Button>
             <Button variant="outline" size="sm" onClick={() => duplicar(sel.ev)} data-testid="agenda-duplicar"><Copy className="h-3.5 w-3.5 mr-1" />Duplicar</Button>
             <Button variant="outline" size="sm" onClick={() => { alterar.mutate({ id: sel.ev.id, status: sel.ev.status === "done" ? "pending" : "done" }); setSel(null); }}><Check className="h-3.5 w-3.5 mr-1" />{sel.ev.status === "done" ? "Reabrir" : "Concluir"}</Button>
