@@ -26,6 +26,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MessageThread } from "@/components/change-request/ChangeRequestControl";
 import { VoiceDictateButton } from "@/components/VoiceDictateButton";
 import { AnexosPicker, prepararAnexos, arquivosDoColar, type AnexoNovo } from "@/components/change-request/Anexos";
+// Volta em 06/nov/2026: tinha saído em 03/11 com a campanha de outubro encerrada,
+// e a de novembro ficou sem lugar para aprovar cliente novo. O painel some sozinho
+// quando o mês não tem a premissa de novo cliente ligada.
+import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus, ChevronDown, Undo2 } from "lucide-react";
 
@@ -1287,6 +1291,7 @@ export default function SolicitacoesAlteracao() {
       </div>
 
         <TabsContent value="pendentes" className="space-y-3 mt-3">
+          <CampanhaInboxPanel />
           {sugestoesF.length > 0 && (
             <div className="space-y-2">
               <div className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Migração de carteira (repescagem)</div>
