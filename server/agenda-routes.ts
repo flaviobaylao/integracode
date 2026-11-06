@@ -147,6 +147,10 @@ function parseBody(b: any, partial: boolean) {
   if (!partial || has("priority")) out.priority = PRIORIDADE.has(b?.priority) ? b.priority : "medium";
   if (!partial || has("kind")) out.kind = String(b?.kind || "event").slice(0, 40);
   // fim antes do inicio num evento com hora: forca 1h (como faz o Google)
+  // evento com hora sem fim informado: padrao 1h
+  if (out.start_at && (!partial || has("end")) && !out.end_at && out.all_day === false) {
+    out.end_at = new Date(out.start_at.getTime() + 3600_000);
+  }
   if (out.start_at && out.end_at && !out.all_day && out.end_at <= out.start_at) {
     out.end_at = new Date(out.start_at.getTime() + 3600_000);
   }

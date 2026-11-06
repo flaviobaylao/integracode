@@ -53,6 +53,7 @@ const VIEWS: Array<[string, string]> = [["timeGridDay", "Dia"], ["timeGridWeek",
 const pad = (n: number) => String(n).padStart(2, "0");
 const isoDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const UMA_HORA = 60 * 60 * 1000;
 const toLocalInput = (d: Date | null | undefined, allDay: boolean) =>
   !d ? "" : allDay ? isoDate(d) : `${isoDate(d)}T${hm(d)}`;
 const fmtDia = (d: Date) => d.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
@@ -414,6 +415,8 @@ export default function MinhaAgenda() {
             moreLinkText={(n) => `+${n} mais`}
             slotLabelFormat={{ hour: "numeric", minute: "2-digit", hour12: false }}
             eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+            defaultTimedEventDuration="01:00"
+            forceEventDuration
             eventContent={(arg) => {
               const corNome: string = arg.event.extendedProps?.corNome || "";
               if (!corNome) return true;
@@ -449,7 +452,9 @@ export default function MinhaAgenda() {
             select={(info) => {
               setSel(null); setQuickTitle("");
               const pt = info.jsEvent ? { x: info.jsEvent.clientX, y: info.jsEvent.clientY } : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-              setQuick({ start: info.start, end: info.end, allDay: info.allDay, ...pt });
+              // padrão: 1h entre início e fim (clique simples numa faixa de 30 min)
+              const fimPadrao = !info.allDay && info.end.getTime() - info.start.getTime() < UMA_HORA ? new Date(info.start.getTime() + UMA_HORA) : info.end;
+              setQuick({ start: info.start, end: fimPadrao, allDay: info.allDay, ...pt });
             }}
             eventClick={(info) => {
               info.jsEvent.preventDefault();
@@ -604,7 +609,19 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
   const [titulo, setTitulo] = useState(draft.title || "");
   const [allDay, setAllDay] = useState(!!draft.allDay);
   const [inicio, setInicio] = useState(toLocalInput(draft.start, !!draft.allDay));
-  const [fim, setFim] = useState(toLocalInput(draft.end || draft.start, !!draft.allDay));
+  const [fim, setFim] = useState(toLocalInput(draft.allDay ? (draft.end || draft.start) : (draft.end && draft.end > draft.start ? draft.end : new Date(draft.start.getTime() + UMA_HORA)), !!draft.allDay));
+  // ao mudar o início, o fim acompanha mantendo a duração (padrão 1h)
+  const mudarInicio = (v: string) => {
+    if (!allDay) {
+      const ns = new Date(v); const os = new Date(inicio); const of = new Date(fim);
+      if (!isNaN(ns.getTime())) {
+        let dur = of.getTime() - os.getTime();
+        if (isNaN(dur) || dur <= 0) dur = UMA_HORA;
+        setFim(toLocalInput(new Date(ns.getTime() + dur), false));
+      }
+    }
+    setInicio(v);
+  };
   const [local, setLocal] = useState(draft.location || "");
   const [desc, setDesc] = useState(draft.description || "");
   const [cor, setCor] = useState(draft.color || COR_PADRAO);
@@ -696,7 +713,8 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
 
   const toggleAllDay = (v: boolean) => {
     setAllDay(v);
-    const s = inicio ? new Date(inicio) : draft.start; const e = fim ? new Date(fim) : draft.end || draft.start;
+    const s = inicio ? new Date(inicio) : draft.start; let e = fim ? new Date(fim) : draft.end || draft.start;
+    if (!v && (isNaN(e.getTime()) || e <= s)) e = new Date(s.getTime() + UMA_HORA);
     setInicio(toLocalInput(s, v)); setFim(toLocalInput(e, v));
   };
   const salvar = () => {
@@ -721,7 +739,7 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
             </label>
           </div>
           <label className="text-xs text-muted-foreground flex flex-col gap-1">Início
-            <Input id="agenda-f-inicio" type={allDay ? "date" : "datetime-local"} value={inicio} onChange={(e) => setInicio(e.target.value)} /></label>
+            <Input id="agenda-f-inicio" type={allDay ? "date" : "datetime-local"} value={inicio} onChange={(e) => mudarInicio(e.target.value)} /></label>
           <label className="text-xs text-muted-foreground flex flex-col gap-1">Fim
             <Input id="agenda-f-fim" type={allDay ? "date" : "datetime-local"} value={fim} onChange={(e) => setFim(e.target.value)} disabled={allDay} /></label>
           <label className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Local
