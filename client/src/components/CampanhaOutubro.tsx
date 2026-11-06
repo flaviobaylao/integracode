@@ -45,7 +45,13 @@ function regraMinimos(pj: number, pf: number): string {
     : `cliente ${tipo} positiva com qualquer valor`;
   if (pj <= 0 && pf <= 0) return "Sem mínimo: qualquer compra positiva o cliente.";
   const t = `${parte("PJ", pj)}; ${parte("PF", pf)}.`;
-  return t.charAt(0).toUpperCase() + t.slice(1);
+  // PF é pessoa física DE VERDADE (06/nov/2026). Empresa que fatura no CPF do
+  // dono é empresa, e o piso dela é o de PJ — sem isto o mínimo menor do PF
+  // vira atalho para positivar padaria e mercadinho com pedido pequeno.
+  const aviso = pf > 0 && pf < pj
+    ? ` PF é só pessoa física real: empresa que fatura no CPF do dono conta como PJ (mínimo de ${brl(pj)}).`
+    : "";
+  return t.charAt(0).toUpperCase() + t.slice(1) + aviso;
 }
 
 // O pedido mínimo saiu daqui: virou o gatilho editável da premissa e já entra
