@@ -40,6 +40,8 @@ function ensureTable(): Promise<void> {
         updated_at timestamp DEFAULT now()
       )`);
       await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS color varchar`);
+      // "Hora marcada": compromisso com data e hora combinadas (ao arrastar, a tela pede confirmação)
+      await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS fixed_time boolean DEFAULT false`);
       await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS location varchar`);
       await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS all_day boolean DEFAULT false`);
       await db.execute(sql`ALTER TABLE personal_agenda_items ADD COLUMN IF NOT EXISTS end_at timestamp`);
@@ -109,6 +111,7 @@ function rowOut(r: any) {
     start: r.start_at,
     end: r.end_at,
     allDay: !!r.all_day,
+    fixedTime: !!r.fixed_time,
     location: r.location || "",
     color: r.color || COR_PADRAO,
     status: r.status || "pending",
@@ -135,6 +138,8 @@ function parseBody(b: any, partial: boolean) {
   }
   if (!partial || has("end")) out.end_at = parseDate(b?.end);
   if (!partial || has("allDay")) out.all_day = !!b?.allDay;
+  if (!partial || has("fixedTime")) out.fixed_time = !!b?.fixedTime;
+  if (out.all_day === true) out.fixed_time = false; // dia inteiro nao tem hora marcada
   if (!partial || has("description")) out.description = String(b?.description ?? "").slice(0, 4000);
   if (!partial || has("location")) out.location = String(b?.location ?? "").slice(0, 300);
   if (!partial || has("color")) out.color = corValida(b?.color);
@@ -292,10 +297,10 @@ export function registerAgenda(app: Express) {
       const d = parseBody(req.body, false);
       const r: any = await db.execute(sql`
         INSERT INTO personal_agenda_items
-          (id, user_id, kind, title, description, start_at, end_at, all_day, location, priority, status, color, created_at, updated_at)
+          (id, user_id, kind, title, description, start_at, end_at, all_day, location, priority, status, color, fixed_time, created_at, updated_at)
         VALUES
           (gen_random_uuid()::text, ${uid}, ${d.kind}, ${d.title}, ${d.description}, ${d.start_at}, ${d.end_at}, ${d.all_day},
-           ${d.location}, ${d.priority}, ${d.status}, ${d.color}, now(), now())
+           ${d.location}, ${d.priority}, ${d.status}, ${d.color}, ${d.fixed_time}, now(), now())
         RETURNING *`);
       res.status(201).json(rowOut(r.rows[0]));
     } catch (e: any) {

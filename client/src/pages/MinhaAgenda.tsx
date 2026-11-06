@@ -20,13 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ChevronLeft, ChevronRight, Plus, Search, MapPin, Check, Copy, Pencil, Trash2, X, Mic, Square, Loader2, Paperclip, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search, MapPin, Check, Copy, Pencil, Trash2, X, Mic, Square, Loader2, Paperclip, Download, Lock } from "lucide-react";
 
 type Ev = {
   id: string; title: string; description: string; start: string; end: string | null;
   allDay: boolean; location: string; color: string; status: "pending" | "done"; priority: string;
+  fixedTime?: boolean;
 };
 type Draft = Partial<Omit<Ev, "start" | "end">> & { start: Date; end?: Date | null };
 type Anexo = { id: string; filename: string; mimetype: string; size: number; url: string };
@@ -69,6 +70,10 @@ export default function MinhaAgenda() {
   const [quickTitle, setQuickTitle] = useState("");
   const [sel, setSel] = useState<{ ev: Ev; x: number; y: number } | null>(null);
   const [modal, setModal] = useState<{ draft: Draft; mode: "new" | "edit" | "dup" } | null>(null);
+  // Arrastar/esticar evento com "hora marcada": segura a mudança e pergunta antes
+  const [confirmaMover, setConfirmaMover] = useState<{
+    ev: Ev; novoInicio: Date; novoFim: Date | null; allDay: boolean; revert: () => void;
+  } | null>(null);
   // Modo do calendario: "agenda" (eventos pessoais) ou "clientes" (clientes da Rota do Dia).
   // Um esconde o outro.
   const [modo, setModo] = useState<"agenda" | "clientes">(() => { try { return localStorage.getItem("agenda-modo") === "clientes" ? "clientes" : "agenda"; } catch { return "agenda"; } });
@@ -178,8 +183,9 @@ export default function MinhaAgenda() {
     return eventos
       .filter((e) => !ocultas.has(e.color) && (!q || `${e.title} ${e.location} ${e.description}`.toLowerCase().includes(q)))
       .map((e) => ({
-        id: e.id, title: e.title, start: e.start, end: e.end || undefined, allDay: e.allDay,
-        backgroundColor: e.color, borderColor: e.color, classNames: e.status === "done" ? ["agenda-done"] : [],
+        id: e.id, title: `${e.fixedTime ? "🔒 " : ""}${e.title}`, start: e.start, end: e.end || undefined, allDay: e.allDay,
+        backgroundColor: e.color, borderColor: e.color,
+        classNames: [e.status === "done" ? "agenda-done" : "", e.fixedTime ? "agenda-fixa" : ""].filter(Boolean),
       }));
   }, [eventos, busca, ocultas]);
 
@@ -242,6 +248,7 @@ export default function MinhaAgenda() {
         .agenda .fc .fc-day-today .fc-daygrid-day-number{background:#2a78d6;color:#fff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;margin:3px}
         .agenda .fc-event{border:0;border-radius:4px;padding:1px 4px;font-size:12px;cursor:pointer;color:#fff}
         .agenda .fc-event.agenda-done{opacity:.55;text-decoration:line-through}
+        .agenda .fc-event.agenda-fixa{box-shadow:inset 3px 0 0 rgba(0,0,0,.45)}
         .agenda .fc .fc-timegrid-slot{height:2.6em}
         .agenda .fc .fc-list-event-title a{color:inherit}
         /* Lista: fc-list-event tambem tem a classe fc-event (texto branco) e sumia no fundo claro */
@@ -422,8 +429,22 @@ export default function MinhaAgenda() {
               const ev = eventos.find((e) => e.id === info.event.id);
               if (ev) { setQuick(null); setSel({ ev, x: info.jsEvent.clientX, y: info.jsEvent.clientY }); }
             }}
-            eventDrop={(info) => alterar.mutate({ id: info.event.id, start: info.event.start, end: info.event.end, allDay: info.event.allDay }, { onError: () => info.revert() })}
-            eventResize={(info) => alterar.mutate({ id: info.event.id, start: info.event.start, end: info.event.end }, { onError: () => info.revert() })}
+            eventDrop={(info) => {
+              const ev = eventos.find((e) => e.id === info.event.id);
+              if (ev?.fixedTime) {
+                setConfirmaMover({ ev, novoInicio: info.event.start!, novoFim: info.event.end, allDay: info.event.allDay, revert: info.revert });
+                return;
+              }
+              alterar.mutate({ id: info.event.id, start: info.event.start, end: info.event.end, allDay: info.event.allDay }, { onError: () => info.revert() });
+            }}
+            eventResize={(info) => {
+              const ev = eventos.find((e) => e.id === info.event.id);
+              if (ev?.fixedTime) {
+                setConfirmaMover({ ev, novoInicio: info.event.start!, novoFim: info.event.end, allDay: info.event.allDay, revert: info.revert });
+                return;
+              }
+              alterar.mutate({ id: info.event.id, start: info.event.start, end: info.event.end }, { onError: () => info.revert() });
+            }}
           />
         </section>
       </div>
@@ -470,6 +491,7 @@ export default function MinhaAgenda() {
           </p>
           {sel.ev.location && <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{sel.ev.location}</p>}
           {sel.ev.description && <p className="text-sm mt-2 whitespace-pre-wrap">{sel.ev.description}</p>}
+          {sel.ev.fixedTime && <p className="text-xs mt-2 flex items-center gap-1 font-medium text-amber-700 dark:text-amber-400"><Lock className="h-3.5 w-3.5" />Hora marcada</p>}
           <p className="text-xs text-muted-foreground mt-2">{sel.ev.status === "done" ? "✓ Concluído" : "Pendente"}</p>
           <AnexosResumo itemId={sel.ev.id} />
           <div className="flex gap-1.5 mt-3 flex-wrap">
@@ -480,6 +502,39 @@ export default function MinhaAgenda() {
           </div>
         </div>
       )}
+
+      {confirmaMover && (() => {
+        const c = confirmaMover;
+        const de = new Date(c.ev.start);
+        const deTxt = `${fmtDia(de)}${c.ev.allDay ? "" : ` às ${hm(de)}`}`;
+        const paraTxt = `${fmtDia(c.novoInicio)}${c.allDay ? " (dia inteiro)" : ` às ${hm(c.novoInicio)}${c.novoFim ? "–" + hm(c.novoFim) : ""}`}`;
+        const aplicar = (manter: boolean) => {
+          alterar.mutate(
+            { id: c.ev.id, start: c.novoInicio, end: c.novoFim, allDay: c.allDay, fixedTime: manter && !c.allDay },
+            { onError: () => c.revert() },
+          );
+          setConfirmaMover(null);
+        };
+        return (
+          <Dialog open onOpenChange={(o) => { if (!o) { c.revert(); setConfirmaMover(null); } }}>
+            <DialogContent className="max-w-md" data-testid="agenda-confirma-hora-marcada">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2"><Lock className="h-4 w-4 text-amber-600" />Evento com hora marcada</DialogTitle>
+                <DialogDescription>
+                  <b>{c.ev.title}</b> está agendado para <b>{cap(deTxt)}</b>, com data e hora combinadas.
+                  Você está movendo para <b>{cap(paraTxt)}</b>.
+                </DialogDescription>
+              </DialogHeader>
+              <p className="text-sm">Deseja manter a marcação de <b>hora marcada</b> no novo horário ou desmarcar?</p>
+              <div className="flex flex-col sm:flex-row gap-2 sm:justify-end mt-2">
+                <Button variant="outline" onClick={() => { c.revert(); setConfirmaMover(null); }} data-testid="agenda-hm-cancelar">Cancelar (não mover)</Button>
+                <Button variant="outline" onClick={() => aplicar(false)} data-testid="agenda-hm-desmarcar">Mover e desmarcar</Button>
+                {!c.allDay && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => aplicar(true)} data-testid="agenda-hm-manter">Mover e manter</Button>}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {modal && (
         <EventoModal
@@ -517,6 +572,7 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
   const [desc, setDesc] = useState(draft.description || "");
   const [cor, setCor] = useState(draft.color || COR_PADRAO);
   const [status, setStatus] = useState<"pending" | "done">(draft.status || "pending");
+  const [horaMarcada, setHoraMarcada] = useState(!!draft.fixedTime);
   const [erro, setErro] = useState("");
 
   // Anexos: evento existente -> sobe na hora; evento novo -> fica pendente e sobe apos criar
@@ -610,7 +666,7 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
     const t = titulo.trim(); if (!t) return setErro("Informe o título");
     const s = new Date(inicio); if (isNaN(s.getTime())) return setErro("Informe o início");
     let e: Date | null = fim ? new Date(fim) : null; if (e && isNaN(e.getTime())) e = null;
-    onSave({ title: t, allDay, start: s, end: allDay ? null : e, location: local.trim(), description: desc.trim(), color: cor, status }, pendentes);
+    onSave({ title: t, allDay, start: s, end: allDay ? null : e, location: local.trim(), description: desc.trim(), color: cor, status, fixedTime: !allDay && horaMarcada }, pendentes);
   };
 
   return (
@@ -620,7 +676,13 @@ function EventoModal({ draft, mode, cores, nomeCor, onClose, onSave, onDelete }:
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="sm:col-span-2 text-xs text-muted-foreground flex flex-col gap-1">Título
             <Input id="agenda-f-titulo" value={titulo} onChange={(e) => setTitulo(e.target.value)} placeholder="Adicionar título" autoFocus /></label>
-          <label className="sm:col-span-2 flex items-center gap-2 text-sm"><Checkbox checked={allDay} onCheckedChange={(v) => toggleAllDay(!!v)} /> Dia inteiro</label>
+          <div className="sm:col-span-2 flex items-center gap-5 flex-wrap text-sm">
+            <label className="flex items-center gap-2"><Checkbox checked={allDay} onCheckedChange={(v) => { toggleAllDay(!!v); if (v) setHoraMarcada(false); }} /> Dia inteiro</label>
+            <label className={`flex items-center gap-2 ${allDay ? "opacity-50" : ""}`} title="Data e hora combinadas com o cliente/pessoa: ao arrastar o evento, o sistema pede confirmação">
+              <Checkbox id="agenda-f-hora-marcada" checked={horaMarcada && !allDay} disabled={allDay} onCheckedChange={(v) => setHoraMarcada(!!v)} data-testid="agenda-f-hora-marcada" />
+              <Lock className="h-3.5 w-3.5 text-amber-600" /> Hora marcada
+            </label>
+          </div>
           <label className="text-xs text-muted-foreground flex flex-col gap-1">Início
             <Input id="agenda-f-inicio" type={allDay ? "date" : "datetime-local"} value={inicio} onChange={(e) => setInicio(e.target.value)} /></label>
           <label className="text-xs text-muted-foreground flex flex-col gap-1">Fim
