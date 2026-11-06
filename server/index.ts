@@ -5182,6 +5182,28 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
         const __er = await q2(`SELECT COALESCE(SUM(fi.total_invoice),0) v FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date = '${__eiso}'`);
         efetivoMesAnterior = { iso: __eiso, value: Number(__er[0]?.v) || 0 };
       } catch (e) { efetivoMesAnterior = null; }
+      // Comparativo "Faturamento Efetivo (<dia> do mês)": 3 colunas, mesma fonte (NF-e de venda, mesmo escopo):
+      //  [0] o mesmo dia da semana na MESMA SEMANA do mês passado (ex.: 1a sexta de nov -> 1a sexta de out;
+      //      se o mês passado não tem essa ocorrência, usa a última dele), [1] o mesmo dia da semana passada, [2] hoje.
+      let efetivoComparativo: any[] = [];
+      try {
+        const __ct = new Date(todayStr + 'T12:00:00Z');
+        const __cwd = __ct.getUTCDay();
+        const __cIso = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        const __cOcc = Math.ceil(__ct.getUTCDate() / 7);
+        const __cPm = new Date(Date.UTC(__ct.getUTCFullYear(), __ct.getUTCMonth() - 1, 1, 12, 0, 0));
+        const __cPmMes = __cPm.getUTCMonth();
+        while (__cPm.getUTCDay() !== __cwd) __cPm.setUTCDate(__cPm.getUTCDate() + 1);
+        __cPm.setUTCDate(__cPm.getUTCDate() + 7 * (__cOcc - 1));
+        if (__cPm.getUTCMonth() !== __cPmMes) __cPm.setUTCDate(__cPm.getUTCDate() - 7);
+        const __cSp = new Date(__ct); __cSp.setUTCDate(__cSp.getUTCDate() - 7);
+        const __cDatas = [__cIso(__cPm), __cIso(__cSp), todayStr];
+        const __cr = await q2(`SELECT ${VDATA}::date::text AS d, COALESCE(SUM(fi.total_invoice),0) v FROM ${VFROM} WHERE ${VF} AND ${VDATA}::date IN ('${__cDatas.join("','")}') GROUP BY 1`);
+        const __cMap: Record<string, number> = {};
+        for (const r of __cr as any[]) __cMap[String(r.d).slice(0, 10)] = Number(r.v) || 0;
+        const __cTipos = ['mes_passado', 'semana_passada', 'hoje'];
+        efetivoComparativo = __cDatas.map((iso, i) => ({ tipo: __cTipos[i], iso, ocorrencia: __cOcc, value: __cMap[iso] || 0 }));
+      } catch (e) { efetivoComparativo = []; }
       try { if ((((req as any).query)||{}).diag2 === 'vday-6931') return res.json({ VF, SCOPE, SCOPE_BLK, SCOPE_ORD, __SID, __RESTRICT }); } catch(e){}
       try { if ((((req as any).query)||{}).diag3 === 'vday-6931') { const __mp = `${VDATA}::date >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date`; const __base = nfVendaWhere('fi'); const rTot = await q2(`SELECT COUNT(*)::int n, COALESCE(SUM(fi.total_invoice),0) v FROM ${VFROM} WHERE ${__base} AND ${__mp}`); const rSco = await q2(`SELECT COUNT(*)::int n, COALESCE(SUM(fi.total_invoice),0) v FROM ${VFROM} WHERE ${__base}${SCOPE} AND ${__mp}`); const rKs = await q2(`SELECT array_to_string(ARRAY(SELECT unnest(ARRAY[su.id, su.omie_vendor_code, 'omie-vendor-'||su.omie_vendor_code]) FROM users su WHERE su.id='${__SID}'),'|') ks`); const rImp = await q2(`SELECT (${__impl}) impl, COUNT(*)::int n FROM ${VFROM} WHERE ${__base} AND ${__mp} GROUP BY 1 ORDER BY 2 DESC LIMIT 12`); return res.json({ total: rTot[0], scoped: rSco[0], keyset: rKs[0], byImpl: rImp }); } } catch(e){ return res.json({ diag3err: String((e as any) && (e as any).message || e) }); }
       const statsRows = await q2(`SELECT COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0) AS today_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1), 0) AS yesterday_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate = (now() AT TIME ZONE 'America/Sao_Paulo')::date - 7), 0) AS last_week_same_day_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate >= date_trunc('week', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS week_sales, COALESCE(SUM(total_invoice) FILTER (WHERE fdate >= date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo'))::date), 0) AS month_sales FROM (SELECT fi.total_invoice, ${VDATA}::date AS fdate FROM ${VFROM} WHERE ${VF}) t`);
@@ -5238,7 +5260,7 @@ function up(){var f=document.getElementById('file').files[0];if(!f){show('Seleci
       // REGRA (Flavio): faturamento por vendedor no comparativo = quem COLOCOU o pedido (billing_pipeline.seller_name),
       // e nao o dono atual do cliente. O cliente permanece na carteira de origem.
       const visitSummary = { start: startDate, end: endDate, dates, rows, sellerDaily: sellerDailyRows.map((r) => ({ seller: r.seller, d: r.d, v: Number(r.v) || 0 })) };
-      const __payload = { stats, series, vendasEfetivasMes, efetivoMesAnterior, ordersOverview, visitSummary };
+      const __payload = { stats, series, vendasEfetivasMes, efetivoMesAnterior, efetivoComparativo, ordersOverview, visitSummary };
       __dash2Cache.set(__cacheKey, { at: Date.now(), payload: __payload });
       __resolveEmVoo(__payload);
       res.json(__payload);
