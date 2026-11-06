@@ -12,6 +12,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import HistoricoOcorrencias from "@/components/HistoricoOcorrencias";
+import { abrirNoUmbler, urlUmbler } from "@/lib/umbler";
 import FotoPicker, { fotoParaDataUrl } from "@/components/FotoPicker";
 
 // Último pedido implantado (Pipeline de Faturamento) — vem só nos cards de CLIENTE.
@@ -151,7 +152,7 @@ function numerosTelefone(t: string | null | undefined): string[] {
     .filter((d) => d.length === 10 || d.length === 11);
 }
 
-// Telefone clicável: tocar ABRE A CONVERSA NO WHATSAPP com o cliente/lead (um link por número).
+// Telefone clicável: tocar ABRE O ATENDIMENTO NO UMBLER (canal oficial) com o cliente/lead (um link por número).
 // Só cai para "ligar" quando o número não tem DDD (não dá para montar o link do WhatsApp).
 // Celular brasileiro (DDD + 9 dígitos começando com 9) — compatível com WhatsApp.
 const ehCelular = (d: string) => d.length === 11 && d[2] === "9";
@@ -170,6 +171,7 @@ const completaDDD = (num: string, endereco?: string | null): string => {
 
 function TelefoneWhats({ telefone, contato, confirmado, soCelular }: { telefone: string; contato?: string | null; confirmado?: boolean; soCelular?: boolean }) {
   const nums = numerosTelefone(telefone);
+  const { toast } = useToast();
   return (
     <div className="flex items-center gap-2 flex-wrap">
       {nums.length > 0 ? (
@@ -179,7 +181,8 @@ function TelefoneWhats({ telefone, contato, confirmado, soCelular }: { telefone:
             <Phone className="h-3.5 w-3.5" /> {fmtTelefone(d)} <span className="text-[10px] font-normal text-muted-foreground">(fixo)</span>
           </a>
         ) : (
-          <a key={d} href={`https://wa.me/55${d}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium hover:underline" data-testid="link-whatsapp">
+          // 💬 Toque no número → abre o atendimento no UMBLER (canal oficial), não no WhatsApp pessoal
+          <a key={d} href={urlUmbler(d)} target="umbler-central-atendimento" rel="noreferrer" onClick={(e) => { e.preventDefault(); e.stopPropagation(); abrirNoUmbler(d, toast); }} className="inline-flex items-center gap-1.5 text-green-700 dark:text-green-400 font-medium hover:underline" title="Abrir no Umbler" data-testid="link-umbler">
             <MessageCircle className="h-3.5 w-3.5" /> {fmtTelefone(d)}
           </a>
         ))
