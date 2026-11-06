@@ -64,7 +64,8 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     base: "faturamento do vendedor no mês",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 90,
     // 300 -> 200 em 05/nov/2026 (Flavio): vale como padrão dos próximos meses.
-    pedidoMinLabel: "Pedido mínimo para positivar (PJ)", pedidoMinPadrao: 200,
+    // 200 -> 250 em 06/nov/2026 (Flavio).
+    pedidoMinLabel: "Pedido mínimo para positivar (PJ)", pedidoMinPadrao: 250,
     pedidoMinPfLabel: "Pedido mínimo para positivar (PF)", pedidoMinPfPadrao: 80,
   },
   {
