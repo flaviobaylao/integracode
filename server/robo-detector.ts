@@ -76,7 +76,27 @@ async function lacoSemHumano(conversationId: string): Promise<boolean> {
       WHERE conversation_id = ${conversationId}
         AND created_at > now() - make_interval(mins => ${min})`);
     const x = r.rows?.[0] || {};
-    return Number(x.humano || 0) === 0 && Number(x.cli || 0) >= qtd && Number(x.ia || 0) >= qtd;
+    if (!(Number(x.humano || 0) === 0 && Number(x.cli || 0) >= qtd && Number(x.ia || 0) >= qtd)) return false;
+    // nov/2026 (caso Carolina Lopes): contagem sozinha confundia CLIENTE REAL fazendo pedido
+    // (5 trocas em 40 min e normal num pedido) com robo. Robo responde em SEGUNDOS, sempre;
+    // gente leva de 20 s a minutos. So e laco se a grande maioria das respostas do "cliente"
+    // chegou ate ia_robo_laco_seg (padrao 15 s) depois da nossa mensagem.
+    const seg = Math.max(3, parseInt(await getSetting('ia_robo_laco_seg', '15'), 10) || 15);
+    const c: any = await db.execute(sql`
+      WITH m AS (
+        SELECT sender_type, created_at,
+               lag(sender_type) OVER (ORDER BY created_at) AS prev_type,
+               lag(created_at) OVER (ORDER BY created_at) AS prev_at
+          FROM chat_messages
+         WHERE conversation_id = ${conversationId}
+           AND created_at > now() - make_interval(mins => ${min}))
+      SELECT count(*) FILTER (WHERE sender_type = 'customer' AND prev_type IS NOT NULL AND prev_type <> 'customer') AS respostas,
+             count(*) FILTER (WHERE sender_type = 'customer' AND prev_type IS NOT NULL AND prev_type <> 'customer'
+                                AND created_at - prev_at <= make_interval(secs => ${seg})) AS rapidas
+        FROM m`);
+    const y = c.rows?.[0] || {};
+    const respostas = Number(y.respostas || 0), rapidas = Number(y.rapidas || 0);
+    return rapidas >= qtd - 1 && rapidas >= Math.ceil(respostas * 0.8);
   } catch { return false; }
 }
 

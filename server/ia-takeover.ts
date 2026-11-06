@@ -489,6 +489,52 @@ export function registerIaTakeover(app: any) {
     res.json({ ok: true, limpas: n, escopo: conv ? conv : 'legadas' });
   });
 
+  // REPROCESSAR uma conversa travada (nov/2026, caso Carolina Lopes): tira a pausa e a marca
+  // de robo e faz a IA responder as mensagens do cliente que ficaram sem resposta, com o
+  // contexto atual do sistema (cadastro, ferramentas). Sem ?apply=1 so mostra o que faria.
+  //   ?conv=<id>  [&apply=1]
+  app.get('/api/admin/ia-atendimento/reprocessar', async (req: any, res: any) => {
+    try {
+      const conv = String(req.query.conv || '').trim();
+      if (!conv) return res.status(400).json({ error: 'informe ?conv=<id>' });
+      const c: any = await db.execute(sql`SELECT id, customer_phone, coalesce(channel_phone,'') AS channel_phone
+        FROM chat_conversations WHERE id = ${conv} LIMIT 1`);
+      const row = c.rows?.[0];
+      if (!row) return res.status(404).json({ error: 'conversa nao encontrada' });
+      const phone = String(row.customer_phone || '').replace(/\D/g, '');
+      // Mensagens do cliente depois da ultima resposta de verdade da IA ou de um atendente
+      // (o aviso do detector de robo e as notas do sistema nao contam como resposta).
+      const p: any = await db.execute(sql`SELECT content FROM chat_messages
+        WHERE conversation_id = ${conv} AND sender_type = 'customer'
+          AND created_at > COALESCE((SELECT max(created_at) FROM chat_messages
+                WHERE conversation_id = ${conv} AND sender_type <> 'customer'
+                  AND coalesce(sender_id,'') NOT IN ('system','agent:robo')
+                  AND coalesce(content,'') NOT LIKE 'Aguardo a intera%'), to_timestamp(0))
+        ORDER BY created_at`);
+      const texto = (p.rows || []).map((x: any) => String(x.content || '')).filter(Boolean).join('\n');
+      const pausa: any = await db.execute(sql`SELECT key, value FROM system_settings
+        WHERE key IN (${'chat_ai_paused:' + conv}, ${'ia_robo_avisado:' + conv}, ${'ia_transferida:' + conv})`);
+      const estado = Object.fromEntries((pausa.rows || []).map((x: any) => [String(x.key).split(':')[0], x.value]));
+      if (String(req.query.apply || '') !== '1') {
+        return res.json({ dryRun: true, conv, phone, estado, mensagensSemResposta: (p.rows || []).length, texto });
+      }
+      if (!texto.trim()) return res.json({ ok: false, motivo: 'nenhuma mensagem do cliente sem resposta' });
+      const { limparPausa, maybeRunAgent } = await import('./agent-runtime');
+      await limparPausa(conv);
+      try { await db.execute(sql`DELETE FROM system_settings WHERE key = ${'ia_transferida:' + conv}`); } catch {}
+      await trilha(conv, phone, texto, 'reprocessar_admin');
+      await maybeRunAgent({
+        phone, conversationId: conv, incomingText: texto,
+        sendText: (to: string, t: string) => replyVia(conv, to, t),
+        sendImage: (url: string) => replyImageVia(conv, phone, url),
+        channel: 'whatsapp',
+      });
+      const u: any = await db.execute(sql`SELECT sender_id, content, created_at FROM chat_messages
+        WHERE conversation_id = ${conv} ORDER BY created_at DESC LIMIT 4`);
+      res.json({ ok: true, conv, ultimas: (u.rows || []).reverse() });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   // Quantas conversas estao pausadas hoje (diagnostico).
   app.get('/api/admin/ia-atendimento/pausadas', async (req: any, res: any) => {
     if (!guard(req)) return res.status(403).json({ error: 'forbidden' });
