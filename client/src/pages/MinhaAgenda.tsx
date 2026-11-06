@@ -183,13 +183,14 @@ export default function MinhaAgenda() {
   const fcEvents = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return eventos
-      .filter((e) => !ocultas.has(e.color) && (!q || `${e.title} ${e.location} ${e.description}`.toLowerCase().includes(q)))
+      .filter((e) => !ocultas.has(e.color) && (!q || `${nomeCor[e.color] || ""} ${e.title} ${e.location} ${e.description}`.toLowerCase().includes(q)))
       .map((e) => ({
         id: e.id, title: `${e.fixedTime ? "🔒 " : ""}${e.title}`, start: e.start, end: e.end || undefined, allDay: e.allDay,
+        extendedProps: { corNome: nomeCor[e.color] || "" },
         backgroundColor: e.color, borderColor: e.color,
         classNames: [e.status === "done" ? "agenda-done" : "", e.fixedTime ? "agenda-fixa" : ""].filter(Boolean),
       }));
-  }, [eventos, busca, ocultas]);
+  }, [eventos, busca, ocultas, nomeCor]);
 
   const api = () => calRef.current?.getApi();
   const fechar = useCallback(() => { setQuick(null); setSel(null); api()?.unselect(); }, []);
@@ -413,6 +414,28 @@ export default function MinhaAgenda() {
             moreLinkText={(n) => `+${n} mais`}
             slotLabelFormat={{ hour: "numeric", minute: "2-digit", hour12: false }}
             eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+            eventContent={(arg) => {
+              const corNome: string = arg.event.extendedProps?.corNome || "";
+              if (!corNome) return true;
+              const tipo = arg.view.type;
+              if (tipo.startsWith("timeGrid") && !arg.event.allDay) {
+                return (
+                  <div className="fc-event-main-frame">
+                    <div className="text-[10px] font-bold uppercase tracking-wide opacity-90 truncate">{corNome}</div>
+                    {arg.timeText && <div className="fc-event-time">{arg.timeText}</div>}
+                    <div className="fc-event-title-container"><div className="fc-event-title fc-sticky">{arg.event.title}</div></div>
+                  </div>
+                );
+              }
+              const dot = tipo === "dayGridMonth" && !arg.event.allDay;
+              return (
+                <div className="flex items-center gap-1 overflow-hidden px-0.5 min-w-0">
+                  {dot && <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: arg.event.backgroundColor }} />}
+                  {arg.timeText && tipo !== "listWeek" && tipo !== "listMonth" && <span className="shrink-0">{arg.timeText}</span>}
+                  <span className="truncate"><b className="uppercase text-[10px] tracking-wide">{corNome}</b> · {arg.event.title}</span>
+                </div>
+              );
+            }}
             selectable={modo === "agenda"}
             editable={modo === "agenda"}
             eventResizableFromStart
