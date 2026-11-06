@@ -470,7 +470,7 @@ export default function Dashboard() {
           <CardContent><div className="text-2xl font-bold text-gray-800">{brl(stats.monthSales)}</div><div className="text-xs mt-1 text-gray-400">Mes vigente</div><MiniBars values={yearMonthBars.arr} highlight={yearMonthBars.curIdx} color="#6366f1" labels={monthLabels} labelEvery={monthLabels.length > 8 ? 2 : 1} format={brl} /><div className="text-[10px] text-gray-400 mt-1">Meses do ano (desde jan)</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">{`Faturamento Efetivo (${['Domingos','Segundas','Terças','Quartas','Quintas','Sextas','Sábados'][new Date(bounds.today + 'T12:00:00').getDay()]} do mês)`}</CardTitle><InfoDot text="Faturamento efetivo (NF-e de VENDA autorizadas, excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra) de cada ocorrencia deste dia da semana no mes vigente: 1a semana, 2a semana... ate hoje. A ultima barra (verde) e o dia de hoje. Fonte: visitSummary.sellerDaily." /></div></CardHeader>
+          <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">{`Faturamento Efetivo (${['Domingos','Segundas','Terças','Quartas','Quintas','Sextas','Sábados'][new Date(bounds.today + 'T12:00:00').getDay()]} do mês)`}</CardTitle><InfoDot text="Faturamento efetivo (NF-e de VENDA autorizadas, excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra) deste dia da semana em 3 momentos: (1) o mesmo dia na MESMA SEMANA do mes passado (ex.: 1a sexta de novembro x 1a sexta de outubro; se o mes passado nao tiver essa ocorrencia, usa a ultima dele), (2) o mesmo dia da semana passada e (3) hoje (barra verde, ainda em andamento)." /></div></CardHeader>
           <CardContent>
             {(() => {
               const iso = bounds.today;
@@ -488,6 +488,29 @@ export default function Dashboard() {
               const showPrev = occ.length === 1 && !!(prevInfo && prevInfo.iso);
               const prevVal = showPrev ? (Number(prevInfo.value) || 0) : 0;
               const mx = Math.max(1, ...vals, prevVal);
+              // Comparativo em 3 colunas (backend): mesma semana do mês passado, semana passada e hoje.
+              const comp: any[] = Array.isArray((data as any)?.efetivoComparativo) ? (data as any).efetivoComparativo : [];
+              if (comp.length === 3) {
+                const cmx = Math.max(1, ...comp.map((c: any) => Number(c.value) || 0));
+                const rot: Record<string, string> = { mes_passado: `${comp[0].ocorrencia}ª sem. mês passado`, semana_passada: "Semana passada", hoje: "Hoje" };
+                return (
+                  <div className="mt-4 flex items-end justify-around gap-3 h-36 overflow-x-auto" data-testid="comparativo-dia-semana">
+                    {comp.map((c: any) => {
+                      const v = Number(c.value) || 0;
+                      const isToday = c.tipo === "hoje";
+                      const iso = String(c.iso || "");
+                      return (
+                        <div key={c.tipo} className="flex flex-col items-center flex-1 min-w-[56px]">
+                          <div className="text-[11px] font-semibold text-gray-700 mb-1 whitespace-nowrap">{brl(v)}</div>
+                          <div className="w-9 rounded-t" style={{ height: Math.max(6, Math.round((v / cmx) * 58)), backgroundColor: isToday ? "#10b981" : c.tipo === "semana_passada" ? "#9ca3af" : "#cbd5e1" }} />
+                          <div className="text-[10px] text-gray-500 mt-1 whitespace-nowrap">{rot[c.tipo] || c.tipo}</div>
+                          <div className="text-[9px] text-gray-400 whitespace-nowrap">{iso.slice(8, 10) + "/" + iso.slice(5, 7)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
               return (
                 <div className="mt-4 flex items-end justify-around gap-3 h-36 overflow-x-auto">
                   {showPrev && (
