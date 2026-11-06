@@ -1,3 +1,4 @@
+import type React from "react";
 // client/src/pages/MinhaAgenda.tsx
 // -----------------------------------------------------------------------------
 // MINHA AGENDA — estilo Google Agenda (26/10/2026)
@@ -198,13 +199,17 @@ export default function MinhaAgenda() {
     return () => window.removeEventListener("keydown", k);
   }, [fechar]);
 
-  const posicionar = (x: number, y: number, w = 340, h = 230) => {
+  const posicionar = (x: number, y: number, w = 340, h = 230): React.CSSProperties => {
+    // Celular: painel fixo embaixo, largura cheia, com rolagem própria (não fica cortado nem por cima do dedo)
+    if (window.innerWidth < 640) {
+      return { left: 8, right: 8, bottom: "calc(8px + env(safe-area-inset-bottom, 0px))", top: "auto", width: "auto", maxWidth: "none", maxHeight: "70vh", overflowY: "auto" };
+    }
     let px = x + 12, py = y - 20;
     if (px + w > window.innerWidth - 12) px = x - w - 12;
     if (px < 12) px = 12;
     if (py + h > window.innerHeight - 12) py = window.innerHeight - h - 12;
     if (py < 12) py = 12;
-    return { left: px, top: py };
+    return { left: px, top: py, maxHeight: "calc(100vh - 24px)", overflowY: "auto" };
   };
 
   const abrirNovo = () => {
@@ -518,19 +523,27 @@ export default function MinhaAgenda() {
         };
         return (
           <Dialog open onOpenChange={(o) => { if (!o) { c.revert(); setConfirmaMover(null); } }}>
-            <DialogContent className="max-w-md" data-testid="agenda-confirma-hora-marcada">
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2"><Lock className="h-4 w-4 text-amber-600" />Evento com hora marcada</DialogTitle>
-                <DialogDescription>
-                  <b>{c.ev.title}</b> está agendado para <b>{cap(deTxt)}</b>, com data e hora combinadas.
-                  Você está movendo para <b>{cap(paraTxt)}</b>.
-                </DialogDescription>
+            <DialogContent className="w-[calc(100vw-24px)] max-w-md overflow-x-hidden p-5 gap-3 rounded-xl" data-testid="agenda-confirma-hora-marcada">
+              <DialogHeader className="text-left space-y-1 pr-6">
+                <DialogTitle className="flex items-center gap-2 text-base"><Lock className="h-4 w-4 text-amber-600 flex-none" />Evento com hora marcada</DialogTitle>
+                <DialogDescription className="break-words"><b className="text-foreground">{c.ev.title}</b> tem data e hora combinadas.</DialogDescription>
               </DialogHeader>
-              <p className="text-sm">Deseja manter a marcação de <b>hora marcada</b> no novo horário ou desmarcar?</p>
-              <div className="flex flex-col sm:flex-row gap-2 sm:justify-end mt-2">
-                <Button variant="outline" onClick={() => { c.revert(); setConfirmaMover(null); }} data-testid="agenda-hm-cancelar">Cancelar (não mover)</Button>
-                <Button variant="outline" onClick={() => aplicar(false)} data-testid="agenda-hm-desmarcar">Mover e desmarcar</Button>
-                {!c.allDay && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => aplicar(true)} data-testid="agenda-hm-manter">Mover e manter</Button>}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] items-center gap-2 text-sm">
+                <div className="rounded-lg border bg-muted/50 px-3 py-2 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Combinado</div>
+                  <div className="font-medium break-words">{cap(deTxt)}</div>
+                </div>
+                <div className="text-center text-muted-foreground rotate-90 sm:rotate-0 leading-none">→</div>
+                <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/40 px-3 py-2 min-w-0">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Novo horário</div>
+                  <div className="font-medium break-words">{cap(paraTxt)}</div>
+                </div>
+              </div>
+              <p className="text-sm">Manter a marcação de <b>hora marcada</b> no novo horário?</p>
+              <div className="grid grid-cols-1 gap-2">
+                {!c.allDay && <Button className="w-full h-auto min-h-10 whitespace-normal bg-blue-600 hover:bg-blue-700 text-white" onClick={() => aplicar(true)} data-testid="agenda-hm-manter"><Lock className="h-4 w-4" />Mover e manter hora marcada</Button>}
+                <Button variant="outline" className="w-full h-auto min-h-10 whitespace-normal" onClick={() => aplicar(false)} data-testid="agenda-hm-desmarcar">Mover e desmarcar</Button>
+                <Button variant="ghost" className="w-full h-auto min-h-9 whitespace-normal text-muted-foreground" onClick={() => { c.revert(); setConfirmaMover(null); }} data-testid="agenda-hm-cancelar">Cancelar (não mover)</Button>
               </div>
             </DialogContent>
           </Dialog>
