@@ -113,6 +113,11 @@ export async function ensurePdvSchema(): Promise<void> {
     // Titulo gerado no financeiro. Guardado no pedido para o caminho de volta:
     // dado um estorno na maquininha, precisamos achar o titulo correspondente.
     `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS receivable_id varchar`,
+    // Vendedor escolhido na maquininha (nov/2026). Gravado no pedido E no
+    // sales_card: e o que faz a venda do balcao contar no resultado de quem
+    // vendeu, e nao no vendedor padrao do canal.
+    `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS vendedor_id varchar`,
+    `ALTER TABLE lio_pedidos ADD COLUMN IF NOT EXISTS vendedor_nome varchar`,
   ]) {
     try { await db.execute(sql.raw(alter)); } catch { /* ja existe */ }
   }
@@ -212,7 +217,7 @@ export async function criarSalesCardBalcao(pedidoId: string): Promise<string | n
   await ensurePdvSchema();
 
   const r: any = await db.execute(sql`SELECT id, reference, payload, cliente_id, cliente_nome,
-      tabela_preco, forma_pagamento, sales_card_id
+      tabela_preco, forma_pagamento, sales_card_id, vendedor_id, vendedor_nome
     FROM lio_pedidos WHERE id = ${pedidoId} LIMIT 1`);
   const p = ((r.rows || r) as any[])[0];
   if (!p) return null;
@@ -230,7 +235,10 @@ export async function criarSalesCardBalcao(pedidoId: string): Promise<string | n
 
   const { getHotsiteDefaults } = await import('./canais-routes');
   const cfg = await getHotsiteDefaults();
-  const sellerId = cfg.vendedorId || (await vendedorPadrao());
+  // Prioridade: vendedor escolhido na maquininha > vendedor padrao do canal
+  // Hotsite > primeiro vendedor ativo. O escolhido e validado na hora da venda
+  // (POST /api/lio-app/venda), entao aqui basta usar.
+  const sellerId = p.vendedor_id || cfg.vendedorId || (await vendedorPadrao());
   if (!sellerId) {
     console.error('❌ [LIO-PDV] Nenhum vendedor disponivel; card do balcao nao criado.');
     return null;
@@ -269,7 +277,8 @@ export async function criarSalesCardBalcao(pedidoId: string): Promise<string | n
     source: ORIGEM_BALCAO,
     notes: `Venda no balcao pela maquininha — ${p.reference}\nItens: ${resumo}\n`
          + `Total: R$ ${centavosParaReais(totalCentavos)}\nTabela: ${p.tabela_preco || 'varejo'}\n`
-         + `Pagamento: ${p.forma_pagamento || 'cartao'} (ja recebido na maquininha)`,
+         + `Pagamento: ${p.forma_pagamento || 'cartao'} (ja recebido na maquininha)`
+         + (p.vendedor_nome ? `\nVendedor: ${p.vendedor_nome}` : ''),
     deliveryWeekdays: [],
     deliveryTimeSlots: [],
     deliverySaturdayTimeSlots: [],
@@ -613,6 +622,30 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
    * comporta lista longa, e nao ha razao para o aparelho receber endereco,
    * telefone e coordenadas de cliente nenhum.
    */
+  /**
+   * Vendedores que podem ser apontados numa venda de balcao.
+   *
+   * Lista curta (ativos, papel vendedor ou telemarketing) ordenada por nome,
+   * para a maquininha mostrar numa tela so. O app guarda o escolhido e manda
+   * so o id na venda; o nome e relido do banco no servidor.
+   */
+  app.get('/api/lio-app/vendedores', autenticarDispositivo, async (_req: any, res) => {
+    try {
+      const r: any = await db.execute(sql`SELECT id, first_name, last_name, role
+        FROM users
+        WHERE is_active = true AND role IN ('vendedor', 'telemarketing')
+        ORDER BY first_name ASC, last_name ASC`);
+      const vendedores = ((r.rows || r) as any[]).map((u) => ({
+        id: String(u.id),
+        nome: [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || 'Sem nome',
+        papel: String(u.role || ''),
+      }));
+      res.json({ vendedores });
+    } catch (e: any) {
+      res.status(500).json({ message: String(e?.message || e) });
+    }
+  });
+
   app.get('/api/lio-app/clientes', autenticarDispositivo, async (req: any, res) => {
     try {
       const busca = String(req.query?.busca || '').trim();
@@ -737,20 +770,34 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
         clienteNome = String(cli.name);
       }
 
+      // Vendedor e opcional; quando vem, precisa existir e estar ativo. Um id
+      // invalido NAO cai silenciosamente no padrao: a venda seria contada para
+      // a pessoa errada e ninguem saberia.
+      let vendedorId: string | null = null;
+      let vendedorNome: string | null = null;
+      if (body.vendedorId) {
+        const v: any = await db.execute(sql`SELECT id, first_name, last_name FROM users
+          WHERE id = ${String(body.vendedorId)} AND is_active = true LIMIT 1`);
+        const u = ((v.rows || v) as any[])[0];
+        if (!u) return res.status(400).json({ message: 'Vendedor nao encontrado ou inativo. Escolha outro vendedor.' });
+        vendedorId = String(u.id);
+        vendedorNome = [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || null;
+      }
+
       const referencia = String(body.referencia || '').trim()
         || `BALCAO-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}`;
 
       const ins: any = await db.execute(sql`INSERT INTO lio_pedidos
         (reference, status, origem, dispositivo_id, amount, payload,
-         tabela_preco, cliente_id, cliente_nome)
+         tabela_preco, cliente_id, cliente_nome, vendedor_id, vendedor_nome)
         VALUES (${referencia}, 'AGUARDANDO', 'pdv', ${req.dispositivo?.id || null},
                 ${centavosParaReais(totalCentavos)},
                 ${JSON.stringify({ itens })},
-                ${tabela}, ${clienteId}, ${clienteNome})
+                ${tabela}, ${clienteId}, ${clienteNome}, ${vendedorId}, ${vendedorNome})
         RETURNING id`);
       const id = ((ins.rows || ins) as any[])[0]?.id;
 
-      console.log(`🧾 [LIO-PDV] Venda ${referencia} criada (${tabela}, ${itens.length} itens, ${centavosParaReais(totalCentavos)}).`);
+      console.log(`🧾 [LIO-PDV] Venda ${referencia} criada (${tabela}, ${itens.length} itens, ${centavosParaReais(totalCentavos)}${vendedorNome ? `, vendedor ${vendedorNome}` : ''}).`);
 
       res.status(201).json({
         id: String(id),
@@ -758,6 +805,7 @@ export function registerLioPdv(app: Express, autenticarDispositivo: Autenticador
         valorCentavos: totalCentavos,
         tabela,
         cliente: clienteNome,
+        vendedor: vendedorNome,
         itens: itens.map(({ produtoId, ...resto }) => resto),
       });
     } catch (e: any) {
