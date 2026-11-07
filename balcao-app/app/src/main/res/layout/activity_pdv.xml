@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:background="#fff2f2f2" android:layout_width="match_parent" android:layout_height="match_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <LinearLayout android:orientation="vertical" android:background="#ffffffff" android:padding="10.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:elevation="4.0dp">
+        <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:textSize="17.0sp" android:textStyle="bold" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="@string/app_name" android:layout_weight="1.0" />
+            <TextView android:textSize="12.0sp" android:id="@+id/versao" android:paddingRight="8.0dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="versão —" />
+            <Button android:textSize="12.0sp" android:id="@+id/btnConfig" android:paddingLeft="12.0dp" android:paddingRight="12.0dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="0.0dp" android:text="Ajustes" />
+        </LinearLayout>
+        <TextView android:textSize="14.0sp" android:id="@+id/status" android:background="#fff2f2f2" android:padding="10.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6.0dp" android:text="Carregando catálogo…" android:textIsSelectable="true" />
+        <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:id="@+id/barraUltimaVenda" android:paddingTop="6.0dp" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:textSize="12.0sp" android:id="@+id/txtUltimaVenda" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="Última venda" android:layout_weight="1.0" />
+            <Button android:textSize="11.0sp" android:id="@+id/btnImprimirPdv" android:paddingLeft="10.0dp" android:paddingRight="10.0dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="0.0dp" android:text="Imprimir" />
+            <Button android:textSize="11.0sp" android:textColor="#ffb00020" android:id="@+id/btnCancelarVenda" android:paddingLeft="10.0dp" android:paddingRight="10.0dp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minWidth="0.0dp" android:text="Cancelar" />
+        </LinearLayout>
+        <LinearLayout android:orientation="horizontal" android:paddingTop="8.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <Button android:id="@+id/btnVarejo" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="VAREJO" android:layout_weight="1.0" />
+            <Button android:id="@+id/btnAtacado" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="ATACADO" android:layout_weight="1.0" />
+            <Button android:textSize="12.0sp" android:id="@+id/btnCliente" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="Cliente" android:layout_weight="1.0" />
+        </LinearLayout>
+        <!-- Vendedor da venda: obrigatorio, apontado a cada cobranca (nov/2026). -->
+        <Button android:textSize="13.0sp" android:textStyle="bold" android:id="@+id/btnVendedor" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4.0dp" android:text="VENDEDOR: toque para escolher" />
+    </LinearLayout>
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/grade" android:padding="4.0dp" android:clipToPadding="false" android:layout_width="match_parent" android:layout_height="0.0dp" android:layout_weight="1.0" />
+    <LinearLayout android:orientation="vertical" android:background="#ffffffff" android:padding="10.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:elevation="8.0dp">
+        <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:textSize="13.0sp" android:id="@+id/resumo" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="0 itens" android:layout_weight="1.0" />
+            <TextView android:textSize="26.0sp" android:textStyle="bold" android:id="@+id/total" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="R$ 0,00" />
+        </LinearLayout>
+        <RadioGroup android:orientation="horizontal" android:id="@+id/formaPagamento" android:paddingTop="4.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <RadioButton android:textSize="13.0sp" android:id="@+id/opDebito" android:layout_width="0.0dp" android:layout_height="wrap_content" android:checked="true" android:text="Débito" android:layout_weight="1.0" />
+            <RadioButton android:textSize="13.0sp" android:id="@+id/opCredito" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="Crédito" android:layout_weight="1.0" />
+            <RadioButton android:textSize="13.0sp" android:id="@+id/opPix" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="Pix" android:layout_weight="1.0" />
+        </RadioGroup>
+        <LinearLayout android:orientation="horizontal" android:paddingTop="4.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <Button android:id="@+id/btnLimpar" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Limpar" />
+            <Button android:textSize="17.0sp" android:textStyle="bold" android:id="@+id/btnCobrar" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="COBRAR" android:layout_weight="1.0" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

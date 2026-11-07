@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:layout_width="match_parent" android:layout_height="match_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <LinearLayout android:orientation="vertical" android:background="#ffffffff" android:paddingLeft="16.0dp" android:paddingTop="12.0dp" android:paddingRight="16.0dp" android:paddingBottom="12.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:elevation="4.0dp">
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="true">
+            <TextView android:textSize="18.0sp" android:textStyle="bold" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="@string/app_name" android:layout_weight="1.0" />
+            <TextView android:textSize="13.0sp" android:id="@+id/versao" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="versão —" />
+        </LinearLayout>
+        <TextView android:textSize="15.0sp" android:id="@+id/status" android:background="#fff2f2f2" android:padding="12.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8.0dp" android:text="Digite o código de pareamento para começar." android:minLines="2" android:textIsSelectable="true" />
+    </LinearLayout>
+    <ScrollView android:layout_width="match_parent" android:layout_height="0.0dp" android:fillViewport="true" android:layout_weight="1.0">
+        <LinearLayout android:orientation="vertical" android:paddingLeft="16.0dp" android:paddingTop="8.0dp" android:paddingRight="16.0dp" android:paddingBottom="24.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <TextView android:textStyle="bold" android:paddingTop="4.0dp" android:paddingBottom="4.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Parear este aparelho" />
+            <TextView android:textSize="13.0sp" android:paddingBottom="8.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Gere o código no INTEGRA e digite aqui (8 caracteres)." />
+            <EditText android:textSize="26.0sp" android:id="@+id/campoCodigo" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="ABCD2345" android:maxLength="8" android:inputType="textCapCharacters|textNoSuggestions" android:letterSpacing="0.2" android:importantForAutofill="no" />
+            <Button android:id="@+id/btnParear" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Parear e carregar credenciais" />
+            <TextView android:textStyle="bold" android:paddingTop="16.0dp" android:paddingBottom="4.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Token do dispositivo (alternativa manual)" />
+            <EditText android:id="@+id/campoToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="cole aqui o token gerado no INTEGRA" android:inputType="textNoSuggestions" android:importantForAutofill="no" />
+            <Button android:id="@+id/btnSalvarToken" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Salvar token e carregar credenciais" />
+            <View android:background="#ffdddddd" android:layout_width="match_parent" android:layout_height="1.0dp" android:layout_marginTop="16.0dp" android:layout_marginBottom="16.0dp" />
+            <TextView android:textStyle="bold" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Valor EM CENTAVOS (100 = R$ 1,00)" />
+            <EditText android:id="@+id/campoValor" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="100" android:inputType="number" android:importantForAutofill="no" />
+            <RadioGroup android:orientation="horizontal" android:id="@+id/opcoesPagamento" android:paddingTop="8.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+                <RadioButton android:id="@+id/opDebito" android:layout_width="wrap_content" android:layout_height="wrap_content" android:checked="true" android:text="Débito" />
+                <RadioButton android:id="@+id/opCredito" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Crédito" />
+                <RadioButton android:id="@+id/opPix" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Pix" />
+            </RadioGroup>
+            <Button android:id="@+id/btnCobrarValorLivre" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8.0dp" android:text="1) Cobrar valor livre (testa só o deep link)" />
+            <View android:background="#ffdddddd" android:layout_width="match_parent" android:layout_height="1.0dp" android:layout_marginTop="16.0dp" android:layout_marginBottom="16.0dp" />
+            <Button android:id="@+id/btnBuscarFila" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="2) Buscar fila do INTEGRA" />
+            <Button android:id="@+id/btnCobrarPrimeiro" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="3) Cobrar o primeiro da fila (testa ponta a ponta)" />
+            <View android:background="#ffdddddd" android:layout_width="match_parent" android:layout_height="1.0dp" android:layout_marginTop="16.0dp" android:layout_marginBottom="16.0dp" />
+            <TextView android:textStyle="bold" android:paddingBottom="4.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Última venda" />
+            <TextView android:id="@+id/ultimaVenda" android:background="#fff7f7f7" android:padding="12.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Nenhuma venda neste aparelho ainda." android:textIsSelectable="true" />
+            <Button android:id="@+id/btnImprimir" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8.0dp" android:text="4) Imprimir comprovante" />
+            <Button android:id="@+id/btnCancelar" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="5) Cancelar a última venda" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
