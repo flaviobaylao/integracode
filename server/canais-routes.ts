@@ -57,7 +57,7 @@ const PERIODICIDADES = ['semanal', 'quinzenal', 'mensal', 'bimestral'];
 // Hotsite nem no Instagram (IA). Dois patamares, porque o consumidor escolhe a
 // tabela: VAREJO (default R$ 80 desde out/2026; antes R$ 70) e ATACADO (default R$ 200 — o
 // preco de atacado vale a partir desse volume). REVENDA nao entra aqui: seus minimos
-// continuam onde sempre estiveram (150 Goiania/Brasilia, 350 interior).
+// ficam no carrinho do Hotsite: Goiania 150, Brasilia 250 (desde 07/nov/2026), interior 350.
 // Editavel em Canais > Hotsite > Configuracoes; vale para os DOIS canais.
 export const MIN_CONSUMIDOR_VAREJO_PADRAO = 80;
 export const MIN_CONSUMIDOR_ATACADO_PADRAO = 200;
