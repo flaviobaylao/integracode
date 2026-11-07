@@ -238,7 +238,10 @@ async function listarParticipantes(ym: string): Promise<Participante[]> {
     " FROM users u" +
     " LEFT JOIN LATERAL (SELECT incluir, positivacao FROM campanha_participantes_mes x" +
     "   WHERE x.user_id = u.id AND x.desde <= '" + Y + "' ORDER BY x.desde DESC LIMIT 1) h ON true" +
-    " WHERE u.role::text IN ('vendedor','telemarketing') AND u.is_active IS TRUE" +
+    // Mês encerrado: quem foi desligado DEPOIS dele continua na campanha
+    // daquele mês (o Wilson de outubro). Mesmo indício do Resumo: updated_at.
+    " WHERE u.role::text IN ('vendedor','telemarketing')" +
+    " AND (u.is_active IS TRUE OR ('" + Y + "' < '" + mesAtual() + "' AND u.updated_at >= ('" + Y + "-01'::date + INTERVAL '1 month')))" +
     // Quem foi cadastrado depois do mês não existia nele.
     " AND (u.created_at IS NULL OR u.created_at < ('" + Y + "-01'::date + INTERVAL '1 month'))" +
     " ORDER BY COALESCE(h.incluir, true) DESC, u.role::text, nome"

@@ -622,13 +622,31 @@ export function registerResumoRecebiveisRoutes(app: Express) {
   async function montarResumo(ym: string) {
       const { ini, fim, ano, mes } = limitesDoMes(ym);
 
-      // 1. Quem entra na planilha — só usuários ATIVOS, e só os marcados para
-      //    aparecer no resumo (a flag exclui contas de sistema).
+      // 1. Quem entra na planilha — usuários ativos marcados para aparecer no
+      //    resumo (a flag exclui contas de sistema).
+      //
+      //    MÊS PASSADO NÃO PERDE QUEM SAIU DEPOIS (07/nov/2026). Só "ativo" fazia
+      //    um desligamento apagar a pessoa da folha de TODOS os meses: Wellington
+      //    (desativado 03/11) e Wilson (05/11) sumiram de outubro, com R$ 4.800
+      //    de fixo que outubro devia. Agora, num mês já encerrado, entra também
+      //    quem está inativo MAS: tinha remuneração vigente no mês e só foi
+      //    alterado (desligado) depois que o mês acabou. users não guarda a data
+      //    do desligamento; updated_at é o melhor indício que existe.
+      //    E quem foi cadastrado depois do mês não aparece nele.
+      const mesCorrente = new Date().toISOString().slice(0, 7);
+      const mesEncerrado = ym < mesCorrente;
       const colabs: any = await db.execute(sql`
-            SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.seller_type
+            SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.seller_type,
+                   (u.is_active IS NOT TRUE) AS inativo
             FROM users u
             LEFT JOIN resumo_participantes p ON p.user_id = u.id
-            WHERE u.is_active = true
+            WHERE (
+                u.is_active = true
+                OR (${mesEncerrado} AND u.updated_at >= ${fim}::date
+                    AND EXISTS (SELECT 1 FROM collab_remuneracao_config c
+                                WHERE c.user_id = u.id AND c.vigencia_data < ${fim}::date))
+              )
+              AND (u.created_at IS NULL OR u.created_at < ${fim}::date)
               AND (
                 (u.role::text = ANY(${arraySql(PAPEIS)}) AND COALESCE(p.incluir, true) = true)
                 OR p.incluir = true
@@ -938,6 +956,8 @@ export function registerResumoRecebiveisRoutes(app: Express) {
 
         return {
           id, nome, role: u.role, sellerType: u.seller_type || null,
+          // Desligado depois do mês: entra na folha do mês, com selo na tela.
+          inativo: u.inativo === true,
           consolidador: cfg.consolidaTotais === true,
           config: cfg,
           fixoMensal: fixo, ajudaCusto, meta, faturamento,
