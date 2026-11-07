@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:background="#ffffffff" android:padding="8.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="4.0dp" android:elevation="2.0dp"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <ImageView android:id="@+id/foto" android:background="#ffefefef" android:layout_width="match_parent" android:layout_height="110.0dp" android:scaleType="centerCrop" android:contentDescription="@string/app_name" />
+    <TextView android:textSize="12.0sp" android:ellipsize="end" android:id="@+id/nome" android:paddingTop="6.0dp" android:layout_width="match_parent" android:layout_height="38.0dp" android:text="Produto" android:maxLines="2" />
+    <TextView android:textSize="17.0sp" android:textStyle="bold" android:textColor="#ff1b7f3b" android:id="@+id/preco" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="R$ 0,00" />
+    <TextView android:textSize="11.0sp" android:textColor="#ffb00020" android:id="@+id/semPreco" android:visibility="gone" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="sem preço de atacado" />
+    <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:id="@+id/controles" android:paddingTop="6.0dp" android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:textSize="20.0sp" android:id="@+id/btnMenos" android:padding="0.0dp" android:layout_width="46.0dp" android:layout_height="46.0dp" android:minWidth="0.0dp" android:text="−" />
+        <TextView android:textSize="18.0sp" android:textStyle="bold" android:gravity="center" android:id="@+id/qtd" android:layout_width="0.0dp" android:layout_height="wrap_content" android:text="0" android:layout_weight="1.0" />
+        <Button android:textSize="20.0sp" android:id="@+id/btnMais" android:padding="0.0dp" android:layout_width="46.0dp" android:layout_height="46.0dp" android:minWidth="0.0dp" android:text="+" />
+    </LinearLayout>
+</LinearLayout>
