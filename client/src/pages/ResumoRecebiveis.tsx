@@ -489,6 +489,8 @@ interface Colab {
   // Só vem para admin. Informativo: não entra no totalMes.
   reembolsos?: { despesas: number; km: number; viagens: number; total: number } | null;
   consolidador?: boolean;
+  // Desligado depois do mês: está na folha do mês, mas hoje está inativo.
+  inativo?: boolean;
   // Linha de grupo (Canais, Outros…): soma das pessoas do grupo numa linha só.
   agrupado?: boolean; grupo?: string; membros?: number; membrosNomes?: string[];
   faturamentoSemDono?: number;
@@ -872,6 +874,12 @@ export default function ResumoRecebiveis() {
                         {c.consolidador && (
                           <Badge className="bg-slate-800 text-white ml-1" title="Meta e faturamento somam a equipe inteira">
                             consolidado
+                          </Badge>
+                        )}
+                        {c.inativo && (
+                          <Badge className="bg-slate-100 text-slate-500 ml-1"
+                            title="Hoje está inativo, mas estava na folha deste mês: o desligamento foi depois que o mês acabou">
+                            desligado
                           </Badge>
                         )}
                       </td>
