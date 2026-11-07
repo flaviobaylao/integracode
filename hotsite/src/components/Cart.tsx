@@ -54,7 +54,8 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
     if (category === 'reseller') {
       if (resellerLocation === 'goiania') return 150;
       if (resellerLocation === 'interior') return 350;
-      if (resellerLocation === 'brasilia') return 150;
+      // 150 -> 250 em 07/nov/2026: alinhado ao Pedido Rápido e ao checklist do vendedor.
+      if (resellerLocation === 'brasilia') return 250;
       return 150; // Fallback para revendedor sem localização
     }
     return 70; // Fallback geral
