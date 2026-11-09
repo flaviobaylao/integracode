@@ -285,6 +285,7 @@ export async function registrarReportInbox(p: {
   salesCardId?: string | null; // card da visita (Rota do Dia) — de onde sai a foto do check-in
   origem?: string | null;      // de onde veio (justificativas): 'fechar_rota' | 'pendencia' | 'checkin'
   dataVisita?: string | null;  // dia da visita justificada (YYYY-MM-DD)
+  cicloPresencial?: boolean;   // não-visita da presencial do CICLO de cliente virtual (selo "Virtual – Ciclo presencial")
 }): Promise<void> {
   try {
     let texto = String(p?.texto || "").trim();
@@ -336,6 +337,7 @@ export async function registrarReportInbox(p: {
     if (p.salesCardId) details.salesCardId = String(p.salesCardId);
     if (p.origem) details.origem = String(p.origem).slice(0, 40);
     if (p.dataVisita && /^\d{4}-\d{2}-\d{2}$/.test(String(p.dataVisita))) details.dataVisita = String(p.dataVisita);
+    if (p.cicloPresencial === true) details.cicloPresencial = true;
     const seedMsg = {
       id: newMsgId(), role: "seller", by: p.sellerId || null, byName: sellerName || "Vendedor",
       text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
@@ -800,6 +802,9 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.diasRota = diasByKey.get(key) || null;
         m.semanaAtendimento = semanaByKey.get(key) || null;
         if (virtualSet.has(key)) m.virtual = true;
+        // 🏢 Não-visita da presencial do CICLO: selo "Virtual – Ciclo presencial" (gravado no report,
+        // vale mesmo que o cliente já tenha sido convertido para presencial pelo job das 22:50).
+        if (m.kind === "report" && m.details && (m.details as any).cicloPresencial === true) { m.virtual = true; m.cicloPresencial = true; }
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
       // 📷 temFoto: qualquer report com foto de check-in de visita sem venda (ou link de foto).

@@ -18980,6 +18980,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       visitAgendaData.forEach(va => {
         visitAgendaByEntityId.set(va.customerId, va);
       });
+
+      // 🏢 CICLO PRESENCIAL (nov/2026): cliente VIRTUAL cuja visita do dia é a PRESENCIAL do ciclo
+      // (visit_agenda.ciclo_presencial) entra como PRESENCIAL (exige check-in) — antes saía com o
+      // flag do cadastro (virtual) e o vendedor via a visita como virtual. Marca cicloPresencial
+      // para o selo "Virtual – Ciclo presencial" (Rota do Dia, Fechar Rota, report do Inbox).
+      const cicloPresencialIds = new Set<string>();
+      try {
+        const _cp: any = await db.execute(sql`
+          SELECT DISTINCT customer_id FROM visit_agenda
+           WHERE seller_id = ${sellerId}
+             AND scheduled_date::date = ${date}::date
+             AND COALESCE(ciclo_presencial, false) = true
+             AND COALESCE(is_virtual, false) = false
+             AND COALESCE(visit_status, 'pending') <> 'cancelled'`);
+        for (const r of (_cp?.rows || [])) if ((r as any)?.customer_id) cicloPresencialIds.add(String((r as any).customer_id));
+      } catch (_e) { /* coluna ainda não criada: segue sem o ciclo */ }
       
       // Montar visitas na ordem do optimizedOrder com suporte a customers e leads.
       // Usa o `optimizedOrder` JA DEDUPLICADO (Array.from(new Set(...)) acima) — o
@@ -19018,7 +19034,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               customerLongitude: customer.longitude,
               customerAddress: customer.address,
               scheduledDate: route.routeDate,
-              isVirtual: customer.virtualService,
+              isVirtual: cicloPresencialIds.has(String(customer.id)) ? false : customer.virtualService,
+              cicloPresencial: cicloPresencialIds.has(String(customer.id)),
               weekdays: customer.weekdays, // Dias da semana de cadastro do cliente
               visitPeriodicity: customer.visitPeriodicity, // Periodicidade (semanal, quinzenal, mensal)
               semanaAtendimento: (customer as any).semanaAtendimento || 'toda', // Semana do mês do cadastro

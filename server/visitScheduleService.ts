@@ -282,28 +282,6 @@ async function __flagCadastroIncompletoInbox(c: any, faltando: string[]): Promis
 // da regeneração de telemarketing), que já respeita o serviceStartDate como âncora.
 // SEM dia de rota → alocação pela "regra dos leads" (coordenada + semanal) + flag Inbox.
 // Retorna a quantidade de visitas criadas (0 = nada gerado).
-/**
- * Lê os flags de VISITA PRESENCIAL MENSAL do cliente (presential_monthly /
- * presential_monthly_weekday). Esses campos vivem fora do schema.ts (só ALTER no
- * boot + SQL cru, como status_reason) para não quebrar db.select().from(customers).
- * weekday: 0=Dom..6=Sab, ou null (= automático pela região). Nunca lança.
- */
-async function __getPresentialMonthly(customerId: string): Promise<{ enabled: boolean; weekday: number | null }> {
-  try {
-    const r: any = await db.execute(sql`SELECT presential_monthly AS pm, presential_monthly_weekday AS wd FROM customers WHERE id = ${customerId} LIMIT 1`);
-    const row = ((r.rows || r) as any[])[0];
-    if (!row || row.pm !== true) return { enabled: false, weekday: null };
-    const DIA: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
-    let wd: number | null = null;
-    const raw = row.wd;
-    if (raw != null && String(raw).trim() !== '') {
-      const s = String(raw).trim().toLowerCase().slice(0, 3);
-      if (s in DIA) wd = DIA[s];
-      else if (/^[0-6]$/.test(String(raw).trim())) wd = Number(String(raw).trim());
-    }
-    return { enabled: true, weekday: wd };
-  } catch { return { enabled: false, weekday: null }; }
-}
 
 // 📞 Carteiras de TELEMARKETING: o atendimento é sempre VIRTUAL (a regeneração semanal de
 // telemarketing gravava is_virtual=true). Cache curto dos ids de usuários telemarketing para o
@@ -322,6 +300,118 @@ export function ensureAgendaForcadaColumn(): Promise<void> {
 }
 const __naoForcada = sql`COALESCE(forcada, '') = ''`;
 
+// ============================================================================
+// 🏢 CICLO PRESENCIAL DO CLIENTE VIRTUAL (nov/2026 — regra do Flávio)
+// Cliente virtual de vendedor externo (presential_monthly=true) recebe visita PRESENCIAL
+// "pelo menos 1 a cada N visitas" da própria cadência — a visita presencial SUBSTITUI
+// uma visita virtual do ciclo (não é visita a mais):
+//   • semanal   → 1 a cada 4 visitas (≈ 1 por mês);
+//   • quinzenal → 1 a cada 4 visitas (a 4ª quinzena);
+//   • mensal    → 1 a cada 2 visitas (mês sim, mês não).
+// A contagem parte da ÚLTIMA visita presencial REALIZADA (check-in no cliente ou visita
+// presencial concluída). Quem nunca teve presencial começa pela próxima visita. Se a
+// presencial não acontece, o job das 22:50 converte o cliente para PRESENCIAL e aqui ele
+// passa a ter TODA a periodicidade presencial — até a 1ª visita com check-in (volta a virtual).
+// As visitas do ciclo ficam marcadas em visit_agenda.ciclo_presencial (selo "Virtual – Ciclo
+// presencial" na Rota do Dia, no Fechar Rota e no report de não-visita do Inbox).
+// Só mexe em visitas PENDENTES de AMANHÃ em diante (a de hoje só ganha a marca), nunca nas
+// forçadas pelo admin. Idempotente.
+// ============================================================================
+const CICLO_PRESENCIAL_N: Record<string, number> = { semanal: 4, quinzenal: 4, mensal: 2 };
+let __cicloReady: Promise<void> | null = null;
+export function ensureCicloPresencialColumn(): Promise<void> {
+  if (!__cicloReady) {
+    __cicloReady = db.execute(sql`ALTER TABLE visit_agenda ADD COLUMN IF NOT EXISTS ciclo_presencial boolean DEFAULT false`)
+      .then(() => undefined)
+      .catch((e: any) => { __cicloReady = null; throw e; });
+  }
+  return __cicloReady;
+}
+
+export async function aplicarCicloPresencial(customerId: string): Promise<{ modo: string; n?: number; padrao: string; alterados: number } | null> {
+  await ensureAgendaForcadaColumn();
+  await ensureCicloPresencialColumn();
+  const rr = (r: any) => ((r?.rows ?? r ?? []) as any[]);
+  const cr = rr(await db.execute(sql`SELECT presential_monthly AS pm, virtual_service AS vs, visit_periodicity AS per, seller_id AS sid, is_active AS ativo FROM customers WHERE id = ${customerId} LIMIT 1`))[0];
+  if (!cr) return null;
+  const HOJE = sql`(now() AT TIME ZONE 'America/Sao_Paulo')::date`;
+  let pm = cr.pm === true && cr.ativo !== false;
+  // Carteira de telemarketing é sempre virtual — a regra é só de vendedor externo.
+  try { if (pm && cr.sid && (await __telemarketingSellerIds()).has(String(cr.sid))) pm = false; } catch { /* noop */ }
+
+  const futuras = rr(await db.execute(sql`
+    SELECT id, to_char(scheduled_date::date, 'YYYY-MM-DD') AS d, COALESCE(is_virtual, false) AS v, COALESCE(ciclo_presencial, false) AS cp
+      FROM visit_agenda
+     WHERE customer_id = ${customerId}
+       AND COALESCE(visit_status, 'pending') = 'pending'
+       AND COALESCE(forcada, '') = ''
+       AND scheduled_date::date > ${HOJE}
+     ORDER BY scheduled_date`));
+  let alterados = 0;
+  const gravar = async (row: any, virtual: boolean, ciclo: boolean) => {
+    if (row.v === virtual && row.cp === ciclo) return;
+    await db.execute(sql`UPDATE visit_agenda SET is_virtual = ${virtual}, ciclo_presencial = ${ciclo}, updated_at = now() WHERE id = ${row.id}`);
+    alterados++;
+  };
+
+  if (!pm) {
+    // Fora da regra: só tira a marca de ciclo (o tipo da visita é do motor normal).
+    await db.execute(sql`UPDATE visit_agenda SET ciclo_presencial = false WHERE customer_id = ${customerId} AND COALESCE(ciclo_presencial, false) = true AND COALESCE(visit_status, 'pending') = 'pending' AND scheduled_date::date >= ${HOJE}`);
+    return { modo: 'fora', padrao: '', alterados: 0 };
+  }
+
+  if (cr.vs !== true) {
+    // DEMOVIDO: toda a periodicidade presencial até a 1ª visita com check-in.
+    for (const row of futuras) await gravar(row, false, false);
+    return { modo: 'demovido', padrao: futuras.map(() => 'P').join(' '), alterados };
+  }
+
+  const N = CICLO_PRESENCIAL_N[String(cr.per || 'semanal')] || 4;
+  // Última presencial REALIZADA: check-in no cliente (qualquer visita) ou visita presencial
+  // concluída na agenda. A presencial de HOJE (ainda pendente) também conta como "a vez" do ciclo.
+  const ult = rr(await db.execute(sql`
+    SELECT to_char(GREATEST(
+      (SELECT MAX(scheduled_date::date) FROM visit_agenda
+        WHERE customer_id = ${customerId} AND COALESCE(is_virtual, false) = false
+          AND COALESCE(visit_status, 'pending') <> 'cancelled' AND scheduled_date::date <= ${HOJE}
+          AND (actual_check_in IS NOT NULL OR visit_status = 'completed' OR scheduled_date::date = ${HOJE})),
+      (SELECT MAX((checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) FROM route_checkpoints
+        WHERE customer_id = ${customerId} AND checkpoint_type = 'check_in')
+    ), 'YYYY-MM-DD') AS d`))[0]?.d;
+  let cont: number;
+  if (ult) {
+    const m = rr(await db.execute(sql`
+      SELECT COUNT(DISTINCT scheduled_date::date)::int AS n FROM visit_agenda
+       WHERE customer_id = ${customerId} AND COALESCE(visit_status, 'pending') <> 'cancelled'
+         AND COALESCE(forcada, '') = ''
+         AND scheduled_date::date > ${ult}::date AND scheduled_date::date <= ${HOJE}`))[0]?.n;
+    cont = Number(m || 0);
+  } else {
+    cont = N - 1; // nunca teve presencial → a próxima visita é presencial
+  }
+  // A visita presencial de HOJE (se houver) ganha a marca do ciclo — selo no Fechar Rota/Inbox.
+  try {
+    await db.execute(sql`UPDATE visit_agenda SET ciclo_presencial = true
+      WHERE customer_id = ${customerId} AND COALESCE(is_virtual, false) = false
+        AND COALESCE(visit_status, 'pending') = 'pending' AND scheduled_date::date = ${HOJE}
+        AND COALESCE(ciclo_presencial, false) = false`);
+  } catch { /* noop */ }
+
+  const padrao: string[] = [];
+  let diaAnt = ''; let presDia = false;
+  for (const row of futuras) {
+    if (row.d !== diaAnt) {
+      diaAnt = row.d;
+      cont++;
+      presDia = cont >= N;
+      if (presDia) cont = 0;
+      padrao.push(presDia ? 'P' : 'V');
+    }
+    await gravar(row, !presDia, presDia);
+  }
+  return { modo: 'virtual', n: N, padrao: padrao.join(' '), alterados };
+}
+
 let __tmIdsCache: { at: number; ids: Set<string> } | null = null;
 async function __telemarketingSellerIds(): Promise<Set<string>> {
   if (__tmIdsCache && Date.now() - __tmIdsCache.at < 10 * 60 * 1000) return __tmIdsCache.ids;
@@ -335,6 +425,13 @@ async function __telemarketingSellerIds(): Promise<Set<string>> {
 }
 
 export async function regenerateCustomerAgenda(customerId: string): Promise<number> {
+  const n = await __regenerateCustomerAgendaCore(customerId);
+  // 🏢 Ciclo presencial do cliente virtual: aplica SEMPRE depois de regravar a agenda.
+  try { await aplicarCicloPresencial(customerId); } catch (e: any) { console.warn('[agenda] ciclo presencial:', e?.message); }
+  return n;
+}
+
+async function __regenerateCustomerAgendaCore(customerId: string): Promise<number> {
   const { calculateNextVisitDate, datasPelaRegra, normalizarSemana } = await import('../shared/visitSchedule');
   await ensureAgendaForcadaColumn();
   const rows = await db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
@@ -401,63 +498,10 @@ export async function regenerateCustomerAgenda(customerId: string): Promise<numb
     periodicity = 'semanal'; // regra dos leads
   }
 
-  // ========================================================================
-  // 🏢 VISITA PRESENCIAL MENSAL (cliente virtual híbrido de vendedor externo)
-  // O cliente virtual recebe ≥1 visita PRESENCIAL/mês (is_virtual=false) no dia
-  // da REGIÃO (clientes vizinhos do vendedor), ou no dia fixado pelo admin
-  // (presential_monthly_weekday). A semana do mês segue o semanaAtendimento do
-  // cliente; sem regra fixa, cai na 1ª semana (garante exatamente 1/mês). Se o
-  // cliente foi DEMOVIDO (virtualService=false, por falta de check-in na visita
-  // do dia), gera SOMENTE essa visita presencial — não adensa a rota. Se continua
-  // virtual (virtualService=true), segue também a cadência virtual normal abaixo.
-  // ========================================================================
-  const pm = await __getPresentialMonthly(customerId);
-  if (pm.enabled) {
-    // Override do admin (só dia útil Seg..Sex).
-    let pmWd: number | null = (pm.weekday !== null && pm.weekday >= 1 && pm.weekday <= 5) ? pm.weekday : null;
-    // 1) Dia de rota JÁ resolvido do cliente — targetWeekdays contém o dia do cadastro OU, para
-    // cliente sem dia próprio, o dia da REGIÃO definido pela "regra dos leads" acima. É a MESMA
-    // base da cadência, então a visita presencial cai no dia de rota do cliente.
-    if (pmWd === null) {
-      const DIA_TOK: Record<string, number> = { dom: 0, seg: 1, ter: 2, qua: 3, qui: 4, sex: 5, sab: 6 };
-      for (const tk of (targetWeekdays as any[])) {
-        const n = DIA_TOK[String(tk).trim().toLowerCase().slice(0, 3)];
-        if (n !== undefined && n >= 1 && n <= 5) { pmWd = n; break; }
-      }
-    }
-    // 2) Último recurso: dia de rota da região (vizinhos do vendedor), se targetWeekdays não deu dia útil.
-    if (pmWd === null) {
-      const platM = Number(c.latitude), plngM = Number(c.longitude);
-      if (Number.isFinite(platM) && Number.isFinite(plngM) && !(platM === 0 && plngM === 0) && c.sellerId) {
-        try {
-          const scM = await __agendaSellerCustomers(String(c.sellerId), customerId);
-          const rwM = __agendaRegionWeekday(scM, platM, plngM);
-          if (rwM !== null && rwM >= 1 && rwM <= 5) pmWd = rwM;
-        } catch { /* noop */ }
-      }
-    }
-    let pmCreated = 0;
-    if (pmWd !== null && pmWd >= 1 && pmWd <= 5) {
-      const semanaPM0 = normalizarSemana(c.semanaAtendimento);
-      const semanaPM = (semanaPM0 === 'toda' ? '1' : semanaPM0) as any;
-      const fimPM = new Date(today); fimPM.setMonth(fimPM.getMonth() + 4);
-      let pmDates = datasPelaRegra(today, fimPM, [pmWd], semanaPM)
-        .filter((d) => !serviceStart || d >= serviceStart);
-      // Exatamente 1 por mês-calendário (a data mais cedo) — garante "pelo menos 1/mês"
-      // mesmo quando a regra (ex.: 'impar') produziria 2 ocorrências no mês.
-      const porMesPM = new Map<string, Date>();
-      for (const d of pmDates) { const k = `${d.getFullYear()}-${d.getMonth()}`; if (!porMesPM.has(k)) porMesPM.set(k, d); }
-      pmDates = Array.from(porMesPM.values()).sort((a, b) => a.getTime() - b.getTime()).slice(0, 4);
-      if (pmDates.length) {
-        // Força is_virtual=false reaproveitando o gravador (clone com virtualService=false).
-        pmCreated = await __gravarAgendaDatas({ ...c, virtualService: false }, 'mensal', pmDates);
-      }
-    }
-    // DEMOVIDO (virtualService=false): só a visita presencial mensal — não cai na
-    // cadência presencial completa abaixo (que adensaria a rota).
-    if (c.virtualService !== true) return pmCreated;
-    // Caso contrário (virtualService=true), segue a geração virtual normal abaixo.
-  }
+  // 🏢 VISITA PRESENCIAL POR CICLO (cliente virtual de vendedor externo, presential_monthly):
+  // a agenda é gerada normalmente (cadência da periodicidade) e, ao final, aplicarCicloPresencial()
+  // decide QUAIS dessas visitas são presenciais (ver regra lá). Cliente DEMOVIDO (virtualService=
+  // false, por falta de check-in) segue a periodicidade inteira como presencial.
 
   // 🏙️ BRASÍLIA (DF): a âncora do agendamento é a ÚLTIMA ENTREGA (swimlane "Entregue" do
   // Pipeline de Faturamento), NÃO o calendário. Ex.: cliente quinzenal na seg que só recebeu

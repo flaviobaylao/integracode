@@ -2549,6 +2549,15 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
       try {
         if (notes && String(notes).trim() && reason !== 'removido') {
           const JUSTIF_LABEL: Record<string, string> = { fechado: 'Estabelecimento fechado', ausente: 'Cliente ausente', sem_tempo: 'Sem tempo', ja_comprou: 'Já comprou', endereco: 'Endereço/localização', sem_interesse: 'Sem interesse', remarcou: 'Remarcou', rota_inviavel: 'Rota inviável', imprevisto: 'Imprevisto', cancelou: 'Cancelou', debito: 'Débito', outro: 'Outro' };
+          // 🏢 Não-visita da PRESENCIAL DO CICLO de cliente virtual → selo "Virtual – Ciclo presencial"
+          // gravado no report (fica mesmo depois que o job das 22:50 converter o cliente).
+          let cicloPresencial = false;
+          if (reason !== 'debito') {
+            try {
+              const cp: any = await db.execute(sql`SELECT 1 FROM visit_agenda WHERE customer_id = ${customerId} AND scheduled_date::date = ${date}::date AND COALESCE(ciclo_presencial, false) = true AND COALESCE(is_virtual, false) = false LIMIT 1`);
+              cicloPresencial = ((cp?.rows || []) as any[]).length > 0;
+            } catch (_c) { /* coluna ainda não criada */ }
+          }
           const { registrarReportInbox } = await import('./change-requests-routes');
           await registrarReportInbox({
             entityType: 'customer', entityId: customerId, customerId,
@@ -2557,6 +2566,7 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
             motivo: JUSTIF_LABEL[reason] || reason,
             texto: String(notes || ''),
             origem, dataVisita: date,
+            cicloPresencial,
           });
         }
       } catch (_e: any) { console.warn('[REPORT-INBOX] justificativa:', _e?.message); }
