@@ -2809,6 +2809,9 @@ export default function RotaDoDia() {
                                 >
                                   <Copy className="h-3.5 w-3.5" />
                                 </button>
+                                {(visit as any).cicloPresencial && (
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" title="Cliente virtual: hoje é a visita PRESENCIAL do ciclo (exige check-in)" data-testid={`ciclo-presencial-${visit.customerId || visit.id}`}>Virtual – Ciclo presencial</span>
+                                )}
                                 {!isLead && !(visit as any).isVirtual && !rotuloHorarioForn(horarioForn[String(visit.customerId)]) && (
                                   <button
                                     type="button"

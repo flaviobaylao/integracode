@@ -656,7 +656,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
             {/* 🟢🟡🔴 Efetividade em vendas por ciclo — as mesmas bolinhas da Rota do Dia (26/out/2026) */}
             {r.entityType === "customer" && <SalesCycleDotsCliente customerId={r.customerId || r.entityId} />}
             {/* 💻 Só aparece para cliente de atendimento virtual (26/out/2026) */}
-            {r.virtual && <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" data-testid={`cr-virtual-${r.id}`}>Virtual</span>}
+            {r.virtual && <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" data-testid={`cr-virtual-${r.id}`}>{(r as any).cicloPresencial ? "Virtual – Ciclo presencial" : "Virtual"}</span>}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
@@ -936,7 +936,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
             {/* 🟢🟡🔴 Efetividade em vendas por ciclo — as mesmas bolinhas da Rota do Dia (26/out/2026) */}
             {r.entityType === "customer" && <SalesCycleDotsCliente customerId={r.customerId || r.entityId} />}
             {/* 💻 Só aparece para cliente de atendimento virtual (26/out/2026) */}
-            {r.virtual && <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" data-testid={`cr-virtual-${r.id}`}>Virtual</span>}
+            {r.virtual && <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 rounded px-1.5 py-0.5" data-testid={`cr-virtual-${r.id}`}>{(r as any).cicloPresencial ? "Virtual – Ciclo presencial" : "Virtual"}</span>}
             <CopyBtn text={r.entityName || r.entityId} />
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">

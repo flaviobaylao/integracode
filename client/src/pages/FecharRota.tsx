@@ -27,7 +27,7 @@ import { useChangeRequestStates, crKey, isModalidadeOnlyRequest, MessageThread }
 import { useVoiceToText } from "@/components/VoiceDictateButton";
 
 type Tipo = "presencial" | "virtual" | "lead" | "repescagem";
-type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number; atendido?: boolean };
+type NaoVisitado = { id: string; customerId: string; nome: string; tipo: Tipo; debito?: number; atendido?: boolean; ciclo?: boolean };
 
 const MOTIVOS: [string, string][] = [
   ["sem_tempo", "Não deu tempo / rota grande"],
@@ -47,6 +47,12 @@ const TIPO_CLS: Record<Tipo, string> = {
   lead: "bg-amber-50 text-amber-700",
   repescagem: "bg-rose-50 text-rose-700",
 };
+
+// 🏢 Cliente VIRTUAL na presencial do ciclo: a visita é presencial (exige check-in), mas o
+// selo é o do virtual, informando que é o ciclo presencial.
+const seloTipo = (c: NaoVisitado) => c.ciclo
+  ? <span className="px-2 py-0.5 rounded bg-violet-50 text-violet-700">Virtual – Ciclo presencial</span>
+  : <span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>;
 
 function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], orders: Record<string, any[]>, debts: Record<string, number>, allowed: Set<Tipo>, today: string, includeRepescagem: boolean = false, suspVisita: Set<string> = new Set(), suspDebito: Set<string> = new Set(), crEfet: Set<string> = new Set(), exigirDebito: boolean = true): NaoVisitado[] {
   const checkedIn = new Set<string>();
@@ -85,7 +91,7 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     const debito = (!exigirDebito || suspDebito.has(customerId)) ? 0 : debtOf(v?.customerId);
     const visitOk = done || suspVisita.has(customerId);
     if (visitOk && !debito) continue;
-    out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined, atendido: visitOk });
+    out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined, atendido: visitOk, ciclo: !!v?.cicloPresencial });
   }
   // Repescagem: cada cliente da repescagem NÃO atendido precisa de justificativa — mas SOMENTE
   // do VENDEDOR DE CADASTRO (dono da carteira). O atendente habilitado que recebeu o cliente
@@ -119,6 +125,7 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (o.debito && (!ex.debito || o.debito > ex.debito)) ex.debito = o.debito;
     // Se qualquer parada foi atendida, o cliente conta como atendido (débito ainda a prestar contas).
     if (o.atendido) ex.atendido = true;
+    if (o.ciclo) ex.ciclo = true;
   }
   return Array.from(dedup.values());
 }
@@ -425,7 +432,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
                 return (
                   <Card key={c.id} className="border-l-4 border-l-green-500"><CardContent className="py-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{debtMode ? <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 font-bold">Atendido</span> : null}{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
+                      <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">{seloTipo(c)}{debtMode ? <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 font-bold">Atendido</span> : null}{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
                       <span className="text-[11px] font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full">{jDebt ? "✓ Débito informado" : "✓ Justificado"}</span>
                     </div>
                     <div className="mt-2 text-xs bg-green-50 border border-green-100 rounded-lg px-3 py-2">{jDebt ? "💰 Prestação de contas do débito" : `📝 ${MOTIVO_LABEL[j.reason] || j.reason}`}{j.note ? <span className="text-muted-foreground"> — "{j.note}"</span> : null}</div>
@@ -436,7 +443,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
               return (
                 <Card key={c.id} className={`border-l-4 ${debtMode ? "border-l-amber-500" : "border-l-red-500"}`}><CardContent className="py-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap"><span className={`px-2 py-0.5 rounded ${TIPO_CLS[c.tipo]}`}>{TIPO_LABEL[c.tipo]}</span>{debtMode ? <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 font-bold">Atendido</span> : null}{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
+                    <div><div className="font-semibold text-sm">{c.nome}</div><div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">{seloTipo(c)}{debtMode ? <span className="px-2 py-0.5 rounded bg-green-100 text-green-700 font-bold">Atendido</span> : null}{c.debito ? <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-bold">Débito R$ {c.debito.toFixed(2)}</span> : null}</div></div>
                     {debtMode
                       ? <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-full">💰 Débito a prestar contas</span>
                       : <span className="text-[11px] font-bold text-red-600 bg-red-50 px-2 py-1 rounded-full">● Não visitado</span>}
