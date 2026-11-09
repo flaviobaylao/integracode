@@ -1576,7 +1576,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                   </div>
                 )}
 
-                {/* Visita Presencial Mensal — cliente virtual híbrido de vendedor externo */}
+                {/* Visita Presencial por Ciclo — cliente virtual de vendedor externo */}
                 {canManagePresentialMonthly && (
                   <div className="mt-4">
                     <div className="rounded-lg border p-4 space-y-3">
@@ -1584,12 +1584,14 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                         <div className="space-y-0.5">
                           <div className="text-base flex items-center space-x-2 font-medium">
                             <i className="fas fa-store text-emerald-600"></i>
-                            <span>Visita presencial mensal obrigatória</span>
+                            <span>Visita presencial do ciclo obrigatória</span>
                           </div>
                           <p className="text-sm text-muted-foreground">
-                            Cliente virtual que deve receber ao menos 1 visita <strong>presencial</strong> por mês,
-                            no dia da região (vizinhos do vendedor). Se a visita do dia não tiver check-in, o cliente
-                            passa a presencial automaticamente; volta a virtual quando a visita presencial ocorrer.
+                            Cliente virtual que recebe visita <strong>presencial</strong> dentro da própria rota:
+                            semanal e quinzenal, 1 a cada 4 visitas; mensal, mês sim, mês não (contando da última
+                            visita presencial feita). Na Rota do Dia ela aparece com o selo "Virtual – Ciclo presencial".
+                            Sem check-in, o cliente passa a presencial em toda a periodicidade e volta a virtual na
+                            próxima visita com check-in.
                           </p>
                         </div>
                         <div className="flex items-center space-x-2">
@@ -1602,38 +1604,6 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                           />
                         </div>
                       </div>
-                      {pmEnabled && (
-                        <div className="pt-1 border-t">
-                          <label className="text-sm font-medium flex items-center space-x-2 mt-2">
-                            <i className="fas fa-calendar-day text-emerald-600"></i>
-                            <span>Dia da visita presencial</span>
-                          </label>
-                          {isAdminUser ? (
-                            <>
-                              <select
-                                value={pmWeekday}
-                                onChange={(e) => setPmWeekday(e.target.value)}
-                                className="mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm bg-background"
-                                data-testid="select-presential-monthly-weekday"
-                              >
-                                <option value="">Automático (pela região)</option>
-                                <option value="Seg">Segunda-feira</option>
-                                <option value="Ter">Terça-feira</option>
-                                <option value="Qua">Quarta-feira</option>
-                                <option value="Qui">Quinta-feira</option>
-                                <option value="Sex">Sexta-feira</option>
-                              </select>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Deixe em "Automático" para o sistema escolher pelo dia de rota da região. A semana do mês segue a Semana de Atendimento do cliente.
-                              </p>
-                            </>
-                          ) : (
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {pmWeekday ? `Dia fixado pelo admin: ${pmWeekday}.` : 'Automático (pela região).'} Somente o Admin pode alterar o dia.
-                            </p>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
                 )}
