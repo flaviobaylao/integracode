@@ -17,6 +17,7 @@ export const PATH_TO_SECTION: Record<string, string> = {
   "/minha-agenda": "Vendas",
   "/visitas": "Vendas",
   "/resumo-visitas": "Vendas",
+  "/marketing-vendas": "Vendas",
   // Clientes
   "/clientes-ativos": "Clientes",
   "/clientes-virtuais-hoje": "Clientes",
@@ -115,6 +116,7 @@ export const PAGE_MAP: Record<string, { label: string; group: string }> = {
   "/visit-routes": { label: "Rota de Visitas", group: "Vendas" },
   "/rota-do-dia": { label: "Rota do Dia", group: "Vendas" },
   "/consulta-local": { label: "Consulta no Local", group: "Vendas" },
+  "/marketing-vendas": { label: "Marketing de Vendas", group: "Vendas" },
   "/vendas-digitais": { label: "Vendas Digitais", group: "Vendas" },
   "/canais": { label: "Canais", group: "Vendas" },
   "/carrinhos-loja": { label: "Carrinhos da Loja", group: "Vendas" },
