@@ -229,7 +229,39 @@ function faltasPorLote(_n: NecessidadeProduto, _lotesEmUso: Array<{ id: string; 
 
 // Conferencia (sem travar). Usada para recusar cedo, com mensagem, antes de
 // qualquer efeito colateral. A baixa confere de novo dentro da transacao.
+// (09/nov/2026) Rede de seguranca: linha cujo id NAO e um produto do catalogo (pedido
+// antigo da IA gravado com id aleatorio, importacao, edicao manual) e resolvida pelo
+// NOME (case/espacos ignorados) em `products`. Sem isso a conferencia procurava lotes
+// de um product_id inexistente e acusava "disponivel 0" com estoque na prateleira.
+// Nao altera o card: so a copia usada na conferencia/baixa.
+export async function resolverProdutosPorNome<T extends LinhaPedido>(products: T[] | null | undefined): Promise<T[] | null | undefined> {
+  if (!Array.isArray(products) || !products.length) return products;
+  const ids = Array.from(new Set(products.map((p) => String(p.id || p.productId || '')).filter(Boolean)));
+  let existentes = new Set<string>();
+  if (ids.length) {
+    const r = rowsOf(await db.execute(sql`SELECT id FROM products WHERE id = ANY(${ids}::text[])`));
+    existentes = new Set(r.map((x: any) => String(x.id)));
+  }
+  const pendentes = products.filter((p) => !existentes.has(String(p.id || p.productId || '')) && String(p.name || '').trim());
+  if (!pendentes.length) return products;
+  const nomes = Array.from(new Set(pendentes.map((p) => String(p.name).trim().toLowerCase())));
+  const r = rowsOf(await db.execute(sql`
+    SELECT id, lower(trim(name)) AS nome, is_active FROM products WHERE lower(trim(name)) = ANY(${nomes}::text[])
+    ORDER BY (is_active = true) DESC, created_at ASC`));
+  const porNome = new Map<string, string>();
+  for (const x of r) if (!porNome.has(String(x.nome))) porNome.set(String(x.nome), String(x.id));
+  return products.map((p) => {
+    const atual = String(p.id || p.productId || '');
+    if (existentes.has(atual)) return p;
+    const novo = porNome.get(String(p.name || '').trim().toLowerCase());
+    if (!novo) return p; // segue como esta: agregarLinhas/conferencia vao acusar o produto
+    console.warn(`⚠️ [ESTOQUE] linha "${p.name}" com id fora do catalogo (${atual || 'vazio'}) → resolvida pelo nome para ${novo}`);
+    return { ...p, id: novo, productId: novo };
+  });
+}
+
 export async function verificarEstoqueEmUso(instanceId: string, products: LinhaPedido[] | null | undefined): Promise<{ valid: boolean; shortages: FaltaEstoque[]; semProduto: string[] }> {
+  products = await resolverProdutosPorNome(products);
   const { necessidades, semProduto } = agregarLinhas(products);
   const shortages: FaltaEstoque[] = [];
   const promover = await promoverBloqueadoNoFaturamento();
@@ -275,7 +307,7 @@ export async function baixarEstoqueEmUso(opts: {
   // cliques/retentativas simultaneos nao baixarem duas vezes o mesmo pedido.
   impedirDuplicadaDesde?: string | null;
 }): Promise<MapaLotes> {
-  const { necessidades, semProduto } = agregarLinhas(opts.products);
+  const { necessidades, semProduto } = agregarLinhas(await resolverProdutosPorNome(opts.products));
   if (semProduto.length) throw new LinhaSemProdutoError(semProduto);
   const mapa: MapaLotes = {};
   if (!necessidades.length) return mapa;
