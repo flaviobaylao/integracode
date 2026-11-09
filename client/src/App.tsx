@@ -48,6 +48,7 @@ import HotsiteOrders from "@/pages/HotsiteOrders";
 import Canais from "@/pages/Canais";
 import LeadsManagement from "@/pages/LeadsManagement";
 import ConsultaLocal from "@/pages/ConsultaLocal";
+import MarketingVendas from "@/pages/MarketingVendas";
 import MobileConsultaFab from "@/components/MobileConsultaFab";
 import RecursosProspeccao from "@/pages/RecursosProspeccao";
 import TelemarketingDashboard from "@/pages/TelemarketingDashboard";
@@ -320,6 +321,7 @@ function Router() {
           <Route path="/canais" component={Canais} />
           <Route path="/leads" component={LeadsManagement} />
           <Route path="/consulta-local" component={ConsultaLocal} />
+          <Route path="/marketing-vendas" component={MarketingVendas} />
           <Route path="/vendas-digitais" component={VendasDigitais} />
           <Route path="/whatsapp" component={WhatsAppSetup} />
           <Route path="/telemarketing/dashboard" component={TelemarketingDashboard} />
