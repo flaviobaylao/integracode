@@ -3289,6 +3289,9 @@ app.post('/api/admin/checkin/max-dist', async (req: Request, res: Response) => {
   // comissao, bonus e km por colaborador no mes — 18/out/2026.
   // Rotas /api/resumo-recebiveis*.
   try { registerResumoRecebiveisRoutes(app); } catch (e) { console.error('[resumo-receb]', e); }
+  // Marketing de Vendas (modulo de Vendas): tabelas de precos, portfolio e posts
+  // para toda a equipe — 09/nov/2026. Rotas /api/marketing-vendas*.
+  try { const { registerMarketingVendasRoutes } = await import('./marketing-vendas-routes'); registerMarketingVendasRoutes(app); } catch (e: any) { console.error('[mkt-vendas]', e?.message || e); }
   try { registerTrocaRegistrosRoutes(app); } catch (e) { console.error('[troca-registros]', e); }
   try { const { registerGestaoTrocasRoutes } = await import('./gestao-trocas-routes'); registerGestaoTrocasRoutes(app); } catch (e: any) { console.error('[gestao-trocas]', e?.message || e); }
 
