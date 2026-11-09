@@ -404,7 +404,7 @@ function CardRepescagemNaoAtendida({ r, resolved }: { r: any; resolved?: boolean
       {!resolved && (
         <div className="flex flex-wrap gap-2">
           <Button size="sm" className="bg-blue-600 hover:bg-blue-700" disabled={busy || sel.length === 0} data-testid={`rep-na-devolver-${r.id}`}
-            onClick={() => { if (window.confirm(`Devolver ${sel.length} cliente(s) para a repescagem?\n\nEles entram no próximo sorteio (decisão do Admin) e são redistribuídos conforme o painel de carteiras.`)) devolverMut.mutate(); }}>
+            onClick={() => { if (window.confirm(`Devolver ${sel.length} cliente(s) para a repescagem?\n\nEles entram no sorteio do próximo dia útil (decisão do Admin) e são redistribuídos conforme o painel de carteiras.`)) devolverMut.mutate(); }}>
             {devolverMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Voltar para a repescagem ({sel.length})</>}
           </Button>
           <Button size="sm" variant="outline" disabled={busy} data-testid={`rep-na-lido-${r.id}`}
@@ -745,9 +745,9 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
           <EnviarParaAgenda r={r} />
           {r.entityType === "customer" && (<>
             <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50" disabled={busy}
-              title="Envia este cliente para a repescagem no dia seguinte (decisão do Admin). Depois ele volta a respeitar as regras normais."
+              title="Envia este cliente para a repescagem no próximo dia útil (decisão do Admin). Depois ele volta a respeitar as regras normais."
               data-testid={`cr-repescagem-${r.id}`}
-              onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE amanhã (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
+              onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE no próximo dia útil (sexta → segunda) (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
               {forcarRepescagemMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Repescagem</>}
             </Button>
             <Button size="sm" variant="outline" className="border-red-400 text-red-700 hover:bg-red-50" disabled={busy}
@@ -985,9 +985,9 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
           <div className="flex items-center gap-2 flex-wrap">
             {r.entityType === "customer" && (
               <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50 h-7 text-xs" disabled={forcarRepescagemMut.isPending}
-                title="Envia este cliente para a repescagem no dia seguinte (decisão do Admin). Depois ele volta a respeitar as regras normais."
+                title="Envia este cliente para a repescagem no próximo dia útil (decisão do Admin). Depois ele volta a respeitar as regras normais."
                 data-testid={`cr-repescagem-resolved-${r.id}`}
-                onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE amanhã (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
+                onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE no próximo dia útil (sexta → segunda) (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
                 {forcarRepescagemMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Target className="h-3.5 w-3.5 mr-1" /> Repescagem</>}
               </Button>
             )}
