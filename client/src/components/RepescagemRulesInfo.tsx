@@ -53,7 +53,8 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li>Segue <b>periodicidade e dia de rota</b>, o mesmo raciocínio do Resumo de Visitas (ciclos/bolinhas).</li>
                 <li>Cai <b>somente quando a última visita agendada NÃO foi feita</b> (bolinha vermelha — sem check-in, sem atendimento virtual e sem pedido). <b>Se a visita foi feita — com ou sem pedido</b> (bolinha amarela ou verde) — o cliente <b>não cai</b>. A visita conta como feita pelo check-in do card (mesma fonte do Resumo de Visitas), check-in na rota, atendimento virtual ou pedido.</li>
                 <li><b>Semana de atendimento do cadastro:</b> quando o cliente tem semana definida (1ª, 2ª, 3ª, 4ª, última, 1ª e 3ª, 2ª e 4ª), o dia de rota considerado é <b>exatamente o da rota real</b> — semanas do mês contadas pela segunda-feira. Ex.: cliente mensal da <b>3ª semana</b> visitado na segunda 19/10 cai em 20/10 se não for atendido. Sem semana definida ("toda semana"), vale o calendário pela periodicidade.</li>
-                <li><b>Semanal</b>: cai 1 dia após o dia de rota, se a última bolinha estiver vermelha.</li>
+                <li><b>Só de segunda a sexta:</b> não há sorteio de repescagem no <b>sábado</b> nem no <b>domingo</b>. O cliente não atendido na <b>sexta</b> cai na <b>segunda</b>.</li>
+                <li><b>Semanal</b>: cai 1 dia útil após o dia de rota, se a última bolinha estiver vermelha.</li>
                 <li><b>Quinzenal/Mensal</b>: se ainda há visita agendada <b>nesta semana</b> (carência da próxima visita), não cai; só cai <b>1 dia depois da data prevista</b>, se a bolinha continuar vermelha.</li>
                 <li><b>Permanece</b> enquanto a última bolinha estiver vermelha. <b>Assim que houver pedido (venda) OU qualquer registro de atendimento — do vendedor ou do atendente</b> (check-in na rota/card, check-in da agenda, atendimento virtual/resgate, visita concluída ou repescagem marcada como atendida), com ou sem venda, o cliente <b>sai da lista</b> na hora e <b>não cai no dia seguinte</b>; entra em um novo ciclo e só volta se a próxima visita ficar vermelha.</li>
                 <li><b>Proximidade da próxima visita:</b> o cliente <b>não permanece em repescagem colado na próxima visita</b>. Quando a <b>próxima visita agendada é hoje</b> (tem visita na rota do dia) <b>ou amanhã</b> (um dia antes), ele <b>sai da lista</b> e aguarda o <b>novo ciclo</b> — se essa visita ficar sem atendimento/venda, ele volta a cair 1 dia depois. Vale para todas as periodicidades.</li>
@@ -93,7 +94,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Botão "Repescagem" nos reports (decisão do Admin)</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Todo <b>report</b> (não-venda, justificativa, etc.) tem um botão <b>"Repescagem"</b> no Inbox do admin.</li>
-                <li>Ao acionar, o cliente é forçado a cair em repescagem <b>excepcionalmente no dia seguinte</b>, mesmo que pelas regras normais ele <b>não cairia</b> (ex.: foi atendido ou já comprou). É uma inclusão <b>manual, por decisão do Admin</b>.</li>
+                <li>Ao acionar, o cliente é forçado a cair em repescagem <b>excepcionalmente no próximo dia útil</b> (decidido na sexta, cai na segunda), mesmo que pelas regras normais ele <b>não cairia</b> (ex.: foi atendido ou já comprou). É uma inclusão <b>manual, por decisão do Admin</b>.</li>
                 <li><b>Só vale para aquele dia.</b> Depois disso o cliente <b>volta a respeitar todas as regras normais</b> de repescagem — não é reinjetado nos dias seguintes (só volta a cair se a próxima visita ficar vermelha).</li>
                 <li>Ao acionar, o <b>report sai de pendentes e vai para Resolvidas</b> no Inbox.</li>
                 <li>Fica registrado no <b>histórico do cliente</b>.</li>
@@ -118,9 +119,9 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
             <div>
               <p className="font-semibold mb-1">Automação</p>
               <ul className="list-disc pl-5 space-y-1">
-                <li>Job diário às <b>00:10 (horário de Brasília)</b>: gera as rotas do dia e roda a distribuição da repescagem, capturando o dia anterior inteiro — todos os dias.</li>
+                <li>Job às <b>00:10 (horário de Brasília)</b>: gera as rotas do dia e, <b>de segunda a sexta</b>, roda a distribuição da repescagem (na segunda entram também os não atendidos de sexta). Sábado e domingo: sem sorteio.</li>
                 <li>Job diário às <b>18:00 (horário de Brasília)</b>: libera todas as capturas de atendimento do dia.</li>
-                <li><b>Report das 18h no Inbox:</b> no mesmo horário, o admin recebe <b>um único report</b> com todos os clientes que caíram na repescagem do dia e <b>não foram atendidos</b> (sem atendimento virtual, check-in de rota ou pedido no dia). No report ele escolhe se eles <b>voltam para a repescagem</b> (todos ou os marcados) — entram no próximo sorteio e são <b>redistribuídos</b> conforme o painel de carteiras — ou <b>não devolve</b> (seguem as regras normais).</li>
+                <li><b>Report das 18h no Inbox:</b> no mesmo horário, o admin recebe <b>um único report</b> com todos os clientes que caíram na repescagem do dia e <b>não foram atendidos</b> (sem atendimento virtual, check-in de rota ou pedido no dia). No report ele escolhe se eles <b>voltam para a repescagem</b> (todos ou os marcados) — entram no sorteio do <b>próximo dia útil</b> e são <b>redistribuídos</b> conforme o painel de carteiras — ou <b>não devolve</b> (seguem as regras normais).</li>
               </ul>
             </div>
           </div>
