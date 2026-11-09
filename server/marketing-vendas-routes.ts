@@ -66,6 +66,11 @@ function ensureSchema(): Promise<void> {
         "created_at timestamptz DEFAULT now(), " +
         "updated_at timestamptz DEFAULT now())"
       ));
+      // dados: valores da tabela de preços (modelo, preços por sabor, pedido
+      // mínimo) — preenche o editor de preços do admin. Null nos demais.
+      await db.execute(sql.raw(
+        "ALTER TABLE marketing_vendas_materiais ADD COLUMN IF NOT EXISTS dados jsonb"
+      ));
       await db.execute(sql.raw(
         "CREATE INDEX IF NOT EXISTS idx_mkt_vendas_cat ON marketing_vendas_materiais (categoria, ativo, ordem)"
       )).catch(() => {});
@@ -89,13 +94,40 @@ function mapMaterial(row: any) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdByName: row.created_by_name || "",
+    dados: row.dados || null,
     // ?v= muda quando o arquivo muda: o service worker não serve versão velha.
     url: `/api/marketing-vendas/${row.id}/arquivo?v=${v}`,
   };
 }
 
 const COLS = sql`m.id, m.titulo, m.categoria, m.descricao, m.ordem, m.ativo, m.file_name, m.mimetype,
-                 m.file_size, m.created_at, m.updated_at`;
+                 m.file_size, m.created_at, m.updated_at, m.dados`;
+
+// Valida o JSON do editor de preços: { modelo, pedidoMinimo, precos: { sabor: { p350, p900 } } }.
+function lerDadosTabela(raw: any): any | null {
+  let d: any = raw;
+  if (typeof raw === "string") { try { d = JSON.parse(raw); } catch { return null; } }
+  if (!d || typeof d !== "object") return null;
+  const modelo = String(d.modelo || "").slice(0, 40);
+  const pedidoMinimo = Number(d.pedidoMinimo);
+  if (!modelo || !Number.isFinite(pedidoMinimo) || pedidoMinimo < 0 || pedidoMinimo > 100000) return null;
+  if (!d.precos || typeof d.precos !== "object") return null;
+  const precos: Record<string, { p350: number; p900: number }> = {};
+  for (const [k, v] of Object.entries<any>(d.precos)) {
+    const p350 = Number(v?.p350), p900 = Number(v?.p900);
+    if (!/^[a-z_]{2,40}$/.test(k) || !(p350 > 0) || !(p900 > 0) || p350 > 10000 || p900 > 10000) return null;
+    precos[k] = { p350: Math.round(p350 * 100) / 100, p900: Math.round(p900 * 100) / 100 };
+  }
+  if (!Object.keys(precos).length) return null;
+  return { modelo, pedidoMinimo: Math.round(pedidoMinimo * 100) / 100, precos };
+}
+
+// "pedido mínimo R$ 200" na descrição acompanha o valor novo.
+function ajustarDescricao(desc: string | null, minimo: number): string | null {
+  if (!desc) return desc;
+  const v = Number.isInteger(minimo) ? String(minimo) : minimo.toFixed(2).replace(".", ",");
+  return desc.replace(/pedido m[ií]nimo\s*R\$\s*[\d.,]+/i, `pedido mínimo R$ ${v}`);
+}
 
 export function registerMarketingVendasRoutes(app: Express) {
   // Lista. Equipe vê só os ativos; gestor pode pedir ?todos=1.
@@ -164,7 +196,7 @@ export function registerMarketingVendasRoutes(app: Express) {
                 ${(file.originalname || "material").slice(0, 200)},
                 ${file.mimetype || "application/octet-stream"}, ${file.size},
                 ${file.buffer.toString("base64")}, ${req.currentUser?.id || null})
-        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at`);
+        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at, dados`);
       const material = mapMaterial(r.rows?.[0] || {});
       console.log(`[MKT-VENDAS] novo: ${material.titulo} (${categoria}, ${material.fileSize}B)`);
       res.json({ message: "Material publicado", material });
@@ -186,12 +218,43 @@ export function registerMarketingVendasRoutes(app: Express) {
             mimetype = ${file.mimetype || "application/octet-stream"}, file_size = ${file.size},
             data = ${file.buffer.toString("base64")}, updated_at = now()
         WHERE id = ${req.params.id}
-        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at`);
+        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at, dados`);
       if (!r.rows?.length) return res.status(404).json({ message: "Material não encontrado" });
       res.json({ message: "Arquivo substituído", material: mapMaterial(r.rows[0]) });
     } catch (e: any) {
       console.error("[MKT-VENDAS] substituir:", e?.message || e);
       res.status(500).json({ message: "Falha ao substituir o arquivo" });
+    }
+  });
+
+  // Editor de preços (só admin): recebe a arte já redesenhada no navegador com
+  // os valores novos + o JSON dos valores. Substitui o arquivo para a equipe.
+  app.put("/api/marketing-vendas/:id/precos", authenticateUser, requireRole(["admin"]), multerArquivo, async (req: any, res) => {
+    try {
+      await ensureSchema();
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file || !String(file.mimetype || "").startsWith("image/")) return res.status(400).json({ message: "Envie a imagem da tabela" });
+      const dados = lerDadosTabela(req.body?.dados);
+      if (!dados) return res.status(400).json({ message: "Valores da tabela inválidos" });
+      const atual: any = await db.execute(sql`SELECT descricao, categoria FROM marketing_vendas_materiais WHERE id = ${req.params.id}`);
+      const row = atual.rows?.[0];
+      if (!row) return res.status(404).json({ message: "Material não encontrado" });
+      if (row.categoria !== "tabelas") return res.status(400).json({ message: "Só tabelas de preços têm valores editáveis" });
+      const r: any = await db.execute(sql`
+        UPDATE marketing_vendas_materiais
+        SET file_name = ${(file.originalname || "tabela.png").slice(0, 200)},
+            mimetype = ${file.mimetype}, file_size = ${file.size},
+            data = ${file.buffer.toString("base64")},
+            dados = ${JSON.stringify(dados)}::jsonb,
+            descricao = ${ajustarDescricao(row.descricao, dados.pedidoMinimo)},
+            updated_at = now()
+        WHERE id = ${req.params.id}
+        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at, dados`);
+      console.log(`[MKT-VENDAS] precos atualizados: ${req.params.id} por ${req.currentUser?.id} (min ${dados.pedidoMinimo})`);
+      res.json({ message: "Tabela atualizada", material: mapMaterial(r.rows[0]) });
+    } catch (e: any) {
+      console.error("[MKT-VENDAS] precos:", e?.message || e);
+      res.status(500).json({ message: "Falha ao salvar os preços" });
     }
   });
 
@@ -206,11 +269,18 @@ export function registerMarketingVendasRoutes(app: Express) {
       if (typeof b.descricao === "string") sets.push(sql`descricao = ${b.descricao.trim().slice(0, 300) || null}`);
       if (b.ordem !== undefined && Number.isFinite(Number(b.ordem))) sets.push(sql`ordem = ${Math.trunc(Number(b.ordem))}`);
       if (typeof b.ativo === "boolean") sets.push(sql`ativo = ${b.ativo}`);
+      if (b.dados !== undefined) {
+        // valores da tabela: só admin (mesma regra do editor de preços)
+        if (String(req.currentUser?.role || "") !== "admin") return res.status(403).json({ message: "Só admin altera os valores da tabela" });
+        const dados = b.dados === null ? null : lerDadosTabela(b.dados);
+        if (b.dados !== null && !dados) return res.status(400).json({ message: "Valores da tabela inválidos" });
+        sets.push(sql`dados = ${dados ? JSON.stringify(dados) : null}::jsonb`);
+      }
       if (!sets.length) return res.status(400).json({ message: "Nada a alterar" });
       sets.push(sql`updated_at = now()`);
       const r: any = await db.execute(sql`
         UPDATE marketing_vendas_materiais SET ${sql.join(sets, sql`, `)} WHERE id = ${req.params.id}
-        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at`);
+        RETURNING id, titulo, categoria, descricao, ordem, ativo, file_name, mimetype, file_size, created_at, updated_at, dados`);
       if (!r.rows?.length) return res.status(404).json({ message: "Material não encontrado" });
       res.json({ message: "Material atualizado", material: mapMaterial(r.rows[0]) });
     } catch (e: any) {
