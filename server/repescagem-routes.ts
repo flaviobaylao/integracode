@@ -1329,8 +1329,28 @@ async function geocodeMissingCandidates(customerIds: string[]): Promise<void> {
   finally { __geoRepRunning = false; }
 }
 
+// REPESCAGEM SÓ DE SEGUNDA A SEXTA (nov/2026, decisão do Flavio): não há sorteio no sábado nem
+// no domingo. O cliente não atendido na sexta cai na SEGUNDA (o motor reavalia na segunda e a
+// visita perdida de sexta continua vermelha). Envios manuais ("Repescagem" do report e "Voltar
+// para a repescagem" do report das 18h) vão para o PRÓXIMO DIA ÚTIL.
+function isDiaUtilRep(d: string): boolean { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w >= 1 && w <= 5; }
+function proximoDiaUtilRep(d: string): string {
+  const x = new Date(d + 'T12:00:00Z');
+  do { x.setUTCDate(x.getUTCDate() + 1); } while (x.getUTCDay() === 0 || x.getUTCDay() === 6);
+  return x.toISOString().slice(0, 10);
+}
+function diaUtilAnteriorRep(d: string): string {
+  const x = new Date(d + 'T12:00:00Z');
+  do { x.setUTCDate(x.getUTCDate() - 1); } while (x.getUTCDay() === 0 || x.getUTCDay() === 6);
+  return x.toISOString().slice(0, 10);
+}
+
 async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promise<any> {
   const drawDate = opts.drawDate;
+  if (!isDiaUtilRep(drawDate)) {
+    return { skipped: true, reason: 'fim de semana: repescagem só de segunda a sexta', drawDate,
+      externalSellers: 0, telemarketers: 0, candidates: 0, withoutCoords: 0, allocatedExternal: 0, allocatedTelemarketing: 0, inserted: 0 };
+  }
   await ensureFormerExcludedOff();
 
   // Idempotência: se o dia já foi sorteado, não refaz (a menos que force).
@@ -1374,7 +1394,8 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
       SELECT f.customer_id AS cid
       FROM repescagem_forced f
       JOIN customers c ON c.id = f.customer_id
-      WHERE f.forced_date = ${drawDate}
+      -- Na segunda também entram os forçados que caíram no sábado/domingo (sem sorteio no fim de semana).
+      WHERE f.forced_date > ${diaUtilAnteriorRep(drawDate)} AND f.forced_date <= ${drawDate}
         AND COALESCE(c.is_active, true) = true
         AND COALESCE(c.situacao, '') NOT ILIKE 'inativo'
         AND COALESCE(c.is_supplier, false) = false`);
@@ -1897,10 +1918,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
       if (cust[0].isActive === false) return res.status(400).json({ message: 'Cliente inativo não entra em repescagem' });
 
       // Dia seguinte (horário de Brasília).
-      const forcedDate = (() => {
-        const d = new Date(brTodayStr() + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1);
-        return d.toISOString().split('T')[0];
-      })();
+      // Próximo DIA ÚTIL (sem repescagem no sábado/domingo): decidido na sexta, cai na segunda.
+      const forcedDate = proximoDiaUtilRep(brTodayStr());
 
       await ensureRepescagemForcedTable();
       await db.execute(sql`
@@ -3020,8 +3039,10 @@ export function registerRepescagemRoutes(app: Express, opts: {
       if (ids.length === 0) return res.status(400).json({ message: 'Nenhum cliente selecionado' });
 
       const today = brTodayStr();
-      const diaSeguinte = (() => { const d = new Date(String(det.data || today) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
-      const forcedDate = diaSeguinte < today ? today : diaSeguinte;
+      // Próximo DIA ÚTIL após o report (sexta → segunda). Decidido depois desse dia: hoje, se for
+      // dia útil; senão o próximo dia útil.
+      const diaSeguinte = proximoDiaUtilRep(String(det.data || today));
+      const forcedDate = diaSeguinte < today ? (isDiaUtilRep(today) ? today : proximoDiaUtilRep(today)) : diaSeguinte;
       await ensureRepescagemForcedTable();
       let devolvidos = 0;
       for (const cid of ids) {

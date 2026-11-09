@@ -524,11 +524,17 @@ cron.schedule('10 0 * * *', async () => {
     console.log(`🗺️ [REPESCAGEM-00H] Rotas de hoje (${hojeStr}): ${rotasGeradas} geradas, ${rotasPuladas} puladas, ${rotasErro} erros`);
 
     // 2) Rodar a distribuicao/sorteio da repescagem p/ HOJE sobre as rotas geradas.
+    // Repescagem só de SEGUNDA a SEXTA: no sábado/domingo o sorteio não roda (o não atendido de
+    // sexta cai na segunda). As rotas acima continuam sendo geradas normalmente.
     const r = await runRepescagemDrawForDate(hojeStr, { force: true });
-    console.log(`🎯 [REPESCAGEM-00H] Distribuicao ${hojeStr}: externos=${r?.allocatedExternal} telemarketing=${r?.allocatedTelemarketing} (cand=${r?.candidates}, semCoord=${r?.withoutCoords})`);
-    // Fase 2: notifica os vendedores externos por WhatsApp (DESLIGADO por padrao ate flag 'repescagem_whatsapp_enabled'='true').
-    const wa = await notifyRepescagemWhatsApp();
-    console.log(`📲 [REPESCAGEM-00H] WhatsApp vendedores externos: ${wa?.enabled ? 'ENVIADO' : 'dry-run'} (${wa?.vendors} vendedor(es)).`);
+    if (r?.skipped) {
+      console.log(`⏸️ [REPESCAGEM-00H] ${hojeStr}: sem sorteio (${r.reason}).`);
+    } else {
+      console.log(`🎯 [REPESCAGEM-00H] Distribuicao ${hojeStr}: externos=${r?.allocatedExternal} telemarketing=${r?.allocatedTelemarketing} (cand=${r?.candidates}, semCoord=${r?.withoutCoords})`);
+      // Fase 2: notifica os vendedores externos por WhatsApp (DESLIGADO por padrao ate flag 'repescagem_whatsapp_enabled'='true').
+      const wa = await notifyRepescagemWhatsApp();
+      console.log(`📲 [REPESCAGEM-00H] WhatsApp vendedores externos: ${wa?.enabled ? 'ENVIADO' : 'dry-run'} (${wa?.vendors} vendedor(es)).`);
+    }
   } catch (e: any) {
     console.error('❌ [REPESCAGEM-00H] falha:', e?.message || e);
   }
