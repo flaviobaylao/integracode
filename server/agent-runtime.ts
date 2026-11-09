@@ -670,7 +670,10 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
 
     const products = resolved.map((r) => {
       const unit = tipo === 'revenda' ? priceRevenda(r.p, table) : priceConsumer(r.p, table as any);
-      return { id: rid(), name: r.p.name, quantity: r.qtd, unitPrice: unit, totalPrice: Number((unit * r.qtd).toFixed(2)) };
+      // (09/nov/2026) id = id do produto do CATALOGO, nunca aleatorio: a trava de estoque
+      // (estoque-em-uso.ts) e a baixa de lote procuram inventory_lots por product_id, e um
+      // id inventado dava "estoque em uso insuficiente — disponivel 0" com lote na prateleira.
+      return { id: String(r.p.id), productId: String(r.p.id), name: r.p.name, quantity: r.qtd, unitPrice: unit, totalPrice: Number((unit * r.qtd).toFixed(2)) };
     });
     let total = products.reduce((s, p) => s + p.totalPrice, 0);
     if (!(total > 0)) return 'Não consegui calcular o valor (tabela de preço sem valor para esses itens). Melhor transferir para um atendente humano.';
