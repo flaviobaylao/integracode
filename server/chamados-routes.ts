@@ -470,6 +470,25 @@ export function registerChamados(app: Express) {
   });
 
   // Contadores (badge do menu)
+  // Marcar como lidos (ex.: "Marcar todos como lidos" em Arquivados). Só chamados que o usuário vê.
+  app.post("/api/chamados/marcar-lidos", authenticateUser, async (req: any, res: Response) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map((x: any) => String(x)).slice(0, 500) : [];
+      if (!ids.length) return res.json({ ok: true, marcados: 0 });
+      const vis = await carregarVisiveis(req.currentUser, isAdminUser(req.currentUser) ? "todos" : "tudo");
+      const permitidos = new Set(vis.chamados.map((c) => String(c.id)));
+      const uid = String(req.currentUser.id);
+      let n = 0;
+      for (const id of ids) {
+        if (!permitidos.has(id)) continue;
+        await db.execute(sql`INSERT INTO chamado_leituras (chamado_id, user_id, lido_em) VALUES (${id}, ${uid}, now())
+          ON CONFLICT (chamado_id, user_id) DO UPDATE SET lido_em = now()`);
+        n++;
+      }
+      res.json({ ok: true, marcados: n });
+    } catch (e: any) { res.status(500).json({ message: e?.message || String(e) }); }
+  });
+
   app.get("/api/chamados/contadores", authenticateUser, async (req: any, res: Response) => {
     try {
       const vis = await carregarVisiveis(req.currentUser, "tudo");

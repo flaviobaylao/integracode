@@ -285,6 +285,52 @@ function moduloVinculado(c: Chamado): { url: string; rotulo: string; etapa: stri
   return { url: `/${m[1]}?id=${m[2]}&de=${c.id}`, rotulo, etapa };
 }
 
+// Pedido de módulo (Viagem VG-xxxx / Reembolso RB-xxxx) ao qual o chamado pertence.
+// Os chamados automáticos de cada etapa (aprovar, pagar, prestação...) são agrupados
+// numa linha só por pedido, na aba "Viagens e Reembolsos".
+type Pedido = { key: string; codigo: string; modulo: "reembolsos" | "viagens"; itemId: string; etapa: string };
+function pedidoDe(c: Chamado): Pedido | null {
+  const m = String(c.descricao || "").match(/\/(reembolsos|viagens)\?id=([0-9a-zA-Z-]{8,})/);
+  if (!m) return null;
+  const cod = (c.assunto.match(/\b(VG|RB)-\d+/) || [])[0] || (m[1] === "reembolsos" ? "Reembolso" : "Viagem");
+  const etapa = (c.assunto.split(" — ")[1] || c.assunto).replace(/\s*\(encaminhado por [^)]*\)/i, "").trim();
+  return { key: `${m[1]}:${m[2]}`, codigo: cod, modulo: m[1] as any, itemId: m[2], etapa };
+}
+type Grupo = {
+  key: string; codigo: string; modulo: "reembolsos" | "viagens"; itemId: string;
+  membros: Chamado[]; abertos: Chamado[]; comigo: Chamado[]; naoLido: boolean; concluido: boolean;
+  etapaAtual: string; pendentesCom: string[]; resumo: string; ultimoNumero: number; ultimaData: string;
+};
+function agrupar(lista: Chamado[]): Grupo[] {
+  const mapa = new Map<string, Grupo>();
+  for (const c of lista) {
+    const p = pedidoDe(c);
+    if (!p) continue;
+    let g = mapa.get(p.key);
+    if (!g) {
+      g = { key: p.key, codigo: p.codigo, modulo: p.modulo, itemId: p.itemId, membros: [], abertos: [], comigo: [], naoLido: false, concluido: true,
+        etapaAtual: "", pendentesCom: [], resumo: "", ultimoNumero: 0, ultimaData: "" };
+      mapa.set(p.key, g);
+    }
+    g.membros.push(c);
+  }
+  const out = Array.from(mapa.values());
+  for (const g of out) {
+    g.membros.sort((a, b) => a.numero - b.numero);
+    g.abertos = g.membros.filter((c) => !encerrado(c.status));
+    g.comigo = g.abertos.filter((c) => c.papel === "dono");
+    g.naoLido = g.membros.some((c) => c.naoLido);
+    g.concluido = g.abertos.length === 0;
+    const ult = g.membros[g.membros.length - 1];
+    g.ultimoNumero = ult.numero; g.ultimaData = ult.createdAt;
+    g.etapaAtual = pedidoDe(g.abertos[g.abertos.length - 1] || ult)?.etapa || "";
+    g.pendentesCom = Array.from(new Set(g.abertos.map((c) => c.destinoNome)));
+    g.resumo = String(g.membros[0].descricao || "").split("\n")[0].replace(/:$/, "").slice(0, 140);
+  }
+  return out;
+}
+const nomeModulo = (m: string) => (m === "reembolsos" ? "Reembolso" : "Viagem");
+
 function diaBrasilia(iso: string) {
   try { return paraData(iso).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }); } catch { return ""; }
 }
@@ -305,6 +351,8 @@ export default function Chamados() {
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
   const [paradoMin, setParadoMin] = useState(0); // dias; 0 = qualquer
+  const [soNaoLidos, setSoNaoLidos] = useState(false);
+  const [verConcluidos, setVerConcluidos] = useState(false); // aba Viagens e Reembolsos
   // Ordem padrão: mais antigos em cima, os novos entram embaixo (A-Z). Seletor discreto troca.
   const [ordem, setOrdem] = useState<"asc" | "desc">(() => {
     try { return localStorage.getItem("chamados-ordem") === "desc" ? "desc" : "asc"; } catch { return "asc"; }
@@ -340,18 +388,26 @@ export default function Chamados() {
   const uid = perfil?.usuario?.id;
   // Os contadores de cada aba consideram só o que aparece nela: um chamado encerrado
   // (solucionado/cancelado) com novidade é contado na aba Arquivados, onde ele está.
-  const abertos = todos.filter((c) => !encerrado(c.status));
+  // Chamados automáticos de Viagens/Reembolsos ficam só na aba própria (agrupados por pedido).
+  const vinculado = (c: Chamado) => !!pedidoDe(c);
+  const comuns = todos.filter((c) => !vinculado(c));
+  const gruposTodos = useMemo(() => agrupar(todos.filter(vinculado)), [todos]); // eslint-disable-line react-hooks/exhaustive-deps
+  const abertos = comuns.filter((c) => !encerrado(c.status));
   const contagem = {
     tudo: abertos.filter((c) => c.naoLido).length,
     meus: abertos.filter((c) => c.autorId === uid && c.naoLido).length,
     recebidos: abertos.filter((c) => c.papel === "dono" && (c.naoLido || c.status === "novo")).length,
     consultas: abertos.filter((c) => c.papel === "consultado" && (c.naoLido || c.consultaPendenteParaMim)).length,
-    arquivados: todos.filter((c) => encerrado(c.status) && c.naoLido).length,
+    arquivados: comuns.filter((c) => encerrado(c.status) && c.naoLido).length,
+    pedidos: gruposTodos.filter((g) => g.naoLido || g.comigo.length > 0).length,
   };
   const q = busca.trim().toLowerCase();
   const pedeEncerrado = statusSel.some(encerrado);
-  const lista = todos
+  const ehPedidos = caixa === "pedidos";
+  const lista = (caixa === "todos" ? todos : ehPedidos ? todos.filter(vinculado) : comuns)
+    .filter((c) => !soNaoLidos || c.naoLido)
     .filter((c) => {
+      if (ehPedidos) return true; // a aba de pedidos trata os concluídos por grupo
       // Arquivo: solucionados saem das outras abas, mas continuam aparecendo na busca
       // (ou quando "Solucionado" é marcado no filtro de status).
       if (caixa === "arquivados") return encerrado(c.status);
@@ -381,9 +437,29 @@ export default function Chamados() {
       if (!q) return true;
       return (c.codigo + " " + c.assunto + " " + c.autorNome + " " + c.destinoNome + " " + (c.descricao || "")).toLowerCase().includes(q);
     })
-    .sort((a, b) => (ordem === "asc" ? a.numero - b.numero : b.numero - a.numero));
-  const qtdArquivados = todos.filter((c) => encerrado(c.status)).length;
-  const filtrosAtivos = statusSel.length > 0 || !!dataDe || !!dataAte || paradoMin > 0;
+    .sort((a, b) => (ordem === "asc" ? a.numero - b.numero : b.numero - a.numero))
+    .sort((a, b) => Number(b.naoLido) - Number(a.naoLido)); // não lidos sempre no topo
+  // aba Viagens e Reembolsos: um item por pedido
+  const grupos = ehPedidos
+    ? agrupar(lista)
+        .filter((g) => { const t = gruposTodos.find((x) => x.key === g.key); return verConcluidos || !!q || statusSel.some(encerrado) || !t?.concluido || !!t?.naoLido; }) // concluído com novidade continua visível
+        .map((g) => gruposTodos.find((x) => x.key === g.key) || g)
+        .sort((a, b) => (ordem === "asc" ? a.ultimoNumero - b.ultimoNumero : b.ultimoNumero - a.ultimoNumero))
+        .sort((a, b) => Number(b.naoLido || b.comigo.length > 0) - Number(a.naoLido || a.comigo.length > 0))
+    : [];
+  const qtdArquivados = comuns.filter((c) => encerrado(c.status)).length;
+  const qtdConcluidos = gruposTodos.filter((g) => g.concluido).length;
+  const filtrosAtivos = statusSel.length > 0 || !!dataDe || !!dataAte || paradoMin > 0 || soNaoLidos;
+  const selGrupo = selId ? gruposTodos.find((g) => g.membros.some((c) => c.id === selId)) || null : null;
+  const abrirGrupo = (g: Grupo) => setSelId((g.comigo[0] || g.abertos[g.abertos.length - 1] || g.membros[g.membros.length - 1]).id);
+  const marcarLidos = async (ids: string[]) => {
+    if (!ids.length) return;
+    try {
+      await fetch("/api/chamados/marcar-lidos", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+      toast({ title: `${ids.length} marcado${ids.length > 1 ? "s" : ""} como lido${ids.length > 1 ? "s" : ""}` });
+      refresh();
+    } catch { toast({ title: "Não foi possível marcar como lido", variant: "destructive" }); }
+  };
 
   // Em ordem crescente os novos ficam embaixo: ao abrir/trocar aba ou ordem, rola até o fim.
   const chaveRolagem = `${caixa}|${ordem}|${listaQ.dataUpdatedAt ? 1 : 0}`;
@@ -399,6 +475,7 @@ export default function Chamados() {
   ];
   if (atendeAlgum) abas.push(["recebidos", "Recebidos", contagem.recebidos]);
   if (atendeAlgum || todos.some((c) => c.papel === "consultado")) abas.push(["consultas", "Consultas para mim", contagem.consultas]);
+  if (gruposTodos.length) abas.push(["pedidos", "Viagens e Reembolsos", contagem.pedidos]);
   abas.push(["arquivados", `Arquivados${qtdArquivados ? ` (${qtdArquivados})` : ""}`, contagem.arquivados]);
   if (perfil?.admin) abas.push(["todos", "Todos (admin)", 0]);
 
@@ -427,9 +504,11 @@ export default function Chamados() {
         <div className="flex flex-wrap gap-2" role="tablist">
           {abas.map(([k, label, n]) => (
             <button key={k} type="button" role="tab" aria-selected={caixa === k}
-              onClick={() => { setCaixa(k); setSelId(null); }}
+              onClick={() => { setCaixa(k); setSelId(null); setSoNaoLidos(false); }}
               className={`min-h-[40px] px-4 rounded-full border text-sm font-semibold ${caixa === k ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-800 border-gray-300"}`}>
-              {label}{n > 0 && <span className={`ml-2 inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full text-xs ${caixa === k ? "bg-white text-gray-900" : "bg-orange-600 text-white"}`}>{n}</span>}
+              {label}{n > 0 && <span role="button" tabIndex={0} title="Ver só os que têm novidade"
+                onClick={(e) => { e.stopPropagation(); setCaixa(k); setSelId(null); setSoNaoLidos(true); }}
+                className={`ml-2 inline-flex min-w-[20px] h-5 px-1.5 items-center justify-center rounded-full text-xs cursor-pointer hover:ring-2 hover:ring-orange-300 ${caixa === k ? "bg-white text-gray-900" : "bg-orange-600 text-white"}`}>{n}</span>}
             </button>
           ))}
         </div>
@@ -492,16 +571,32 @@ export default function Chamados() {
                   <option value={5}>Parados +5 dias</option>
                   <option value={7}>Parados +7 dias</option>
                 </select>
+                <label className={`h-9 px-2.5 border rounded-lg flex items-center gap-1.5 cursor-pointer ${soNaoLidos ? "border-orange-500 bg-orange-50 text-orange-800 font-semibold" : "bg-white text-gray-700"}`}>
+                  <input type="checkbox" className="w-4 h-4 accent-orange-600" checked={soNaoLidos} onChange={(e) => setSoNaoLidos(e.target.checked)} data-testid="filtro-nao-lidos" />Só não lidos
+                </label>
+                {ehPedidos && qtdConcluidos > 0 && (
+                  <label className={`h-9 px-2.5 border rounded-lg flex items-center gap-1.5 cursor-pointer ${verConcluidos ? "border-green-700 text-green-800 font-semibold" : "bg-white text-gray-700"}`}>
+                    <input type="checkbox" className="w-4 h-4" checked={verConcluidos} onChange={(e) => setVerConcluidos(e.target.checked)} />Concluídos ({qtdConcluidos})
+                  </label>
+                )}
                 <button type="button" data-testid="limpar-filtros" disabled={!filtrosAtivos && !busca}
                   title="Limpar busca, status e período"
-                  onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); setBusca(""); setParadoMin(0); setStatusAberto(false); }}
+                  onClick={() => { setStatusSel([]); setDataDe(""); setDataAte(""); setBusca(""); setParadoMin(0); setSoNaoLidos(false); setStatusAberto(false); }}
                   className={`h-9 px-2.5 rounded-lg border text-sm flex items-center gap-1.5 ${filtrosAtivos || busca ? "border-red-300 text-red-700 bg-red-50 hover:bg-red-100 font-semibold" : "text-gray-400 bg-white cursor-default"}`}>
                   <i className="fas fa-times" aria-hidden="true"></i>Limpar
                 </button>
               </div>
             </div>
             <div className="px-4 py-1.5 border-b flex justify-between items-center text-xs text-gray-500">
-              <span>{lista.length} chamado{lista.length === 1 ? "" : "s"}</span>
+              <span className="flex items-center gap-3">
+                {ehPedidos ? `${grupos.length} pedido${grupos.length === 1 ? "" : "s"}` : `${lista.length} chamado${lista.length === 1 ? "" : "s"}`}
+                {(() => {
+                  const ids = (ehPedidos ? grupos.flatMap((g) => g.membros) : lista).filter((c) => c.naoLido).map((c) => c.id);
+                  return ids.length > 0 && (caixa === "arquivados" || ehPedidos)
+                    ? <button type="button" className="underline text-orange-700 font-semibold" onClick={() => marcarLidos(ids)} data-testid="marcar-todos-lidos">Marcar {ids.length} como lido{ids.length > 1 ? "s" : ""}</button>
+                    : null;
+                })()}
+              </span>
               <button type="button" onClick={() => setOrdem((o) => (o === "asc" ? "desc" : "asc"))} data-testid="ordem-lista"
                 title="Trocar a ordem da lista" className="hover:text-gray-800">
                 {ordem === "asc" ? "A-Z · antigos primeiro ↓" : "Z-A · recentes primeiro ↑"}
@@ -510,14 +605,36 @@ export default function Chamados() {
             <div ref={listaRef} style={{ ["--lh" as any]: alturaLista ? `${alturaLista}px` : "85vh" }}
               className="max-h-[70vh] lg:max-h-[var(--lh)] overflow-y-auto">
               {listaQ.isLoading && <div className="p-6 text-center text-gray-500 text-sm">Carregando…</div>}
-              {!listaQ.isLoading && lista.length === 0 && (
-                <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ou cancelado ainda." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
+              {!listaQ.isLoading && (ehPedidos ? grupos.length === 0 : lista.length === 0) && (
+                <div className="p-8 text-center text-gray-500 text-sm">{filtrosAtivos || q ? "Nenhum chamado com esses filtros." : caixa === "arquivados" ? "Nenhum chamado solucionado ou cancelado ainda." : ehPedidos ? "Nenhuma viagem ou reembolso pendente. Marque “Concluídos” para ver os finalizados." : "Nenhum chamado aqui. Toque em “Abrir chamado” para criar um."}</div>
               )}
-              {lista.map((c) => {
+              {ehPedidos && grupos.map((g) => {
+                const sel = selGrupo?.key === g.key;
+                return (
+                  <button key={g.key} type="button" onClick={() => abrirGrupo(g)} data-testid={`pedido-${g.codigo}`}
+                    className={`w-full text-left px-4 py-3 border-b flex flex-col gap-1 border-l-4 ${sel ? "bg-green-50 border-l-green-600" : g.naoLido ? "bg-orange-50 border-l-orange-500" : g.comigo.length ? "bg-amber-50/60 border-l-amber-400" : "bg-white border-l-transparent"}`}>
+                    <span className="flex justify-between gap-2 text-xs">
+                      <span className="font-bold text-gray-700"><i className={`fas ${g.modulo === "reembolsos" ? "fa-receipt" : "fa-suitcase-rolling"} mr-1`} aria-hidden="true"></i>{nomeModulo(g.modulo)} {g.codigo} · {g.membros.length} etapa{g.membros.length > 1 ? "s" : ""}</span>
+                      <span className="text-gray-500">{dataHora(g.ultimaData)}</span>
+                    </span>
+                    <span className={`text-[15px] leading-snug ${g.naoLido ? "font-bold" : "font-medium"} text-gray-900`}>{g.resumo || g.codigo}</span>
+                    <span className="flex flex-wrap gap-2 items-center text-xs">
+                      {g.naoLido && <span className="px-2 py-0.5 rounded-full font-bold bg-orange-600 text-white">NOVO</span>}
+                      {g.concluido
+                        ? <span className="px-2 py-0.5 rounded-full font-semibold bg-gray-200 text-gray-800">Concluído</span>
+                        : <span className="px-2 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-800">Etapa: {g.etapaAtual}</span>}
+                      {!g.concluido && <span className="text-gray-700">Pendente com <b>{g.pendentesCom.join(", ")}</b></span>}
+                      {g.comigo.length > 0 && <span className="px-2 py-0.5 rounded-full font-bold bg-amber-500 text-white">Com você</span>}
+                      {g.abertos[0] && <ChipParado c={g.abertos[0]} />}
+                    </span>
+                  </button>
+                );
+              })}
+              {!ehPedidos && lista.map((c) => {
                 const st = STATUS[c.status] || STATUS.novo;
                 return (
                   <button key={c.id} type="button" onClick={() => setSelId(c.id)} data-testid={`chamado-${c.codigo}`}
-                    className={`w-full text-left px-4 py-3 border-b flex flex-col gap-1 ${selId === c.id ? "bg-green-50" : c.naoLido ? "bg-orange-50" : "bg-white"}`}>
+                    className={`w-full text-left px-4 py-3 border-b flex flex-col gap-1 border-l-4 ${selId === c.id ? "bg-green-50 border-l-green-600" : c.naoLido ? "bg-orange-50 border-l-orange-500" : "bg-white border-l-transparent"}`}>
                     <span className="flex justify-between gap-2 text-xs">
                       <span className="font-bold text-gray-600">{c.codigo} · {c.papel === "autor" ? `Para ${c.destinoNome}` : `De ${c.autorNome}`}</span>
                       <span className="text-gray-500">{dataHora(c.createdAt)}</span>
@@ -531,7 +648,7 @@ export default function Chamados() {
                       <span className={`font-semibold ${PRIO_CLS[c.prioridade] || ""}`}>{c.prioridade}</span>
                       <ChipCobrado c={c} />
                       <ChipParado c={c} />
-                      {c.naoLido && <span className="text-orange-700 font-bold">● novidade</span>}
+                      {c.naoLido && <span className="px-2 py-0.5 rounded-full font-bold bg-orange-600 text-white">NOVO</span>}
                     </span>
                   </button>
                 );
@@ -543,6 +660,26 @@ export default function Chamados() {
           <Puxador dir="x" alvo={painelRef} setValor={setLarguraLista} min={320} max={() => Math.max(340, window.innerWidth - 560)} rotulo="Largura da lista" />
 
           <div className={`w-full flex-1 min-w-0 ${selId ? "" : "hidden lg:block"}`}>
+            {selId && selGrupo && (
+              <div className="bg-white border rounded-xl p-3 mb-3 flex flex-col gap-2" data-testid="linha-do-tempo-pedido">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-bold text-gray-800"><i className={`fas ${selGrupo.modulo === "reembolsos" ? "fa-receipt" : "fa-suitcase-rolling"} mr-1`} aria-hidden="true"></i>{nomeModulo(selGrupo.modulo)} {selGrupo.codigo} — etapas</span>
+                  <a href={`/${selGrupo.modulo}?id=${selGrupo.itemId}&de=${selId}`} className="text-sm font-semibold text-green-800 underline">Abrir {nomeModulo(selGrupo.modulo)} {selGrupo.codigo}</a>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {selGrupo.membros.map((c) => {
+                    const fechado = encerrado(c.status);
+                    return (
+                      <button key={c.id} type="button" onClick={() => setSelId(c.id)} title={`${c.codigo} · ${STATUS[c.status]?.label || c.status}`}
+                        className={`text-left rounded-lg border px-3 py-1.5 text-xs ${c.id === selId ? "border-green-700 ring-2 ring-green-100" : ""} ${fechado ? "bg-gray-50 text-gray-600" : "bg-white"} ${c.naoLido ? "border-l-4 border-l-orange-500" : ""}`}>
+                        <span className="block font-semibold">{fechado ? "✓ " : "● "}{pedidoDe(c)?.etapa}</span>
+                        <span className="block">{c.destinoNome}{c.papel === "dono" && !fechado ? " (você)" : ""} · {STATUS[c.status]?.label || c.status}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {selId
               ? <Detalhe id={selId} perfil={perfil} onVoltar={() => setSelId(null)} onMudou={refresh} />
               : <div className="bg-white border rounded-xl p-10 lg:py-16 text-center text-gray-500">Selecione um chamado na lista</div>}
