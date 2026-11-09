@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import EditorPrecosTabela from "@/components/EditorPrecosTabela";
 
 type Material = {
   id: string;
@@ -31,6 +32,7 @@ type Material = {
   updatedAt: string;
   createdByName: string;
   url: string;
+  dados?: any;
 };
 
 const CATEGORIAS: { id: string; label: string; icon: string }[] = [
@@ -44,6 +46,7 @@ const CATEGORIAS: { id: string; label: string; icon: string }[] = [
 const ehImagem = (m: Material) => String(m.mimetype || "").startsWith("image/");
 const tamanho = (b: number) => (b >= 1024 * 1024 ? (b / 1024 / 1024).toFixed(1) + " MB" : Math.max(1, Math.round(b / 1024)) + " KB");
 const dataBR = (s: string) => (s ? new Date(s).toLocaleDateString("pt-BR") : "");
+const tituloDoArquivo = (nome: string) => nome.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
 const comDownload = (url: string) => url + (url.includes("?") ? "&" : "?") + "download=1";
 
 async function enviarArquivo(method: string, url: string, fd: FormData) {
@@ -81,7 +84,9 @@ export default function MarketingVendas() {
   const [fCategoria, setFCategoria] = useState("tabelas");
   const [fDescricao, setFDescricao] = useState("");
   const [fOrdem, setFOrdem] = useState("0");
-  const [fArquivo, setFArquivo] = useState<File | null>(null);
+  const [fArquivos, setFArquivos] = useState<File[]>([]);
+  const [progresso, setProgresso] = useState<string>("");
+  const [precosDe, setPrecosDe] = useState<Material | null>(null);
 
   const q = useQuery<{ materiais: Material[]; podeGerir: boolean }>({
     queryKey: ["/api/marketing-vendas", mostrarInativos],
@@ -110,7 +115,7 @@ export default function MarketingVendas() {
   }, [materiais, filtro]);
 
   function abrirNovo() {
-    setFTitulo(""); setFCategoria(filtro !== "todos" ? filtro : "tabelas"); setFDescricao(""); setFOrdem("0"); setFArquivo(null);
+    setFTitulo(""); setFCategoria(filtro !== "todos" ? filtro : "tabelas"); setFDescricao(""); setFOrdem("0"); setFArquivos([]); setProgresso("");
     setNovo(true);
   }
   function abrirEdicao(m: Material) {
@@ -118,23 +123,40 @@ export default function MarketingVendas() {
     setEditando(m);
   }
 
+  // Publica um ou vários arquivos de uma vez. Com mais de um, cada arquivo usa o
+  // próprio nome como título; pasta, descrição e ordem (crescente) são comuns.
   async function publicar() {
-    if (!fArquivo) { toast({ title: "Escolha o arquivo", variant: "destructive" }); return; }
+    if (!fArquivos.length) { toast({ title: "Escolha o arquivo", variant: "destructive" }); return; }
     setSalvando(true);
-    try {
-      const fd = new FormData();
-      fd.append("arquivo", fArquivo);
-      fd.append("titulo", fTitulo);
-      fd.append("categoria", fCategoria);
-      fd.append("descricao", fDescricao);
-      fd.append("ordem", fOrdem || "0");
-      await enviarArquivo("POST", "/api/marketing-vendas", fd);
-      toast({ title: "Material publicado", description: "Já aparece para toda a equipe." });
+    const varios = fArquivos.length > 1;
+    const falhas: string[] = [];
+    let ok = 0;
+    const ordemBase = Number(fOrdem || 0) || 0;
+    for (let i = 0; i < fArquivos.length; i++) {
+      const f = fArquivos[i];
+      setProgresso(varios ? `Publicando ${i + 1} de ${fArquivos.length}...` : "");
+      try {
+        const fd = new FormData();
+        fd.append("arquivo", f);
+        fd.append("titulo", varios ? tituloDoArquivo(f.name) : fTitulo);
+        fd.append("categoria", fCategoria);
+        fd.append("descricao", fDescricao);
+        fd.append("ordem", String(ordemBase + i));
+        await enviarArquivo("POST", "/api/marketing-vendas", fd);
+        ok++;
+      } catch (e: any) {
+        falhas.push(f.name + (e?.message ? ` (${e.message})` : ""));
+      }
+    }
+    setSalvando(false);
+    setProgresso("");
+    recarregar();
+    if (falhas.length) {
+      toast({ title: `${ok} publicado(s), ${falhas.length} com erro`, description: falhas.slice(0, 3).join(" · "), variant: "destructive" });
+    } else {
+      toast({ title: ok > 1 ? `${ok} materiais publicados` : "Material publicado", description: "Já aparece para toda a equipe." });
       setNovo(false);
-      recarregar();
-    } catch (e: any) {
-      toast({ title: "Não publicou", description: e?.message, variant: "destructive" });
-    } finally { setSalvando(false); }
+    }
   }
 
   async function salvarEdicao() {
@@ -212,19 +234,27 @@ export default function MarketingVendas() {
     <div className="space-y-3">
       {comArquivo && (
         <div>
-          <Label className="text-sm">Arquivo (imagem ou PDF, até 15 MB)</Label>
-          <Input type="file" accept="image/*,application/pdf" data-testid="mkt-vendas-arquivo"
+          <Label className="text-sm">Arquivos (imagem ou PDF, até 15 MB cada) — pode escolher vários</Label>
+          <Input type="file" multiple accept="image/*,application/pdf" data-testid="mkt-vendas-arquivo"
             onChange={(e) => {
-              const f = e.target.files?.[0] || null;
-              setFArquivo(f);
-              if (f && !fTitulo) setFTitulo(f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "));
+              const fs = Array.from(e.target.files || []);
+              setFArquivos(fs);
+              if (fs.length === 1 && !fTitulo) setFTitulo(tituloDoArquivo(fs[0].name));
             }} />
+          {fArquivos.length > 1 && (
+            <div className="mt-2 rounded border bg-muted/40 p-2 text-xs max-h-32 overflow-y-auto">
+              <div className="font-semibold mb-1">{fArquivos.length} arquivos — cada um entra com o próprio nome como título:</div>
+              {fArquivos.map((f) => <div key={f.name} className="truncate">• {tituloDoArquivo(f.name)}</div>)}
+            </div>
+          )}
         </div>
       )}
-      <div>
-        <Label className="text-sm">Título</Label>
-        <Input value={fTitulo} onChange={(e) => setFTitulo(e.target.value)} placeholder="Tabela PJ — Goiânia" data-testid="mkt-vendas-titulo" />
-      </div>
+      {!(comArquivo && fArquivos.length > 1) && (
+        <div>
+          <Label className="text-sm">Título</Label>
+          <Input value={fTitulo} onChange={(e) => setFTitulo(e.target.value)} placeholder="Tabela PJ — Goiânia" data-testid="mkt-vendas-titulo" />
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-3">
         <div className="col-span-2">
           <Label className="text-sm">Pasta</Label>
@@ -323,6 +353,10 @@ export default function MarketingVendas() {
                   {podeGerir && (
                     <div className="flex flex-wrap gap-1 pt-1 border-t">
                       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => abrirEdicao(m)}>Editar</Button>
+                      {ehAdmin && m.categoria === "tabelas" && ehImagem(m) && (
+                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-emerald-700" onClick={() => setPrecosDe(m)}
+                          data-testid={`mkt-vendas-precos-${m.id}`}>Editar preços</Button>
+                      )}
                       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
                         onClick={() => { setTrocandoId(m.id); trocarRef.current?.click(); }}>Nova versão</Button>
                       <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => alternarAtivo(m)}>
@@ -342,6 +376,8 @@ export default function MarketingVendas() {
 
       <input ref={trocarRef} type="file" accept="image/*,application/pdf" className="hidden"
         onChange={(e) => { trocarArquivo(e.target.files?.[0]); e.target.value = ""; }} />
+
+      <EditorPrecosTabela material={precosDe} onClose={() => setPrecosDe(null)} onSalvo={recarregar} />
 
       {/* visualizador */}
       <Dialog open={!!aberto} onOpenChange={(o) => !o && setAberto(null)}>
@@ -369,7 +405,7 @@ export default function MarketingVendas() {
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setNovo(false)}>Cancelar</Button>
             <Button onClick={publicar} disabled={salvando} data-testid="mkt-vendas-publicar">
-              {salvando ? "Publicando..." : "Publicar para a equipe"}
+              {salvando ? (progresso || "Publicando...") : fArquivos.length > 1 ? `Publicar ${fArquivos.length} para a equipe` : "Publicar para a equipe"}
             </Button>
           </div>
         </DialogContent>
