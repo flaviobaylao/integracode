@@ -3743,6 +3743,7 @@ export default function RotaDoDia() {
           onStartSale={handleEditSale}
           onStartNoSale={handleNoSale}
           customerDebt={(() => { const cid = selectedCard?.customerId || selectedCard?.customer?.id; return cid ? Number(customerInfo?.debts?.[cid] || 0) : 0; })()}
+          cicloPresencial={(() => { const cid = String(selectedCard?.customerId || selectedCard?.customer?.id || ''); return !!cid && ((response?.route?.visits || []) as any[]).some((v: any) => String(v.customerId) === cid && v.cicloPresencial); })()}
         />
       )}
 
