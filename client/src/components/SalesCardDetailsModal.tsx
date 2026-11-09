@@ -56,9 +56,13 @@ interface SalesCardDetailsModalProps {
   onResumeDraft?: (card: SalesCardWithRelations) => void;
   // Debito em aberto do cliente (repassado ao check-in para a caixa de explicacao).
   customerDebt?: number;
+  // Cliente virtual cuja visita de HOJE é a PRESENCIAL do ciclo: faz check-in como presencial.
+  cicloPresencial?: boolean;
 }
 
-export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale, onResumeDraft, customerDebt = 0 }: SalesCardDetailsModalProps) {
+export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSale, onStartNoSale, onResumeDraft, customerDebt = 0, cicloPresencial = false }: SalesCardDetailsModalProps) {
+  // Virtual "de verdade" para check-in: cliente virtual que NÃO está no dia presencial do ciclo.
+  const virtualSemCheckin = !!card?.customer?.virtualService && !cicloPresencial;
   // ✏️ Editar cadastro do cliente direto do card (nov/2026). O que cada um pode alterar segue o
   // papel/acessos: o servidor valida (PUT /api/customers/:id) e o modal envia só o permitido.
   const perms = usePermissions();
@@ -280,7 +284,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
     if (!card) return;
     
     // Verificar se é cliente virtual
-    if (card.customer?.virtualService) {
+    if (virtualSemCheckin) {
       toast({
         title: "Cliente Virtual",
         description: "Clientes virtuais não requerem check-in",
@@ -764,7 +768,7 @@ export default function SalesCardDetailsModal({ isOpen, onClose, card, onStartSa
           <div className="border-t pt-4 space-y-3">
             {/* Check-in continua disponível mesmo com pedido registrado, enquanto não houver check-in.
                 (Antes o botão só existia nos status open/pending/... e sumia ao registrar o pedido.) */}
-            {!checkedInToday && !card.customer?.virtualService && (
+            {!checkedInToday && !virtualSemCheckin && (
               <Button
                 onClick={handleCheckIn}
                 disabled={isCheckingIn}
