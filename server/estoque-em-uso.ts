@@ -239,14 +239,14 @@ export async function resolverProdutosPorNome<T extends LinhaPedido>(products: T
   const ids = Array.from(new Set(products.map((p) => String(p.id || p.productId || '')).filter(Boolean)));
   let existentes = new Set<string>();
   if (ids.length) {
-    const r = rowsOf(await db.execute(sql`SELECT id FROM products WHERE id = ANY(${ids}::text[])`));
+    const r = rowsOf(await db.execute(sql`SELECT id FROM products WHERE id = ANY(string_to_array(${ids.join('|')}, '|'))`));
     existentes = new Set(r.map((x: any) => String(x.id)));
   }
   const pendentes = products.filter((p) => !existentes.has(String(p.id || p.productId || '')) && String(p.name || '').trim());
   if (!pendentes.length) return products;
   const nomes = Array.from(new Set(pendentes.map((p) => String(p.name).trim().toLowerCase())));
   const r = rowsOf(await db.execute(sql`
-    SELECT id, lower(trim(name)) AS nome, is_active FROM products WHERE lower(trim(name)) = ANY(${nomes}::text[])
+    SELECT id, lower(trim(name)) AS nome, is_active FROM products WHERE lower(trim(name)) = ANY(string_to_array(${nomes.join('|')}, '|'))
     ORDER BY (is_active = true) DESC, created_at ASC`));
   const porNome = new Map<string, string>();
   for (const x of r) if (!porNome.has(String(x.nome))) porNome.set(String(x.nome), String(x.id));
