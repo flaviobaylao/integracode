@@ -16211,11 +16211,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Sales card not found" });
       }
 
-      // Verificar se o cliente é virtual (não precisa de check-in)
+      // Verificar se o cliente é virtual (não precisa de check-in) — EXCETO quando hoje é a visita
+      // PRESENCIAL do ciclo dele (visit_agenda presencial do dia, ex.: "Virtual – Ciclo presencial"
+      // ou visita presencial mensal): aí o check-in é exigido como em qualquer presencial. (nov/2026)
       if (currentCard.customer?.virtualService) {
-        return res.status(400).json({ 
-          message: "Cliente virtual não requer check-in" 
-        });
+        let presencialHoje = false;
+        try {
+          const _hoje = hojeBR();
+          const _pr: any = await db.execute(sql`
+            SELECT 1 FROM visit_agenda
+             WHERE customer_id = ${currentCard.customerId}
+               AND scheduled_date::date = ${_hoje}::date
+               AND COALESCE(is_virtual, false) = false
+               AND COALESCE(visit_status, 'pending') <> 'cancelled'
+             LIMIT 1`);
+          presencialHoje = ((_pr?.rows || []) as any[]).length > 0;
+        } catch { /* sem agenda: segue a regra do virtual */ }
+        if (!presencialHoje) {
+          return res.status(400).json({ 
+            message: "Cliente virtual não requer check-in" 
+          });
+        }
       }
 
       // Verificar se é LEAD e se foto é obrigatória
