@@ -21,6 +21,7 @@ import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDows
 import { whatsappService } from './whatsapp-service';
 import { storage } from './storage';
 import { logCustomerChanges, logCustomerNote } from './customerAudit';
+import { retiradosHoje, registerRepescagemRetirar } from './repescagem-retirar';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -225,7 +226,12 @@ type SkipCiclo = { customerId: string; anchor: string };
 // Pular ciclo automatico por venda fora do dia de rota: desligado (ver gatilho abaixo).
 const AUTO_PULAR_CICLO = false;
 async function computeRedCandidates(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]): Promise<any[]> {
-  try { return await __computeRedCandidatesRaw(opts, skipOut); } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
+  try {
+    const cands = await __computeRedCandidatesRaw(opts, skipOut);
+    // 10/nov/2026 — Retirados da repescagem HOJE pelo Admin (Inbox) não entram em nada hoje.
+    const fora = await retiradosHoje();
+    return fora.size ? cands.filter((c: any) => !fora.has(String(c.customerId))) : cands;
+  } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
 }
 
 async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]) {
@@ -1400,9 +1406,10 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
         AND COALESCE(c.situacao, '') NOT ILIKE 'inativo'
         AND COALESCE(c.is_supplier, false) = false`);
     const already = new Set(candidates.map((c: any) => c.customerId));
+    const retirados = await retiradosHoje(); // retirado hoje pelo Admin também não é injetado
     let injected = 0;
     for (const r of ((forced.rows || forced) as any[])) {
-      if (!r.cid || already.has(r.cid)) continue;
+      if (!r.cid || already.has(r.cid) || retirados.has(String(r.cid))) continue;
       already.add(r.cid);
       candidates.push({ customerId: r.cid, lastRedDate: drawDate, daysSince: 0, forcedByAdmin: true });
       injected++;
@@ -1851,6 +1858,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
   requireRole: (roles: string[]) => any;
 }) {
   const { authenticateUser, requireRole } = opts;
+
+  // 🚫 Tirar da repescagem (Admin, pelo Inbox) — só no dia; ver repescagem-retirar.ts.
+  try { registerRepescagemRetirar(app, { authenticateUser, requireRole }); } catch (e: any) { console.error('[repescagem-retirar]', e?.message); }
 
   // Correção de drift (15/jul/2026): a tabela em produção ficou sem o DEFAULT gen_random_uuid()
   // na coluna id, então os INSERTs do sorteio (runDailyDraw) falhavam com "null value in column id"
