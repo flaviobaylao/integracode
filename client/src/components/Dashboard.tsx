@@ -560,11 +560,11 @@ export default function Dashboard() {
       </div>
 
       <div className="relative rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center justify-between gap-4">
-        <div className="absolute top-2 right-2"><InfoDot text="Projeção de faturamento do mês = faturamento já realizado + previsão dos pedidos que ainda devem entrar até o fim do mês. A previsão é por cliente da carteira: para cada cliente com histórico, calculamos a periodicidade de compra (intervalo médio entre pedidos, ponderado por recência), o dia da semana mais frequente e o ticket médio (ponderado por recência) dos últimos ~3 meses, e projetamos os próximos pedidos nos dias previstos, creditando ao dono da carteira. O botão Previsões liga/desliga a exibição desses valores nas células (em azul); somados ao realizado, compõem a projeção. Abaixo, a linha 'Linear (dias úteis seg-sex)' é uma segunda estimativa, mais simples: extrapola o realizado pelo ritmo médio dos dias úteis (seg-sex) já decorridos no mês — realizado dividido pelos dias úteis decorridos, multiplicado pelo total de dias úteis do mês. Serve de referência rápida; a projeção principal (por carteira) tende a ser mais precisa por somar pedido a pedido previsto por cliente." /></div>
+        <div className="absolute top-2 right-2"><InfoDot text="Projeção de faturamento do mês = faturamento já realizado + previsão dos pedidos que ainda devem entrar até o fim do mês. A previsão é por cliente da carteira: para cada cliente com histórico, calculamos a periodicidade de compra (intervalo médio entre pedidos, ponderado por recência), o dia da semana mais frequente e o ticket médio (ponderado por recência) dos últimos ~3 meses, e projetamos os próximos pedidos nos dias previstos, creditando ao dono da carteira. O botão Previsões liga/desliga a exibição desses valores nas células (em lilás); somados ao realizado, compõem a projeção. Abaixo, a linha 'Linear (dias úteis seg-sex)' é uma segunda estimativa, mais simples: extrapola o realizado pelo ritmo médio dos dias úteis (seg-sex) já decorridos no mês — realizado dividido pelos dias úteis decorridos, multiplicado pelo total de dias úteis do mês. Serve de referência rápida; a projeção principal (por carteira) tende a ser mais precisa por somar pedido a pedido previsto por cliente." /></div>
         <div>
           <div className="text-sm font-semibold text-indigo-800">Projeção de faturamento do mês</div>
           <div className="text-[11px] text-indigo-600">Realizado {brl(grandTotals.mensal)} + previsão {brl(forecast.total)} — por cliente da carteira (periodicidade e dia da semana, últimos ~3 meses)</div>
-          <button type="button" onClick={() => setShowForecast((s) => !s)} className={"mt-1 inline-flex items-center gap-1 text-[11px] font-medium rounded px-2 py-0.5 border " + (showForecast ? "bg-sky-100 border-sky-300 text-sky-700" : "bg-white border-gray-300 text-gray-500")}>{showForecast ? "Previsões: ligadas" : "Previsões: desligadas"}</button>
+          <button type="button" onClick={() => setShowForecast((s) => !s)} className={"mt-1 inline-flex items-center gap-1 text-[11px] font-medium rounded px-2 py-0.5 border " + (showForecast ? "bg-indigo-100 border-indigo-300 text-indigo-700" : "bg-white border-gray-300 text-gray-500")}>{showForecast ? "Previsões: ligadas" : "Previsões: desligadas"}</button>
         </div>
         <div className="flex flex-wrap items-end justify-end gap-x-8 gap-y-2 text-right pr-6">
           <div>
@@ -622,7 +622,7 @@ export default function Dashboard() {
                           const pend = pendHoje[x.sellerId]?.v || 0;
                           return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700" title="NF-e faturadas hoje">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700" title="Pedidos de hoje ainda a faturar">{nfmt(pend)}</div> : null}</td>);
                         }
-                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-sky-500 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
+                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-indigo-400 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
                       }),
                       <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.map[x.sellerId] || {}, wi); return t ? nfmt(t) : ""; })()}</td>
                     ])}
@@ -646,7 +646,7 @@ export default function Dashboard() {
                       if (day && day.iso === bounds.today) {
                         return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700">{nfmt(v)}</div> : null}{pendHojeTotal ? <div className="text-amber-700">{nfmt(pendHojeTotal)}</div> : null}</td>);
                       }
-                      return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-sky-500 italic " : "") + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : (showFc ? nfmt(fc) : "")}</td>);
+                      return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-indigo-400 italic " : "") + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : (showFc ? nfmt(fc) : "")}</td>);
                     }),
                     <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.byDate, wi); return t ? nfmt(t) : ""; })()}</td>
                   ])}
@@ -661,7 +661,7 @@ export default function Dashboard() {
             <span className="text-gray-700">Cinza: faturado em dias anteriores</span>
             <span className="text-green-700 font-semibold">Verde: NF-e faturadas hoje</span>
             <span className="text-amber-700 font-semibold">Amarelo: pedidos de hoje ainda a faturar</span>
-            <span className="text-sky-500 italic">Azul: previsão</span>
+            <span className="text-indigo-400 italic">Lilás: previsão por histórico</span>
           </div>
           <div className="text-[10px] text-gray-400 mt-1">Faturamento diario (seg a dom) por semana do mes vigente, domingos inclusos. Colunas de dia em R$ sem centavos; subtotais e mensal em R$. A projecao linear usa o realizado do mes inteiro (com domingos) sobre a contagem de dias uteis seg-sex.</div>
         </CardContent>
