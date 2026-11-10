@@ -3,6 +3,7 @@ import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PaymentLinkDialog from "./PaymentLinkDialog";
 import { TrocaRecorrenciaCard } from "./TrocaRecorrencia";
+import { prepararFotoSegura } from "@/lib/fotoSegura";
 import TrocaPreviaDesconto from "./TrocaPreviaDesconto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -462,35 +463,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     } catch { setGravandoObs(false); recObsRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
   };
 
-  // Comprime/redimensiona a foto p/ upload confiavel (evita estourar 10MB no mobile).
-  const compressTrocaImage = (src: string, maxSide = 1280, quality = 0.72): Promise<string> =>
-    new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        if (w > h && w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; }
-        else if (h >= w && h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; }
-        const c = document.createElement('canvas'); c.width = w; c.height = h;
-        const cx = c.getContext('2d'); if (!cx) { resolve(src); return; }
-        cx.drawImage(img, 0, 0, w, h);
-        resolve(c.toDataURL('image/jpeg', quality));
-      };
-      img.onerror = () => resolve(src);
-      img.src = src;
-    });
-
   // Troca: capturar/selecionar as fotos dos produtos. Dois caminhos alimentam o
   // mesmo estado: o input com `capture="environment"` abre a camera no celular e o
   // input sem `capture` (com `multiple`) abre a galeria do celular ou o explorador
   // de arquivos do PC. Teto de TROCA_MAX_FOTOS imagens.
-  const lerArquivo = (f: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (ev: any) => resolve(ev?.target?.result as string);
-      reader.onerror = () => reject(new Error('leitura falhou'));
-      reader.readAsDataURL(f);
-    });
-
   const handleTrocaPhotoChange = async (e: any) => {
     const arquivos: File[] = Array.from(e?.target?.files || []);
     if (e?.target) e.target.value = ''; // permite reescolher o mesmo arquivo depois
@@ -518,10 +494,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
     try {
       const novas: string[] = [];
-      for (const f of aceitos) novas.push(await compressTrocaImage(await lerArquivo(f)));
+      // prepararFotoSegura: reduz a foto e confere se não saiu preta (falha de alguns celulares).
+      for (const f of aceitos) novas.push(await prepararFotoSegura(f));
       setTrocaPhotos((atuais) => [...atuais, ...novas].slice(0, TROCA_MAX_FOTOS));
-    } catch {
-      toast({ title: 'Não foi possível ler a imagem', description: 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
+    } catch (err: any) {
+      toast({ title: 'Não foi possível ler a imagem', description: err?.message || 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
     }
   };
 

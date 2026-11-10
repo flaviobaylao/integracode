@@ -1,4 +1,5 @@
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
+import { prepararFotoSegura } from "@/lib/fotoSegura";
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -603,28 +604,6 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Finalizar venda
   // ── TROCA: captura/compressão/upload das fotos (mesma lógica do SaleEditModal) ──
-  const compressTrocaImage = (src: string, maxSide = 1280, quality = 0.72): Promise<string> =>
-    new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        if (w > h && w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; }
-        else if (h >= w && h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; }
-        const c = document.createElement('canvas'); c.width = w; c.height = h;
-        const cx = c.getContext('2d'); if (!cx) { resolve(src); return; }
-        cx.drawImage(img, 0, 0, w, h);
-        resolve(c.toDataURL('image/jpeg', quality));
-      };
-      img.onerror = () => resolve(src);
-      img.src = src;
-    });
-  const lerArquivoTroca = (f: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (ev: any) => resolve(ev?.target?.result as string);
-      reader.onerror = () => reject(new Error('leitura falhou'));
-      reader.readAsDataURL(f);
-    });
   const handleTrocaPhotoChange = async (e: any) => {
     const arquivos: File[] = Array.from(e?.target?.files || []);
     if (e?.target) e.target.value = '';
@@ -638,10 +617,11 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
     if (!aceitos.length) { toast({ title: 'Arquivo inválido', description: 'Selecione imagens (JPG, PNG ou WEBP).', variant: 'destructive' }); return; }
     try {
       const novas: string[] = [];
-      for (const f of aceitos) novas.push(await compressTrocaImage(await lerArquivoTroca(f)));
+      // prepararFotoSegura: reduz e confere se não saiu preta (falha de alguns celulares).
+      for (const f of aceitos) novas.push(await prepararFotoSegura(f));
       setTrocaPhotos((atuais) => [...atuais, ...novas].slice(0, TROCA_MAX_FOTOS));
-    } catch {
-      toast({ title: 'Não foi possível ler a imagem', description: 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
+    } catch (err: any) {
+      toast({ title: 'Não foi possível ler a imagem', description: err?.message || 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
     }
   };
   const removerTrocaPhoto = (i: number) => setTrocaPhotos((atuais) => atuais.filter((_, k) => k !== i));
