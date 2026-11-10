@@ -259,24 +259,6 @@ export default function Dashboard() {
     }
     return weeks;
   }, [bounds.today]);
-  // Pedidos A FATURAR que entraram HOJE, por vendedor que colocou o pedido. Aparecem no Comparativo
-  // por Vendedor na coluna de hoje em amarelo (mesmo tom do box "A faturar"); as NF-e de hoje em verde.
-  const pendHoje = useMemo(() => {
-    const out: Record<string, { nome: string; v: number }> = {};
-    const src: any[] = (data as any)?.ordersOverview?.aFaturar || (data as any)?.ordersOverview?.unbilled || [];
-    const fmtD = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
-    for (const p of src) {
-      const raw = p.created_at || p.createdAt; if (!raw) continue;
-      const dt = new Date(raw); if (isNaN(dt.getTime())) continue;
-      if (fmtD.format(dt) !== bounds.today) continue;
-      const v = Number(p.sale_value ?? p.saleValue) || 0; if (v <= 0) continue;
-      const nm = String(p.seller_name || p.sellerName || "Sem vendedor").trim();
-      const S = nm.toLowerCase().replace(/\s+/g, " ").replace(/\.+$/, "").trim();
-      (out[S] = out[S] || { nome: nm, v: 0 }).v += v;
-    }
-    return out;
-  }, [data, bounds.today]);
-  const pendHojeTotal = useMemo(() => Object.values(pendHoje).reduce((a, x) => a + x.v, 0), [pendHoje]);
   const sellerDaily = useMemo(() => {
     // REGRA (Flavio): credita o faturamento pelo vendedor que COLOCOU o pedido (billing_pipeline.seller_name),
     // servido em visitSummary.sellerDaily, e nao pelo dono atual do cliente.
@@ -293,7 +275,6 @@ export default function Dashboard() {
         w.dates.set(N.d, (w.dates.get(N.d) || 0) + val);
       }
     }
-    for (const S of Object.keys(pendHoje)) if (!map.has(S)) map.set(S, { sellerId: S, sellerName: pendHoje[S].nome, dates: new Map<string, number>() });
     const arr: any[] = [];
     for (const w of map.values()) {
       const weeks = monthWeeks.map((wk: any) => {
@@ -304,8 +285,8 @@ export default function Dashboard() {
       const mensal = weeks.reduce((acc: number, wk: any) => acc + wk.total, 0);
       arr.push({ sellerId: w.sellerId, sellerName: w.sellerName, weeks, mensal, fatMes: mensal });
     }
-    return arr.filter((r: any) => r.fatMes > 0 || (pendHoje[r.sellerId]?.v || 0) > 0);
-  }, [data, monthWeeks, pendHoje]);
+    return arr.filter((r: any) => r.fatMes > 0);
+  }, [data, monthWeeks]);
   const sortedSellerDaily = useMemo(() => {
     const arr = [...sellerDaily];
     const dir = sortDir === "asc" ? 1 : -1;
@@ -611,7 +592,7 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {sortedSellerDaily.map((x: any) => (
-                  <tr key={x.sellerId} className="border-b border-gray-400 hover:bg-gray-50">
+                  <tr key={x.sellerId} className="hover:bg-gray-50 [&>td]:border-b [&>td]:border-gray-300">
                     <td className="py-1 pr-3 pl-1 font-medium text-gray-800 whitespace-nowrap sticky left-0 bg-white">{x.sellerName}</td>
                     {x.weeks.flatMap((wk: any, wi: number) => [
                       ...wk.dayVals.map((v: any, di: number) => {
@@ -619,8 +600,7 @@ export default function Dashboard() {
                         const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.map[x.sellerId]?.[day.iso] || 0) : 0;
                         const showFc = fc > 0 && (v == null || v === 0);
                         if (day && day.iso === bounds.today) {
-                          const pend = pendHoje[x.sellerId]?.v || 0;
-                          return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700" title="NF-e faturadas hoje">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700" title="Pedidos de hoje ainda a faturar">{nfmt(pend)}</div> : null}</td>);
+                          return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold text-green-700 " + (di === 0 ? "border-l" : "")} title="NF-e faturadas hoje">{v ? nfmt(v) : ""}</td>);
                         }
                         return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-indigo-400 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
                       }),
@@ -644,7 +624,7 @@ export default function Dashboard() {
                       const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.byDate[day.iso] || 0) : 0;
                       const showFc = fc > 0 && !v;
                       if (day && day.iso === bounds.today) {
-                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700">{nfmt(v)}</div> : null}{pendHojeTotal ? <div className="text-amber-700">{nfmt(pendHojeTotal)}</div> : null}</td>);
+                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums text-green-700 " + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : ""}</td>);
                       }
                       return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-indigo-400 italic " : "") + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : (showFc ? nfmt(fc) : "")}</td>);
                     }),
@@ -660,7 +640,6 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] mt-2">
             <span className="text-gray-700">Cinza: faturado em dias anteriores</span>
             <span className="text-green-700 font-semibold">Verde: NF-e faturadas hoje</span>
-            <span className="text-amber-700 font-semibold">Amarelo: pedidos de hoje ainda a faturar</span>
             <span className="text-indigo-400 italic">Lilás: previsão por histórico</span>
           </div>
           <div className="text-[10px] text-gray-400 mt-1">Faturamento diario (seg a dom) por semana do mes vigente, domingos inclusos. Colunas de dia em R$ sem centavos; subtotais e mensal em R$. A projecao linear usa o realizado do mes inteiro (com domingos) sobre a contagem de dias uteis seg-sex.</div>
