@@ -808,7 +808,7 @@ export function registerChangeRequestsRoutes(app: Express) {
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
       // 🎯 10/nov/2026 — CAPTURA DE CARTEIRA no report: quem reportou não é o dono do cliente.
-      //   Se houve REPESCAGEM atribuída a quem reportou (até 3 dias antes do report), o card mostra
+      //   Se houve REPESCAGEM de quem reportou (concluída perto do report ou ainda aberta com ele), o card mostra
       //   "Repescagem · cliente de <dono>"; sem atribuição, mostra "Cliente de <dono>" (outra carteira).
       try {
         const reps = (mapped as any[]).filter((m) => m.kind === "report" && m.entityType === "customer" && m.sellerId);
@@ -820,20 +820,32 @@ export function registerChangeRequestsRoutes(app: Express) {
             const cod = v.replace(/^omie-vendor-/, "");
             return us.find((u: any) => String(u.id) === v || (u.omie_vendor_code && String(u.omie_vendor_code) === cod)) || null;
           };
+          // Datas do Postgres podem vir como Date ou texto "2026-11-10 12:49:38+00" — normaliza.
+          const tms = (v: any) => v instanceof Date ? v.getTime() : new Date(String(v).replace(" ", "T").replace(/([+-]\d\d)$/, "$1:00")).getTime();
           const cids = Array.from(new Set(reps.map((m) => String(m.customerId || m.entityId))));
           const inC = sql.join(cids.map((x) => sql`${x}`), sql`, `);
           const donos = new Map<string, string>();
           for (const c of rowsOf(await db.execute(sql`SELECT id, seller_id FROM customers WHERE id IN (${inC})`))) if (c.seller_id) donos.set(String(c.id), String(c.seller_id));
           const atribs = rowsOf(await db.execute(sql`
-            SELECT customer_id, assigned_user_id, carteira_seller_id, status, assigned_at, draw_date
+            SELECT customer_id, assigned_user_id, completed_by_user_id, carteira_seller_id, status, assigned_at, completed_at, draw_date
               FROM repescagem_assignments WHERE customer_id IN (${inC}) ORDER BY assigned_at DESC`));
           for (const m of reps) {
             const cid = String(m.customerId || m.entityId);
             const autor = acha(m.sellerId);
             if (!autor) continue;
-            const t = new Date(m.createdAt).getTime();
-            const a = atribs.find((x: any) => String(x.customer_id) === cid && String(x.assigned_user_id) === String(autor.id)
-              && x.assigned_at && new Date(x.assigned_at).getTime() <= t + 3600_000 && t - new Date(x.assigned_at).getTime() <= 3 * 86400_000);
+            const t = tms(m.createdAt);
+            // Repescagem do autor: concluída por ele perto do report (−2d..+1d) ou ainda aberta com ele
+            // (atribuída até 15 dias antes do report).
+            const DIA = 86400_000;
+            const ms = (v: any) => (v ? tms(v) : NaN);
+            const a = atribs.find((x: any) => {
+              if (String(x.customer_id) !== cid) return false;
+              const dele = String(x.assigned_user_id) === String(autor.id) || String(x.completed_by_user_id || "") === String(autor.id);
+              if (!dele) return false;
+              const c = ms(x.completed_at), at = ms(x.assigned_at);
+              if (Number.isFinite(c) && c >= t - 2 * DIA && c <= t + DIA) return true;
+              return ["pending", "in_route"].includes(String(x.status)) && Number.isFinite(at) && at <= t + 3600_000 && t - at <= 15 * DIA;
+            });
             const donoRef = (a && a.carteira_seller_id) || donos.get(cid) || null;
             const dono = acha(donoRef);
             if (dono && String(dono.id) === String(autor.id)) continue; // reportou o próprio cliente
