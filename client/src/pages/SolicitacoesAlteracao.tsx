@@ -350,6 +350,66 @@ function motivoInativacaoDe(note: string, details: any): string {
 // 📋 REPORT DIÁRIO (18h) — "Repescagem não atendida" (nov/2026). Um único card do Sistema com
 // todos os clientes que caíram na repescagem do dia e não foram atendidos. O admin escolhe se
 // eles VOLTAM para a repescagem (redistribuídos no próximo sorteio) ou não.
+// 📋 REPORT DIÁRIO (17h) — "Repescagem atendida" (nov/2026): clientes atendidos na repescagem
+// do dia, de que carteira são, quem atendeu e se houve venda. O admin só lê (marcar como lido).
+function CardRepescagemAtendida({ r, resolved }: { r: any; resolved?: boolean }) {
+  const { toast } = useToast();
+  const rd = r?.details || {};
+  const clientes: any[] = Array.isArray(rd.clientes) ? rd.clientes : [];
+  const brl = (v: any) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const lidoMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" }),
+    onSuccess: () => {
+      toast({ title: "Report marcado como lido" });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  return (
+    <Card className="p-4 space-y-3 border-emerald-200 dark:border-emerald-900" data-testid={`cr-rep-atendida-${r.id}`}>
+      <div>
+        <div className="font-semibold flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4 text-emerald-600" /> {r.entityName || "Repescagem atendida"}</div>
+        <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300">Repescagem atendida</Badge>
+          <Badge variant="outline" className="text-[10px]">Sistema · 17h</Badge>
+          {Number(rd.comVenda || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-300">{rd.comVenda} com venda · {brl(rd.valorTotal)}</Badge>}
+          <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
+        </div>
+      </div>
+      {rd.texto && <div className="text-sm rounded-md bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900 p-2.5">{rd.texto}</div>}
+      {clientes.length > 0 && (
+        <div className="rounded-md border overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr><th className="text-left px-2 py-1.5">Cliente</th><th className="text-left px-2 py-1.5">Carteira</th><th className="text-left px-2 py-1.5">Quem atendeu</th><th className="text-left px-2 py-1.5">Venda</th></tr>
+            </thead>
+            <tbody className="divide-y">
+              {clientes.map((c) => (
+                <tr key={c.customerId} data-testid={`rep-at-row-${c.customerId}`}>
+                  <td className="px-2 py-1.5 font-medium">{c.nome}</td>
+                  <td className="px-2 py-1.5">{c.carteira}</td>
+                  <td className="px-2 py-1.5">{c.atendeu}</td>
+                  <td className="px-2 py-1.5">{c.venda
+                    ? <span className="text-green-700 dark:text-green-400 font-semibold">Sim · {brl(c.valor)}{c.vendedorPedido ? ` (${c.vendedorPedido})` : ""}</span>
+                    : <span className="text-muted-foreground">Sem venda</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!resolved && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={lidoMut.isPending} onClick={() => lidoMut.mutate()} data-testid={`rep-at-lido-${r.id}`}>
+            {lidoMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function CardRepescagemNaoAtendida({ r, resolved }: { r: any; resolved?: boolean }) {
   const { toast } = useToast();
   const rd = r?.details || {};
@@ -645,6 +705,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   const isReport = r?.kind === "report";
   const rd = r?.details || {};
   if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} />;
+  if (isReport && rd.reportKind === "repescagem_atendida") return <CardRepescagemAtendida r={r} />;
 
   return (
     <Card className="p-4 space-y-3">
@@ -938,6 +999,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
     onError: (e: any) => toast({ title: "Não foi possível reabrir", description: String(e?.message || "Tente novamente.").replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
   });
   if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} resolved />;
+  if (isReport && rd.reportKind === "repescagem_atendida") return <CardRepescagemAtendida r={r} resolved />;
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
