@@ -4,6 +4,7 @@ import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient"
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import LeadAmostras from "@/components/LeadAmostras";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -564,6 +565,9 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
               <Label>Nome</Label>
               <Input value={leadName} readOnly className="bg-muted/50" data-testid={`input-lead-atend-nome-${leadId}`} />
             </div>
+            {/* 🧃 Amostras para degustação — também aqui, porque no celular o vendedor atende o lead
+                por este formulário (o card expandido nem sempre é aberto). (nov/2026) */}
+            <LeadAmostras leadId={String(leadId)} leadName={leadName} compact onChanged={onDone} />
             {atendMode === 'registro' && (
               <div className="rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30 p-3" data-testid={`lead-atend-historico-${leadId}`}>
                 <p className="text-sm font-medium flex items-center gap-1 mb-2"><FileText className="w-4 h-4" /> Registros já feitos{atendHistorico.length ? ` (${atendHistorico.length})` : ''}</p>
