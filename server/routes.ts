@@ -25482,9 +25482,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const r of (leadsRes?.rows || []) as any[]) {
         const d = haversine(lat, lng, Number(r.lat), Number(r.lng));
         if (d > raio) continue;
-        // 10/11: lead ABERTO e SEM VENDEDOR (sobra do SDR IA, lead liberado) não fica na aba "No Integra":
-        // ninguém está trabalhando nele. Ele aparece em "Novos pontos" como "Lead disponível — Pegar lead".
-        if (!r.assigned_to && !['discarded', 'converted'].includes(String(r.status))) continue;
+        // 10/11 (Flavio): a aba "No Integra" mostra SOMENTE CLIENTES. Leads aparecem nos "Novos pontos":
+        // sem vendedor → "Lead disponível — Pegar lead"; descartado → "Lead já visitado — Resgatar";
+        // com vendedor → fica oculto (já está sendo trabalhado, evita prospecção em dobro).
+        continue;
         const _dAtr = _diasAtrasoLead(r);
         out.push({
           tipo: 'lead',
