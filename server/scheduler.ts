@@ -540,6 +540,18 @@ cron.schedule('10 0 * * *', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// 📋 REPESCAGEM ATENDIDA: às 17:00 (BRT), de segunda a sexta, report no Inbox do admin com os
+// clientes atendidos na repescagem do dia (carteira, quem atendeu, com/sem venda).
+cron.schedule('0 17 * * 1-5', async () => {
+  try {
+    const { gerarReportRepescagemAtendida } = await import('./repescagem-routes');
+    const r = await gerarReportRepescagemAtendida();
+    console.log(`📋 [REPESCAGEM-17H] Report "Repescagem atendida" ${r.date}: ${r.atendidos} de ${r.total}${r.skipped ? ' (' + r.skipped + ')' : ''}${r.created ? ' (novo no Inbox)' : ''}.`);
+  } catch (e: any) {
+    console.error('❌ [REPESCAGEM-17H] falha:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // 🎯 CAPTURA DE ATENDIMENTO (repescagem): às 18:00 (BRT) encerra o dia e libera TODAS as
 // capturas — os clientes voltam a aparecer para os demais telemarketings na hora, sem depender
 // de alguém abrir a tela (antes só liberava no próximo carregamento depois das 18h).

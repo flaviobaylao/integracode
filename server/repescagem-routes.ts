@@ -3085,6 +3085,17 @@ export function registerRepescagemRoutes(app: Express, opts: {
     }
   });
 
+  // 📋 Report diário "Repescagem atendida" (17h): gerar agora (admin).
+  app.post('/api/repescagem/atendidos/gerar', authenticateUser, requireRole(['admin']), async (req: any, res) => {
+    try {
+      const r = await gerarReportRepescagemAtendida(req.body?.date ? String(req.body.date) : undefined);
+      res.json({ ok: true, ...r });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/atendidos/gerar', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
   app.get('/api/repescagem/stats', authenticateUser, requireRole(ALLOWED_ROLES), async (req, res) => {
     try {
       const startDate = String(req.query.startDate || '');
@@ -3216,6 +3227,107 @@ export async function gerarReportRepescagemNaoAtendida(dateArg?: string): Promis
        ${JSON.stringify([msg])}::jsonb)
     RETURNING id`));
   return { date, total: clientes.length, reportId: ins[0]?.id || null, created: true };
+}
+
+// ============================================================================
+// 📋 REPORT DIÁRIO (17h) — REPESCAGEM ATENDIDA NO DIA (nov/2026, pedido do Flavio).
+// De segunda a sexta, às 17:00 (BRT), manda ao Inbox do admin UM report com os clientes que
+// foram atendidos na repescagem do dia: carteira, quem atendeu e se houve venda (pedido de
+// venda no pipeline no dia, com valor e quem implantou).
+// ============================================================================
+const REP_ATENDIDA_KIND = 'repescagem_atendida';
+
+export async function gerarReportRepescagemAtendida(dateArg?: string): Promise<{ date: string; total: number; atendidos: number; reportId: string | null; created: boolean; skipped?: string }> {
+  const date = dateArg && /^\d{4}-\d{2}-\d{2}$/.test(dateArg) ? dateArg : brTodayStr();
+  if (!isDiaUtilRep(date)) return { date, total: 0, atendidos: 0, reportId: null, created: false, skipped: 'fim de semana' };
+  const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+  // Fecha os atendidos até agora (não expira os de hoje).
+  try { await closeAndExpireRepescagem(date); } catch (e) { console.warn('[REP-ATENDIDA] fechamento:', (e as any)?.message); }
+  const tot = rowsOf(await db.execute(sql`SELECT COUNT(DISTINCT customer_id)::int AS n FROM repescagem_assignments WHERE draw_date = ${date} AND phase IS NOT NULL`))[0];
+  const total = Number(tot?.n || 0);
+  if (total === 0) return { date, total: 0, atendidos: 0, reportId: null, created: false, skipped: 'sem repescagem no dia' };
+  const rows = rowsOf(await db.execute(sql`
+    SELECT DISTINCT ON (ra.customer_id)
+           ra.customer_id, ra.completed_by_user_id, ra.assigned_user_id, ra.carteira_seller_id,
+           COALESCE(NULLIF(TRIM(c.fantasy_name), ''), c.name) AS nome, c.seller_id
+      FROM repescagem_assignments ra
+      JOIN customers c ON c.id = ra.customer_id
+     WHERE ra.draw_date = ${date} AND ra.status = 'completed'
+     ORDER BY ra.customer_id, ra.completed_at DESC NULLS LAST`));
+  const nomeUser = new Map<string, string>();
+  try {
+    for (const u of rowsOf(await db.execute(sql`SELECT id, omie_vendor_code AS code, TRIM(CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,''))) AS nm FROM users`))) {
+      const nm = u.nm || String(u.id);
+      nomeUser.set(String(u.id), nm);
+      if (u.code) { nomeUser.set(String(u.code), nm); nomeUser.set('omie-vendor-' + String(u.code), nm); }
+    }
+  } catch { /* sem nomes */ }
+  const nomeDe = (id: any) => { const k = String(id || ''); if (!k) return null; if (k.toLowerCase() === 'ia') return 'IA'; return nomeUser.get(k) || k; };
+  // Venda no dia: pedido de VENDA no pipeline (mesma data usada no fechamento da repescagem).
+  const vendaPor = new Map<string, { valor: number; quem: string | null }>();
+  const cids = rows.map((r: any) => String(r.customer_id));
+  if (cids.length) {
+    const vs = rowsOf(await db.execute(sql`
+      SELECT customer_id, COALESCE(SUM(COALESCE(sale_value, 0)), 0) AS v,
+             STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(seller_name), ''), seller_id), ', ') AS quem
+        FROM billing_pipeline
+       WHERE COALESCE(operation_type, 'venda') = 'venda'
+         AND COALESCE(scheduled_billing_date::date, (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) = ${date}::date
+         AND customer_id = ANY(string_to_array(${cids.join(',')}, ','))
+       GROUP BY customer_id`));
+    for (const v of vs) vendaPor.set(String(v.customer_id), { valor: Number(v.v || 0), quem: v.quem ? (nomeDe(v.quem) || String(v.quem)) : null });
+  }
+  const clientes = rows.map((r: any) => {
+    const vd = vendaPor.get(String(r.customer_id));
+    return {
+      customerId: String(r.customer_id),
+      nome: r.nome || String(r.customer_id),
+      carteira: nomeDe(r.carteira_seller_id || r.seller_id) || '(sem vendedor)',
+      atendeu: nomeDe(r.completed_by_user_id) || nomeDe(r.assigned_user_id) || '—',
+      venda: !!vd,
+      valor: vd ? vd.valor : 0,
+      vendedorPedido: vd ? vd.quem : null,
+    };
+  }).sort((a: any, b: any) => Number(b.venda) - Number(a.venda) || String(a.carteira).localeCompare(String(b.carteira)) || String(a.nome).localeCompare(String(b.nome)));
+
+  const comVenda = clientes.filter((c: any) => c.venda);
+  const valorTotal = comVenda.reduce((s: number, c: any) => s + (c.valor || 0), 0);
+  const contar = (k: string) => { const m = new Map<string, number>(); for (const c of clientes as any[]) m.set(c[k], (m.get(c[k]) || 0) + 1); return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([n, q]) => `${n} ${q}`).join(', '); };
+  const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const resumo = clientes.length === 0
+    ? `Nenhum dos ${total} cliente(s) que caíram na repescagem de ${fmtBR(date)} foi atendido até as 17h.`
+    : `${clientes.length} de ${total} cliente(s) da repescagem de ${fmtBR(date)} foram atendidos até as 17h: ` +
+      `${comVenda.length} com venda${comVenda.length ? ` (${brl(valorTotal)})` : ''} e ${clientes.length - comVenda.length} sem venda. ` +
+      `Quem atendeu: ${contar('atendeu')}. Por carteira: ${contar('carteira')}.`;
+  const nomeCard = `Repescagem atendida — ${fmtBR(date)} (${clientes.length} de ${total})`;
+  const details = { reportKind: REP_ATENDIDA_KIND, reportLabel: 'Repescagem atendida', data: date, total, atendidos: clientes.length, comVenda: comVenda.length, valorTotal, texto: resumo, clientes };
+
+  const { ensureTables } = await import('./change-requests-routes');
+  await ensureTables();
+  const entityId = `repescagem-atendida-${date}`;
+  const existente = rowsOf(await db.execute(sql`
+    SELECT id, status FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${entityId}
+    ORDER BY created_at DESC LIMIT 1`))[0];
+  const msg = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, role: 'admin', by: null, byName: 'Sistema', text: resumo, at: new Date().toISOString(), kind: 'system' };
+  if (existente) {
+    if (existente.status !== 'pending') return { date, total, atendidos: clientes.length, reportId: existente.id, created: false };
+    await db.execute(sql`
+      UPDATE change_requests
+         SET entity_name = ${nomeCard}, details = ${JSON.stringify(details)}::jsonb,
+             messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([{ ...msg, text: '🔄 Atualizado. ' + resumo }])}::jsonb
+       WHERE id = ${existente.id}`);
+    return { date, total, atendidos: clientes.length, reportId: existente.id, created: false };
+  }
+  const ins = rowsOf(await db.execute(sql`
+    INSERT INTO change_requests
+      (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+       types, details, status, kind, requested_by, requested_by_name, messages)
+    VALUES
+      ('repescagem', ${entityId}, NULL, ${nomeCard}, NULL, NULL,
+       ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
+       ${JSON.stringify([msg])}::jsonb)
+    RETURNING id`));
+  return { date, total, atendidos: clientes.length, reportId: ins[0]?.id || null, created: true };
 }
 
 // Exportado para o agendador (scheduler.ts): roda a distribuicao/sorteio da repescagem
