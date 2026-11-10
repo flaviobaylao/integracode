@@ -31,7 +31,7 @@ import { AnexosPicker, prepararAnexos, arquivosDoColar, type AnexoNovo } from "@
 // quando o mês não tem a premissa de novo cliente ligada.
 import CampanhaInboxPanel from "@/components/CampanhaInboxPanel";
 import { semanaDoMesDaData, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
-import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus, ChevronDown, Undo2 } from "lucide-react";
+import { Inbox, CheckCircle2, XCircle, Loader2, User as UserIcon, Clock, Copy, Check, Reply, CheckSquare, Square, Trash2, MessageCircle, ShoppingCart, CalendarClock, Target, DollarSign, CalendarPlus, ChevronDown, Undo2, Ban } from "lucide-react";
 
 const TYPE_LABEL: Record<string, string> = {
   periodicidade: "Periodicidade", dia_rota: "Dia de Rota", area_vendas: "Área de vendas",
@@ -313,6 +313,43 @@ function SeloCaptura({ r }: { r: any }) {
       data-testid={`cr-captura-${r.id}`}>
       {c.repescagem ? "🎯 Repescagem · " : ""}Cliente de {dono} · atendido por {quem}
     </Badge>
+  );
+}
+
+// 🚫 Tirar da repescagem (10/nov/2026): só aparece quando o cliente ESTÁ em repescagem agora.
+// Pede justificativa (mín. 5 caracteres); o cliente sai de todas as listas e rotas de repescagem
+// SÓ HOJE, e quem estava com ele (atribuído/capturado) é avisado do motivo.
+function TirarDaRepescagem({ r, compacto }: { r: any; compacto?: boolean }) {
+  const { toast } = useToast();
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
+  const mut = useMutation({
+    mutationFn: async (motivo: string) => apiRequest("POST", "/api/repescagem/retirar", { customerId: r.customerId || r.entityId, motivo, reportId: r.id }),
+    onSuccess: (d: any) => {
+      const av = Array.isArray(d?.notificados) && d.notificados.length ? ` Avisado: ${d.notificados.map((n: any) => n.nome).join(", ")}.` : "";
+      toast({ title: "Retirado da repescagem (só hoje)", description: `Saiu das listas e rotas de repescagem de hoje; amanhã volta às regras normais.${av}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
+    },
+    onError: (e: any) => toast({ title: "Não foi possível retirar", description: String(e?.message || "Tente novamente.").replace(/^\d{3}:\s*/, ""), variant: "destructive" }),
+  });
+  if (r?.entityType !== "customer" || !r?.isRepescagem) return null;
+  return (
+    <>
+      <Button size="sm" variant="outline" className={`border-rose-400 text-rose-700 hover:bg-rose-50${compacto ? " h-7 text-xs" : ""}`} disabled={mut.isPending}
+        title="Tira o cliente da repescagem SÓ HOJE (sai de todas as listas e rotas de repescagem do dia). Exige justificativa."
+        data-testid={`cr-tirar-repescagem-${r.id}`}
+        onClick={async () => {
+          const m = await pedirMotivo({
+            titulo: `Tirar ${r.entityName || "cliente"} da repescagem`,
+            descricao: "Ele sai de todas as listas e rotas de repescagem SÓ HOJE e quem estava com ele é avisado. Amanhã volta às regras normais. Informe a justificativa (mín. 5 caracteres).",
+            textoBotao: "Tirar da repescagem",
+          });
+          if (m) mut.mutate(m);
+        }}>
+        {mut.isPending ? <Loader2 className={compacto ? "h-3.5 w-3.5 animate-spin" : "h-4 w-4 animate-spin"} /> : <><Ban className={compacto ? "h-3.5 w-3.5 mr-1" : "h-4 w-4 mr-1"} /> Tirar da repescagem</>}
+      </Button>
+      {MotivoModal}
+    </>
   );
 }
 
@@ -829,6 +866,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
               onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE no próximo dia útil (sexta → segunda) (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
               {forcarRepescagemMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Repescagem</>}
             </Button>
+            <TirarDaRepescagem r={r} />
             <Button size="sm" variant="outline" className="border-red-400 text-red-700 hover:bg-red-50" disabled={busy}
               onClick={async () => { const m = await pedirMotivo({ titulo: `Inativar ${r.entityName || "cliente"}`, descricao: "Ele sai dos Clientes Ativos e o report vai para Resolvidas. Informe/confirme o motivo (mín. 5 caracteres) — aparece na coluna Motivo.", valorInicial: motivoInativacaoDe(note, r.details) }); if (m) inativarReportMut.mutate(m); }}>
               {inativarReportMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><XCircle className="h-4 w-4 mr-1" /> Inativar Cliente</>}
@@ -1072,6 +1110,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
                 {forcarRepescagemMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Target className="h-3.5 w-3.5 mr-1" /> Repescagem</>}
               </Button>
             )}
+            <TirarDaRepescagem r={r} compacto />
             <Button size="sm" variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs" disabled={whatsappMut.isPending}
               title="Envia o recorte deste report para DÉBITOS - Inbox de Informações (+55 62 9451-1997)"
               data-testid={`cr-whatsapp-resolved-${r.id}`}
