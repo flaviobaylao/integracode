@@ -3886,7 +3886,7 @@ export default function RotaDoDia() {
 
       {showLeadCheckInModal && selectedLead && (
         <Dialog open={showLeadCheckInModal} onOpenChange={closeModals}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Check-in em {selectedLead.fantasyName}</DialogTitle>
             </DialogHeader>
@@ -3986,6 +3986,9 @@ export default function RotaDoDia() {
                   />
                 )}
               </div>
+
+              {/* 🧃 Amostras para degustação — no celular o lead é atendido por este check-in. */}
+              <LeadAmostras leadId={String(selectedLead.id)} leadName={selectedLead.fantasyName || selectedLead.name} leadContact={(selectedLead as any).contact} leadPhone={(selectedLead as any).phone} compact onChanged={() => refetch()} />
 
               {/* Observações */}
               <div>
