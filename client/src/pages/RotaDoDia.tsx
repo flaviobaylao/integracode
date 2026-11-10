@@ -3590,6 +3590,16 @@ export default function RotaDoDia() {
                               </div>
                             </div>
                             )}
+                            {/* ➕ Rodapé: atendimento virtual adicionado manualmente à rota */}
+                            {(visit as any).addedManually && (
+                              <div
+                                className="mt-2 pt-2 border-t border-dashed border-blue-200 dark:border-blue-800 text-[11px] text-gray-500 dark:text-gray-400 flex items-center gap-1"
+                                data-testid={`manual-added-virtual-${visit.customerId}`}
+                              >
+                                <Plus className="h-3 w-3" />
+                                Incluído manualmente
+                              </div>
+                            )}
                           </div>
                         );
                         })}
