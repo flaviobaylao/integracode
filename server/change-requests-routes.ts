@@ -801,7 +801,8 @@ export function registerChangeRequestsRoutes(app: Express) {
           if (c.virtual_service === true) virtualSet.add("customer:" + c.id);
         }
         // Repescagem: cliente com atribuição de repescagem PENDENTE.
-        const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE status = 'pending' AND customer_id IN (${inCust})`));
+        // 10/nov/2026: também 'in_route' do sorteio de HOJE (está na rota de alguém agora).
+        const rp = rowsOf(await db.execute(sql`SELECT DISTINCT customer_id FROM repescagem_assignments WHERE (status = 'pending' OR (status = 'in_route' AND draw_date = (now() AT TIME ZONE 'America/Sao_Paulo')::date::text)) AND customer_id IN (${inCust})`));
         for (const r of rp) if (r.customer_id) repescagemSet.add(String(r.customer_id));
         // 🛒 Última compra (18/set/2026): mesma fonte do resto do sistema — último item do
         // billing_pipeline com nota fiscal atribuída (faturado→entregue), por cliente.
