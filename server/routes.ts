@@ -25482,6 +25482,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       for (const r of (leadsRes?.rows || []) as any[]) {
         const d = haversine(lat, lng, Number(r.lat), Number(r.lng));
         if (d > raio) continue;
+        // 10/11: lead ABERTO e SEM VENDEDOR (sobra do SDR IA, lead liberado) não fica na aba "No Integra":
+        // ninguém está trabalhando nele. Ele aparece em "Novos pontos" como "Lead disponível — Pegar lead".
+        if (!r.assigned_to && !['discarded', 'converted'].includes(String(r.status))) continue;
         const _dAtr = _diasAtrasoLead(r);
         out.push({
           tipo: 'lead',
@@ -26018,7 +26021,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const _leadExist = (r: any) => {
           // "Disponível": lead de Novos Pontos (origin radar) que foi LIBERADO (sem vendedor) e voltou
           // para a base de novos leads → reaparece aqui para qualquer vendedor capturar ("Pegar lead").
-          const disponivel = !r.assigned_to && r.origin === 'radar' && !['converted', 'discarded'].includes(String(r.status));
+          // 10/11: qualquer lead aberto SEM vendedor (radar liberado, SDR IA, etc.) é "disponível" → Pegar lead
+          const disponivel = !r.assigned_to && !['converted', 'discarded'].includes(String(r.status));
           return { nomes: [r.nome], tel: _dig8(r.phone), la: r.la, lo: r.lo, discarded: r.status === 'discarded', disponivel, leadId: r.id };
         };
         for (const r of (le?.rows || []) as any[]) exist.push(_leadExist(r));
@@ -26058,7 +26062,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       // Nome do Google × nomes do cadastro: 'forte' = igual/contido ou 2+ palavras próprias em comum;
       // 'fraco' = 1 palavra própria (4+ letras) em comum.
-      const _nomeCasa = (nn: string, tkP: string[], e: any): 'forte' | 'fraco' | null => {
+      const _nomeCasa = (nn: string, tkP: string[], e: any): 'exato' | 'forte' | 'fraco' | null => {
+        if (nn.length >= 6 && e.ns.some((x: string) => x === nn)) return 'exato';
         if (nn.length >= 4 && e.ns.some((x: string) => x === nn || (Math.min(x.length, nn.length) >= 5 && (x.includes(nn) || nn.includes(x))))) return 'forte';
         const comuns = tkP.filter((t) => e.tk.has(t));
         if (comuns.length >= 2 || (comuns.length === 1 && tkP.length === 1 && comuns[0].length >= 5)) return 'forte';
@@ -26095,9 +26100,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Lojas vizinhas no mesmo prédio recebem quase a mesma coordenada do Google, e a do cadastro
             // vem do GPS do check-in (±10 m) → sem o nome bater, só casa se for praticamente o mesmo ponto.
             if (d < 5) casou = true;
-            else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'forte' && d < 300) || (m === 'fraco' && d < 120); }
+            // Nome IDÊNTICO até 1 km: a coordenada do cadastro costuma vir do geocode de um endereço vago
+            // ("T30", "T-10") e cair centenas de metros longe (caso BONASSA RISTORANTE, 330 m — 10/11).
+            else { const m = _nomeCasa(nnome, tkP, e); casou = (m === 'exato' && d < 1000) || ((m === 'exato' || m === 'forte') && d < 300) || (m === 'fraco' && d < 120); }
           } else if (e.bairro && bairroP && e.bairro === bairroP) {
-            casou = _nomeCasa(nnome, tkP, e) === 'forte';                     // sem coordenada: nome + bairro
+            casou = ['exato', 'forte'].includes(String(_nomeCasa(nnome, tkP, e)));  // sem coordenada: nome + bairro
           }
           if (!casou) continue;
           if (e.disponivel) {
