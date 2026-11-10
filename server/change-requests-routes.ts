@@ -343,6 +343,46 @@ export async function registrarReportInbox(p: {
       text: ((motivoLabel ? motivoLabel + " — " : "") + texto).slice(0, 4000),
       at: new Date().toISOString(), kind: "report",
     };
+    // 🔗 10/nov/2026 — UM report por cliente/vendedor/dia: se já existe report PENDENTE do mesmo
+    // cliente, feito pelo mesmo vendedor no mesmo dia (BR), esta ocorrência é SOMADA a ele (motivos,
+    // observações e conversa juntos) em vez de abrir outro card. Ex.: débito explicado no check-in +
+    // Não Venda da mesma visita viravam dois reports.
+    try {
+      const sid = p.sellerId ? String(p.sellerId) : null;
+      const ex = rowsOf(await db.execute(sql`
+        SELECT cr.id, cr.details FROM change_requests cr
+         WHERE cr.kind = 'report' AND cr.status = 'pending'
+           AND cr.entity_type = ${p.entityType} AND cr.entity_id = ${p.entityId}
+           AND COALESCE(cr.details->>'reportKind', '') <> 'repescagem_nao_atendida'
+           AND (cr.created_at AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+           AND ( (${sid}::text IS NULL AND cr.seller_id IS NULL) OR cr.seller_id = ${sid}
+                 OR EXISTS (SELECT 1 FROM users u
+                             WHERE (u.id = cr.seller_id OR ('omie-vendor-' || u.omie_vendor_code) = cr.seller_id OR u.omie_vendor_code = cr.seller_id)
+                               AND (u.id = ${sid} OR ('omie-vendor-' || u.omie_vendor_code) = ${sid} OR u.omie_vendor_code = ${sid})) )
+         ORDER BY cr.created_at ASC LIMIT 1`));
+      if (ex.length > 0 && p.reportKind !== "repescagem_nao_atendida") {
+        const d0: any = ex[0].details || {};
+        const itens: any[] = Array.isArray(d0.itens) && d0.itens.length ? d0.itens.slice()
+          : [{ reportKind: d0.reportKind || null, reportLabel: d0.reportLabel || null, motivo: d0.motivo || "", texto: d0.texto || "", origem: d0.origem || null }];
+        itens.push({ reportKind: p.reportKind, reportLabel: catLabel, motivo: motivoLabel, texto: texto.slice(0, 4000), origem: p.origem || null });
+        const uniq = (arr: string[]) => arr.filter((x, i) => x && arr.indexOf(x) === i);
+        const novo: any = { ...d0, itens };
+        novo.reportLabel = uniq(itens.map((i) => String(i.reportLabel || ""))).join(" + ") || d0.reportLabel;
+        novo.motivo = uniq(itens.map((i) => String(i.motivo || ""))).join(" · ");
+        novo.texto = itens.map((i) => (i.motivo ? i.motivo + ": " : "") + String(i.texto || "")).join("\n").slice(0, 4000);
+        if (!novo.fotoUrl && details.fotoUrl) novo.fotoUrl = details.fotoUrl;
+        if (!novo.salesCardId && details.salesCardId) novo.salesCardId = details.salesCardId;
+        if (!novo.origem && details.origem) novo.origem = details.origem;
+        if (!novo.dataVisita && details.dataVisita) novo.dataVisita = details.dataVisita;
+        if (details.cicloPresencial) novo.cicloPresencial = true;
+        await db.execute(sql`
+          UPDATE change_requests
+             SET details = ${JSON.stringify(novo)}::jsonb,
+                 messages = COALESCE(messages, '[]'::jsonb) || ${JSON.stringify([seedMsg])}::jsonb
+           WHERE id = ${ex[0].id}`);
+        return;
+      }
+    } catch (e: any) { console.warn("[REPORT-INBOX] agrupar report do dia:", e?.message); }
     await db.execute(sql`
       INSERT INTO change_requests
         (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
