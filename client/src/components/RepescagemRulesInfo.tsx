@@ -121,6 +121,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <ul className="list-disc pl-5 space-y-1">
                 <li>Job às <b>00:10 (horário de Brasília)</b>: gera as rotas do dia e, <b>de segunda a sexta</b>, roda a distribuição da repescagem (na segunda entram também os não atendidos de sexta). Sábado e domingo: sem sorteio.</li>
                 <li>Job diário às <b>18:00 (horário de Brasília)</b>: libera todas as capturas de atendimento do dia.</li>
+                <li><b>Report das 17h no Inbox (seg a sex):</b> lista os clientes <b>atendidos</b> na repescagem do dia — de que <b>carteira</b> são, <b>quem atendeu</b> (incluindo a IA) e se houve <b>venda</b> (valor e quem implantou o pedido).</li>
                 <li><b>Report das 18h no Inbox:</b> no mesmo horário, o admin recebe <b>um único report</b> com todos os clientes que caíram na repescagem do dia e <b>não foram atendidos</b> (sem atendimento virtual, check-in de rota ou pedido no dia). No report ele escolhe se eles <b>voltam para a repescagem</b> (todos ou os marcados) — entram no sorteio do <b>próximo dia útil</b> e são <b>redistribuídos</b> conforme o painel de carteiras — ou <b>não devolve</b> (seguem as regras normais).</li>
               </ul>
             </div>
