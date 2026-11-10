@@ -246,7 +246,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
         {info && (
           <div className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900 space-y-1" data-testid="info-entregas">
             <div><b>O que é:</b> a soma do valor dos pedidos com entrega <b>concluída</b> em cada semana (segunda a domingo). Pedido faturado mas ainda não entregue não entra.</div>
-            <div><b>Como ler:</b> a barra verde é a semana atual, ainda em andamento. Clique numa barra{modo === "gestao" ? " ou no cabeçalho de uma coluna da tabela" : ""} para ver os detalhes daquela semana.</div>
+            <div><b>Como ler:</b> {modo === "gestao" ? "a coluna verde da tabela é a semana atual, ainda em andamento. Clique no cabeçalho de uma coluna para ver os detalhes daquela semana." : "a barra verde é a semana atual, ainda em andamento. Clique numa barra para ver os detalhes daquela semana."}</div>
             <div><b>Comparação:</b> "Semana passada", "Média das 8 anteriores" e "Total das 9 semanas" mostram se o ritmo de entregas está acima ou abaixo do normal.</div>
             <div><b>Comissão de entrega:</b> {pctTxt(percentual)} sobre a soma das entregas dos entregadores participantes, dividida entre eles pelos dias com entrega × o peso de cada um{modo === "gestao" ? " (definidos no botão Comissão). Na tabela, o valor em laranja é a comissão de cada entregador" : ""}.</div>
           </div>
@@ -296,7 +296,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
               </p>
             )}
 
-            <Barras semanas={semanas} selecionada={idx} onSelect={setSel} />
+            {modo !== "gestao" && <Barras semanas={semanas} selecionada={idx} onSelect={setSel} />}
 
             {semana && (
               <div className="mt-2 text-xs text-gray-600" data-testid="semana-selecionada">
@@ -416,7 +416,7 @@ export default function EntregasSemanais({ modo }: { modo: "motorista" | "gestao
               </div>
             )}
             </>)}
-            {!aberto && <p className="mt-2 text-[11px] text-gray-400">Quadro recolhido — clique em Expandir para ver o gráfico por semana{modo === "gestao" ? " e a tabela por entregador" : ""}.</p>}
+            {!aberto && <p className="mt-2 text-[11px] text-gray-400">Quadro recolhido — clique em Expandir para ver {modo === "gestao" ? "a tabela por entregador" : "o gráfico por semana"}.</p>}
           </>
         )}
       </CardContent>
