@@ -803,7 +803,7 @@ export default function ConsultaLocal() {
               ) : (
                 <>
                   <p>Pare em frente ao estabelecimento e toque em <strong>Consultar este local</strong>.</p>
-                  <p>Buscamos leads e clientes num raio de {RAIO_PADRAO} m da sua posição.</p>
+                  <p>Buscamos clientes num raio de {RAIO_PADRAO} m da sua posição. Leads aparecem na aba <strong>Novos pontos</strong>.</p>
                   <p className="pt-1">Ou use <strong>Buscar por foto</strong> para conferir pelo nome da fachada.</p>
                 </>
               )}
@@ -853,8 +853,8 @@ export default function ConsultaLocal() {
               <Card className="border-l-4 border-l-slate-400">
                 <CardContent className="py-8 text-center text-sm space-y-2">
                   <HelpCircle className="h-10 w-10 mx-auto text-slate-400" />
-                  <p className="font-medium">Nenhum cadastro em até {raioUsado} m</p>
-                  <p className="text-muted-foreground">Este ponto não parece estar no Integra. Veja a aba <strong>Novos pontos</strong> ou amplie o raio.</p>
+                  <p className="font-medium">Nenhum cliente em até {raioUsado} m</p>
+                  <p className="text-muted-foreground">Nenhum cliente do Integra por aqui. Veja a aba <strong>Novos pontos</strong> (leads e estabelecimentos novos) ou amplie o raio.</p>
                   <div className="flex gap-2 justify-center pt-2">
                     {raioUsado < 500 && <Button variant="outline" size="sm" onClick={() => ampliar(500)} data-testid="button-ampliar-integra">Ampliar para 500 m</Button>}
                   </div>
