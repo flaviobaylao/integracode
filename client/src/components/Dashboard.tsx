@@ -559,6 +559,8 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {podeVerEntregas && <EntregasSemanais modo="gestao" />}
+
       <div className="relative rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 flex items-center justify-between gap-4">
         <div className="absolute top-2 right-2"><InfoDot text="Projeção de faturamento do mês = faturamento já realizado + previsão dos pedidos que ainda devem entrar até o fim do mês. A previsão é por cliente da carteira: para cada cliente com histórico, calculamos a periodicidade de compra (intervalo médio entre pedidos, ponderado por recência), o dia da semana mais frequente e o ticket médio (ponderado por recência) dos últimos ~3 meses, e projetamos os próximos pedidos nos dias previstos, creditando ao dono da carteira. O botão Previsões liga/desliga a exibição desses valores nas células (em lilás); somados ao realizado, compõem a projeção. Abaixo, a linha 'Linear (dias úteis seg-sex)' é uma segunda estimativa, mais simples: extrapola o realizado pelo ritmo médio dos dias úteis (seg-sex) já decorridos no mês — realizado dividido pelos dias úteis decorridos, multiplicado pelo total de dias úteis do mês. Serve de referência rápida; a projeção principal (por carteira) tende a ser mais precisa por somar pedido a pedido previsto por cliente." /></div>
         <div>
@@ -577,8 +579,6 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
-
-      {podeVerEntregas && <EntregasSemanais modo="gestao" />}
 
       <Card>
         <CardHeader>
