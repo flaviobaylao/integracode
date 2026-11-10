@@ -619,6 +619,9 @@ export default function Layout({ children, activeView, setActiveView, user }: La
   };
   const roleFilterItems = (items: MenuItem[]) => {
     return items.filter(item => {
+      // Marketing de Vendas (tabelas, portfólio, posts): todos os usuários veem,
+      // qualquer papel e qualquer configuração de acesso (pedido do Flavio, 10/nov/2026).
+      if (item.id === 'marketing-vendas') return true;
       const card = MENU_CARD[item.id];
       const roleOk = item.available
         && (!isMotorista || ['rota-entrega', 'entregas-do-dia', 'extrato-cliente', 'chamados'].includes(item.id))

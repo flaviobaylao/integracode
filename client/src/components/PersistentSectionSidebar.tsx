@@ -56,7 +56,8 @@ export default function PersistentSectionSidebar() {
 
   const isMotorista = flags.isMotorista;
   const sections = SECTIONS.filter((s) => {
-    if (isMotorista) return s.label === "Geral" || s.label === "Logística" || s.label === "Chamados";
+    // Motorista vê Vendas só por causa do Marketing de Vendas (o resto do grupo é filtrado no Layout).
+    if (isMotorista) return s.label === "Geral" || s.label === "Logística" || s.label === "Chamados" || s.label === "Vendas";
     return s.canView(flags);
   });
 
