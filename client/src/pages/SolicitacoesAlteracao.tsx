@@ -678,7 +678,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
-            {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
+            {r.isRepescagem && !r.captura?.repescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
             {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300" title="Tipo e origem do report">Report · {rd.reportLabel || "Registro"}{origemDoReport(rd) ? ` · ${origemDoReport(rd)}` : ""}</Badge>}
             <SeloCaptura r={r} />
             {/* 🔁 Voltou ao Inbox porque o vendedor respondeu à réplica do admin */}
@@ -959,7 +959,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
             <Badge variant="outline" className="text-[10px]">{ENTITY_LABEL[r.entityType] || r.entityType}</Badge>
-            {r.isRepescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
+            {r.isRepescagem && !r.captura?.repescagem && <Badge variant="outline" className="text-[10px] bg-rose-50 text-rose-700 border-rose-300">Repescagem</Badge>}
             {isReport && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-300" title="Tipo e origem do report">Report · {rd.reportLabel || "Registro"}{origemDoReport(rd) ? ` · ${origemDoReport(rd)}` : ""}</Badge>}
             <SeloCaptura r={r} />
             <span className="flex items-center gap-1"><UserIcon className="h-3 w-3" /> {r.sellerName || r.requestedByName || "—"}</span>
