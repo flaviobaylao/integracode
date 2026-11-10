@@ -807,6 +807,41 @@ export function registerChangeRequestsRoutes(app: Express) {
         if (m.kind === "report" && m.details && (m.details as any).cicloPresencial === true) { m.virtual = true; m.cicloPresencial = true; }
         m.isRepescagem = m.entityType === "customer" && repescagemSet.has(String(m.customerId || m.entityId));
       }
+      // 🎯 10/nov/2026 — CAPTURA DE CARTEIRA no report: quem reportou não é o dono do cliente.
+      //   Se houve REPESCAGEM atribuída a quem reportou (até 3 dias antes do report), o card mostra
+      //   "Repescagem · cliente de <dono>"; sem atribuição, mostra "Cliente de <dono>" (outra carteira).
+      try {
+        const reps = (mapped as any[]).filter((m) => m.kind === "report" && m.entityType === "customer" && m.sellerId);
+        if (reps.length) {
+          const us = rowsOf(await db.execute(sql`SELECT id, omie_vendor_code, first_name, last_name, email FROM users`));
+          const nomeU = (u: any) => (((u.first_name || "") + " " + (u.last_name || "")).trim() || (u.email ? String(u.email).split("@")[0] : "")) || null;
+          const acha = (x: any) => {
+            const v = String(x || ""); if (!v) return null;
+            const cod = v.replace(/^omie-vendor-/, "");
+            return us.find((u: any) => String(u.id) === v || (u.omie_vendor_code && String(u.omie_vendor_code) === cod)) || null;
+          };
+          const cids = Array.from(new Set(reps.map((m) => String(m.customerId || m.entityId))));
+          const inC = sql.join(cids.map((x) => sql`${x}`), sql`, `);
+          const donos = new Map<string, string>();
+          for (const c of rowsOf(await db.execute(sql`SELECT id, seller_id FROM customers WHERE id IN (${inC})`))) if (c.seller_id) donos.set(String(c.id), String(c.seller_id));
+          const atribs = rowsOf(await db.execute(sql`
+            SELECT customer_id, assigned_user_id, carteira_seller_id, status, assigned_at, draw_date
+              FROM repescagem_assignments WHERE customer_id IN (${inC}) ORDER BY assigned_at DESC`));
+          for (const m of reps) {
+            const cid = String(m.customerId || m.entityId);
+            const autor = acha(m.sellerId);
+            if (!autor) continue;
+            const t = new Date(m.createdAt).getTime();
+            const a = atribs.find((x: any) => String(x.customer_id) === cid && String(x.assigned_user_id) === String(autor.id)
+              && x.assigned_at && new Date(x.assigned_at).getTime() <= t + 3600_000 && t - new Date(x.assigned_at).getTime() <= 3 * 86400_000);
+            const donoRef = (a && a.carteira_seller_id) || donos.get(cid) || null;
+            const dono = acha(donoRef);
+            if (dono && String(dono.id) === String(autor.id)) continue; // reportou o próprio cliente
+            if (!a && !dono) continue;
+            m.captura = { repescagem: !!a, donoNome: dono ? nomeU(dono) : null, capturadoPor: nomeU(autor) || m.sellerName || null };
+          }
+        }
+      } catch (_e: any) { console.warn("[INBOX] captura de carteira:", _e?.message); }
       // 📷 temFoto: qualquer report com foto de check-in de visita sem venda (ou link de foto).
       try {
         const reps = (mapped as any[]).filter((m) => m.kind === "report");
