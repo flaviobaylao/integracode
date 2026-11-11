@@ -461,11 +461,21 @@ export default function RotaDoDia() {
   // atendentes veem o mesmo cliente): ao clicar em WhatsApp ou Registrar num card ainda não
   // capturado, ele é capturado primeiro (some para os demais) e só então a ação segue. Capturado
   // por outro atendente → bloqueia. Admin e o DONO da carteira (card duplo) seguem sem captura.
+  // LIMITE DE CAPTURAS (nov/2026): no máximo 5 clientes capturados ao mesmo tempo por atendente.
+  // A vaga abre ao Liberar ou quando o atendimento do capturado é registrado (o card fecha).
+  // O servidor também valida (vale para a tela de Repescagem e para capturas em outras rotas).
+  const MAX_CAPTURAS = 5;
+  const minhasCapturas = (Array.isArray(repescagemOverlay) ? repescagemOverlay : []).filter((x: any) => x?.captured && x?.capturedBy === user?.id).length;
+  const limiteCapturas = !isAdmin && minhasCapturas >= MAX_CAPTURAS;
   const comCaptura = (r: any, acao: () => void) => {
     if (isAdmin || !r?.assignmentId || r?.isOwner) { acao(); return; }
     if (r.captured && r.canRelease) { acao(); return; }
     if (r.captured && !r.canRelease) {
       toast({ title: 'Cliente já capturado', description: `Este cliente está com ${r.capturedByName || 'outro atendente'}.`, variant: 'destructive' });
+      return;
+    }
+    if (limiteCapturas) {
+      toast({ title: `Limite de ${MAX_CAPTURAS} capturas`, description: 'Libere ou registre o atendimento de um cliente capturado para atender outro.', variant: 'destructive' });
       return;
     }
     toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: true }, { onSuccess: () => acao() });
@@ -2227,6 +2237,11 @@ export default function RotaDoDia() {
                     >
                       <Target className="h-4 w-4 text-[#8a6d3b] dark:text-[#c9b37e]" />
                       Repescagem ({repescagemActiveCount}{repescagemActiveCount !== repescagemOverlay.length ? ` de ${repescagemOverlay.length}` : ''})
+                      {!isAdmin && (
+                        <span className={`ml-2 text-[11px] font-semibold px-1.5 py-0.5 rounded ${limiteCapturas ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-200' : 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200'}`} title="Você pode ter até 5 clientes capturados ao mesmo tempo. A vaga abre ao Liberar ou ao registrar o atendimento de um capturado." data-testid="repescagem-minhas-capturas">
+                          Minhas capturas: {minhasCapturas}/{MAX_CAPTURAS}
+                        </span>
+                      )}
                     </CardTitle>
                     {!repBoxOpen && (
                       <span
@@ -2318,6 +2333,11 @@ export default function RotaDoDia() {
                             Vendedor: {(r as any).ownerSellerName}{(r as any).ownerSellerPhone ? ` • ${formatarCelularBR((r as any).ownerSellerPhone)}` : ''}
                           </span>
                         ) : null}
+                        {(r as any).iaContatoEm && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-600 text-white" title="A IA mandou WhatsApp para este cliente. Não conta como atendimento: o card continua aqui até alguém registrar o atendimento ou sair um pedido." data-testid={`repescagem-ia-${r.customerId}`}>
+                            IA contatou às {new Date((r as any).iaContatoEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}{(r as any).iaRespondeu ? ' · cliente respondeu' : ''}
+                          </span>
+                        )}
                         {r.captured && (
                           <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded text-white ${r.canRelease && r.capturedBy === user?.id ? 'bg-blue-600' : 'bg-gray-600'}`} title="Atendimento capturado — some para os demais telemarketings até liberar, registrar pedido ou às 18h" data-testid={`repescagem-capturado-${r.customerId}`}>
                             {r.capturedBy === user?.id ? 'Capturado por você' : `Capturado por ${r.capturedByName || 'outro atendente'}`}
@@ -2417,7 +2437,7 @@ export default function RotaDoDia() {
                         <Button
                           size="sm" variant="outline"
                           className={`h-8 px-2.5 gap-1 text-xs font-semibold ${r.captured ? (r.canRelease ? 'border-orange-400 text-orange-700 hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-950' : 'border-gray-300 text-gray-500 cursor-not-allowed') : 'border-blue-500 text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950'}`}
-                          onClick={(e) => { e.stopPropagation(); if (r.captured && !r.canRelease) return; toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: !r.captured }); }}
+                          onClick={(e) => { e.stopPropagation(); if (r.captured && !r.canRelease) return; if (!r.captured && limiteCapturas) { toast({ title: `Limite de ${MAX_CAPTURAS} capturas`, description: 'Libere ou registre o atendimento de um cliente capturado para capturar outro.', variant: 'destructive' }); return; } toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: !r.captured }); }}
                           disabled={toggleCaptureMutation.isPending || (r.captured && !r.canRelease)}
                           title={r.captured ? (r.canRelease ? 'Capturado por você — clique para liberar' : `Capturado por ${r.capturedByName || 'outro atendente'}`) : 'Capturar atendimento (fica só com você; some para os demais até liberar, registrar pedido ou às 18h)'}
                           data-testid={`button-repescagem-capture-${r.customerId}`}
