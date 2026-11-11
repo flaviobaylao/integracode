@@ -86,12 +86,12 @@ export function registerVisitSummary(app: Express) {
         for (const r of ciF) addAtt(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       try {
-        const vsF = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}' AND customer_id IS NOT NULL GROUP BY customer_id, d`);
+        const vsF = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${saleStart}' AND '${todayStr}' AND customer_id IS NOT NULL AND NOT (attendant_id = 'ia' AND COALESCE(service_type, '') = 'repescagem_ia') GROUP BY customer_id, d`);
         for (const r of vsF) addAtt(r.customer_id, r.d);
       } catch (e) { /* ignora */ }
       // Atendimento virtual (virtual_service_logs)
       let virt: any[] = [];
-      try { virt = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL GROUP BY customer_id, d`); } catch (e) { virt = []; }
+      try { virt = await q(`SELECT customer_id, (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date::text AS d FROM virtual_service_logs WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN '${startDate}' AND '${endDate}' AND customer_id IS NOT NULL AND NOT (attendant_id = 'ia' AND COALESCE(service_type, '') = 'repescagem_ia') GROUP BY customer_id, d`); } catch (e) { virt = []; }
       // Meta aproximada por cliente (média histórica de sale_value)
       let metas: any[] = [];
       try { metas = await q(`SELECT customer_id, AVG(sale_value) AS meta FROM billing_pipeline WHERE sale_value > 0 AND customer_id IS NOT NULL GROUP BY customer_id`); } catch (e) { metas = []; }

@@ -430,6 +430,8 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     and(
       sql`DATE(${virtualServiceLogs.attendanceDate}) >= ${startDate}`,
       sql`DATE(${virtualServiceLogs.attendanceDate}) <= ${endDate}`,
+      // Contato automático da IA da repescagem NÃO é atendimento (nov/2026).
+      sql`NOT (${virtualServiceLogs.attendantId} = 'ia' AND COALESCE(${virtualServiceLogs.serviceType}, '') = 'repescagem_ia')`,
     )
   );
   const virtualLogSet = new Set<string>();
@@ -820,6 +822,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         and(
           inArray(virtualServiceLogs.customerId, customerIds),
           sql`${virtualServiceLogs.attendanceDate} >= ${minAssignedAt}`,
+          sql`NOT (${virtualServiceLogs.attendantId} = 'ia' AND COALESCE(${virtualServiceLogs.serviceType}, '') = 'repescagem_ia')`,
         )
       );
     const logsByCustomer = new Map<string, typeof allLogs>();
@@ -1429,6 +1432,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
         SELECT DISTINCT customer_id FROM (
           SELECT customer_id FROM virtual_service_logs
             WHERE attendance_date > now() - make_interval(days => ${_dias}) AND customer_id = ANY(string_to_array(${_ids}, ','))
+              AND NOT (attendant_id = 'ia' AND COALESCE(service_type, '') = 'repescagem_ia')
           UNION ALL
           SELECT customer_id FROM route_checkpoints
             WHERE checkpoint_type = 'check_in' AND checkpoint_time > now() - make_interval(days => ${_dias}) AND customer_id = ANY(string_to_array(${_ids}, ','))
@@ -1729,7 +1733,10 @@ export async function closeAndExpireRepescagem(date: string): Promise<any> {
     const vlogs = await db.execute(sql`
       SELECT customer_id, attendant_id FROM virtual_service_logs
       WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = ${date}::date
-        AND customer_id = ANY(string_to_array(${arr}, ','))`);
+        AND customer_id = ANY(string_to_array(${arr}, ','))
+        -- Contato automático da IA da repescagem NÃO fecha o card (nov/2026): o cliente segue na
+        -- rota até um humano registrar o atendimento ou sair um pedido.
+        AND NOT (attendant_id = 'ia' AND COALESCE(service_type, '') = 'repescagem_ia')`);
     for (const r of vlogs.rows as any[]) mark(r.customer_id, r.attendant_id);
 
     // Registro de atendimento (presencial): check-in de rota.
@@ -2472,6 +2479,19 @@ export function registerRepescagemRoutes(app: Express, opts: {
         }
       } catch (e) { console.warn('[route-overlay][owner-name]', (e as any)?.message); }
 
+      // Contato automático da IA no dia (selo "IA contatou às HH:MM" no card; não é atendimento).
+      const iaContatoPor = new Map<string, { em: string; respondeu: boolean }>();
+      try {
+        const iaR: any = await db.execute(sql`
+          SELECT DISTINCT ON (x.customer_id) x.customer_id, x.criado_em,
+                 EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = x.conversation_id AND m.sender_type = 'customer' AND m.created_at > x.criado_em) AS respondeu
+            FROM ia_repescagem_contatos x
+           WHERE x.enviado_ok = true AND x.draw_date = ${date}
+             AND x.customer_id = ANY(string_to_array(${cids.join(',')}, ','))
+           ORDER BY x.customer_id, x.criado_em DESC`);
+        for (const r of ((iaR.rows || []) as any[])) iaContatoPor.set(String(r.customer_id), { em: new Date(r.criado_em).toISOString(), respondeu: !!r.respondeu });
+      } catch { /* tabela pode nao existir */ }
+
       // Quantas vezes o cliente caiu em repescagem (distinct last_red_date).
       // Janela por periodicidade: mensal = últimos 3 meses; semanal/quinzenal = últimos 2 meses.
       const baseDay = brTodayStr();
@@ -2527,6 +2547,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
           // CAPTURA DE ATENDIMENTO: quem capturou fica com o card; some para os demais telemarketings.
           captured: r.captured,
           capturedBy: r.capturedBy,
+          iaContatoEm: iaContatoPor.get(r.customerId)?.em || null,
+          iaRespondeu: !!iaContatoPor.get(r.customerId)?.respondeu,
           capturedByName: r.capturedBy ? (assigneeNameById.get(r.capturedBy) || null) : null,
           canRelease: isAdmin || (!!r.capturedBy && r.capturedBy === user.id),
         };

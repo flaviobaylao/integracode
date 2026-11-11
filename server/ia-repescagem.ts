@@ -12,7 +12,7 @@
 //
 // Gates (system_settings):
 //   ia_repescagem_on        'on'|'off'  (default on)
-//   ia_repescagem_hora      hora BRT do disparo (default 11)
+//   ia_repescagem_hora      hora BRT do disparo (default 16 — nov/2026: os humanos tem o dia todo antes)
 //   ia_repescagem_max_dia   teto de contatos por dia (default 150)
 //   ia_repescagem_canal     numero Umbler de saida (default 5562992682630)
 //   ia_repescagem_last_run  carimbo do ultimo dia executado (trava)
@@ -77,6 +77,8 @@ async function selecionarAlvos(drawDate: string, limit: number): Promise<Alvo[]>
     JOIN customers c ON c.id = a.customer_id
     WHERE a.draw_date = ${drawDate}
       AND a.status = 'in_route' AND a.completed_at IS NULL
+      -- Cliente CAPTURADO por um atendente hoje: a IA nao se mete (nov/2026).
+      AND NOT (COALESCE(a.locked, false) = true AND a.locked_date = ${drawDate})
       AND COALESCE(c.is_active, true) = true
       AND COALESCE(c.situacao, '') NOT ILIKE 'inativo'
       -- so celular, com ou sem 55 e com ou sem o 9o digito (210 cadastros ativos ainda tem
@@ -259,7 +261,7 @@ export function registerIaRepescagem(app: any) {
     if (typeof b.ativo === 'boolean') await setSetting('ia_repescagem_on', b.ativo ? 'on' : 'off');
     if (typeof b.hora === 'number') await setSetting('ia_repescagem_hora', String(b.hora));
     if (typeof b.maxDia === 'number') await setSetting('ia_repescagem_max_dia', String(b.maxDia));
-    res.json({ ok: true, ativo: await getSetting('ia_repescagem_on', 'on'), hora: await getSetting('ia_repescagem_hora', '11'), maxDia: await getSetting('ia_repescagem_max_dia', '150') });
+    res.json({ ok: true, ativo: await getSetting('ia_repescagem_on', 'on'), hora: await getSetting('ia_repescagem_hora', '16'), maxDia: await getSetting('ia_repescagem_max_dia', '150') });
   });
   // Disparo diario: a cada minuto confere se e a hora (BRT), dia util (seg-sab) e ainda nao rodou hoje.
   try {
@@ -270,12 +272,17 @@ export function registerIaRepescagem(app: any) {
         if (dow === 0) return;
         // Feriado nacional/local: ninguem na operacao, cliente fechado -> nao contata (mesma fonte da fila humana).
         try { const { ehDiaUtil } = await import('./ia-fila'); if (!(await ehDiaUtil())) return; } catch {}
-        const hora = parseInt(await getSetting('ia_repescagem_hora', '11'), 10) || 11;
+        // nov/2026: disparo passa das 11h para as 16h (uma vez; depois o valor salvo manda).
+        if ((await getSetting('ia_repescagem_hora_16_migrada', '')) !== 'sim') {
+          if ((await getSetting('ia_repescagem_hora', '')) === '11') await setSetting('ia_repescagem_hora', '16');
+          await setSetting('ia_repescagem_hora_16_migrada', 'sim');
+        }
+        const hora = parseInt(await getSetting('ia_repescagem_hora', '16'), 10) || 16;
         if (horaBR() < hora || horaBR() > hora + 3) return; // janela de 3h para pegar reinicios
         if ((await getSetting('ia_repescagem_last_run', '')) === hojeBR()) return;
         await iaRepescagemTick();
       } catch (e: any) { console.error('[IA-REP] tick', e?.message || e); }
     }, 60 * 1000);
   } catch {}
-  console.log('[IA-REP] registrado (repescagem nao atendida -> IA as 11h BRT)');
+  console.log('[IA-REP] registrado (repescagem nao atendida -> IA as 16h BRT; contato nao conta como atendimento)');
 }

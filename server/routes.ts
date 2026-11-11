@@ -4677,6 +4677,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         WHERE (c.seller_id = ${sellerId} OR vsl.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
         AND vsl.entity_type = 'customer'
         AND DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+        -- Contato automático da IA da repescagem não é atendimento (nov/2026).
+        AND NOT (vsl.attendant_id = 'ia' AND COALESCE(vsl.service_type, '') = 'repescagem_ia')
       `);
       
       let count = parseInt(result.rows[0]?.count || '0');
@@ -4720,6 +4722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           WHERE (c.seller_id = ${sellerId} OR vsl.customer_id = ANY(string_to_array(${routeIdsCsv}, ',')))
             AND vsl.entity_type = 'customer'
             AND DATE(vsl.attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = ${date}::date
+            AND NOT (vsl.attendant_id = 'ia' AND COALESCE(vsl.service_type, '') = 'repescagem_ia')
           ORDER BY vsl.customer_id, vsl.attendance_date DESC
         `);
         (lastTypes.rows as any[]).forEach(row => { if (row.customer_id) serviceTypeByCustomer[String(row.customer_id)] = String(row.service_type || ''); });
