@@ -57,6 +57,11 @@ type Linha = {
   formaPagamento?: string | null;
   conta?: string | null;
   estimado?: boolean;
+  /** Vendedor e implantador da ocasião do faturamento (só nas linhas de NF). */
+  vendedor?: string | null;
+  vendedorFonte?: "pedido" | "faturamento" | null;
+  implantadoPor?: string | null;
+  implantadoPorTipo?: "pessoa" | "rotina" | null;
   detalhe?: DetalheNota | DetalhePagamento | null;
 };
 
@@ -92,6 +97,8 @@ type DetalheNota = {
   implantadoPor?: string | null;
   implantadoPorTipo?: "pessoa" | "rotina" | null;
   vendedor?: string | null;
+  /** "pedido" = veio do pedido do INTEGRA 2.0; "faturamento" = do faturamento migrado do Omie. */
+  vendedorFonte?: "pedido" | "faturamento" | null;
   pagamentos: Array<{ data: string | null; valor: number; formaPagamento?: string | null; conta?: string | null; referencia?: string | null; titulo?: string | null }>;
   produtos?: Array<{ nome: string; quantidade: number; unidade?: string | null; unitPrice?: number; totalPrice?: number }>;
   fiscalInvoiceId?: string | null;
@@ -614,6 +621,8 @@ export default function ExtratoCliente() {
       "Motivo da troca": l.motivo || "",
       Documento: l.documento,
       Pedido: l.pedido || "",
+      Vendedor: l.vendedor || "",
+      "Implantado por": l.implantadoPor || "",
       Descricao: l.descricao || "",
       Vencimento: fmtData(l.vencimento),
       Parcelas: l.parcelas || "",
@@ -1123,10 +1132,23 @@ export default function ExtratoCliente() {
                             ) : null}
                             {l.pedido ? <div className="text-[10px] text-gray-400">ped. {l.pedido}</div> : null}
                           </td>
-                          <td className="px-3 py-2 max-w-[280px] truncate" title={l.descricao || ""}>
-                            {l.descricao || "—"}
-                            {l.formaPagamento ? (
-                              <span className="ml-1 text-[10px] text-gray-500">· {l.formaPagamento}</span>
+                          <td className="px-3 py-2 max-w-[280px]" title={l.descricao || ""}>
+                            <div className="truncate">
+                              {l.descricao || "—"}
+                              {l.formaPagamento ? (
+                                <span className="ml-1 text-[10px] text-gray-500">· {l.formaPagamento}</span>
+                              ) : null}
+                            </div>
+                            {/* Quem vendeu e quem implantou o pedido, na ocasião do faturamento. */}
+                            {l.tipo === "NF" && (l.vendedor || l.implantadoPor) ? (
+                              <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate"
+                                   title={[l.vendedor ? `Vendedor: ${l.vendedor}` : "", l.implantadoPor ? `Implantado por: ${l.implantadoPor}` : ""].filter(Boolean).join(" · ")}>
+                                {l.vendedor ? <span>Vend.: {l.vendedor}</span> : null}
+                                {l.vendedor && l.implantadoPor ? <span className="mx-1">·</span> : null}
+                                {l.implantadoPor ? (
+                                  <span className={l.implantadoPorTipo === "rotina" ? "italic" : ""}>Impl.: {l.implantadoPor}</span>
+                                ) : null}
+                              </div>
                             ) : null}
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
@@ -1706,7 +1728,21 @@ function DetalheModal({ linha, onClose, cliente }: { linha: Linha; onClose: () =
                     )
                   }
                 />
-                <DetInfo label="Vendedor" value={dNota.vendedor || "—"} />
+                <DetInfo
+                  label="Vendedor"
+                  value={
+                    dNota.vendedor ? (
+                      <span>
+                        {dNota.vendedor}
+                        {dNota.vendedorFonte === "faturamento" ? (
+                          <span className="ml-1 text-[10px] text-gray-500 dark:text-gray-400">(faturamento Omie)</span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      "—"
+                    )
+                  }
+                />
               </div>
 
               <div>
