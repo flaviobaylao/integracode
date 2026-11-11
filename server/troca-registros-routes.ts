@@ -95,6 +95,7 @@ export function ensureTrocaSchema(): Promise<void> {
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_por varchar",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_por_nome varchar",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS admin_obs text",
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS comissao_fonte varchar",
         // Histórico de mudança de carteira (rezoneamento): gravado por gatilho em customers.seller_id.
         "CREATE TABLE IF NOT EXISTS customer_seller_changes (id bigserial PRIMARY KEY, customer_id varchar NOT NULL, old_seller_id varchar, new_seller_id varchar, changed_at timestamptz NOT NULL DEFAULT now())",
         "CREATE INDEX IF NOT EXISTS idx_customer_seller_changes ON customer_seller_changes (customer_id, changed_at)",
@@ -145,26 +146,23 @@ export async function descontosTrocaPorVendedor(ym: string): Promise<Record<stri
   return out;
 }
 
-/** % de comissão aplicada ao vendedor no mês da NF. */
-async function pctComissao(sellerId: string, ano: number, mes: number): Promise<number> {
-  const ym = `${ano}-${String(mes).padStart(2, "0")}`;
+/** % de comissão do vendedor no mês da NF — mesma regra do Resumo Recebíveis
+ *  (fixo, faixa por atingimento, escalonado). Sem configuração: histórico das metas. */
+async function pctComissaoDetalhe(sellerId: string, ano: number, mes: number): Promise<{ pct: number; fonte: string }> {
   try {
-    const c: any = await db.execute(sql`
-      SELECT comissao_tipo, comissao_pct FROM collab_remuneracao_config
-      WHERE user_id = ${sellerId} AND vigencia_ym <= ${ym}
-      ORDER BY vigencia_ym DESC LIMIT 1`);
-    const cfg = c.rows?.[0];
-    if (cfg && cfg.comissao_tipo === "fixo") return n(cfg.comissao_pct);
-    if (cfg && cfg.comissao_tipo === "nenhum") return 0;
-  } catch { /* tabela pode não existir ainda — cai no histórico */ }
+    const { percentualComissaoDoMes } = await import("./resumo-recebiveis-routes");
+    const r = await percentualComissaoDoMes(sellerId, ano, mes);
+    if (r) return r;
+  } catch (e: any) { console.warn("[TROCA] % pelo resumo:", e?.message || e); }
   try {
     const h: any = await db.execute(sql`
       SELECT commission_pct FROM sales_goal_history
       WHERE seller_id = ${sellerId} AND (year < ${ano} OR (year = ${ano} AND month <= ${mes}))
       ORDER BY year DESC, month DESC LIMIT 1`);
-    return n(h.rows?.[0]?.commission_pct);
+    const p = n(h.rows?.[0]?.commission_pct);
+    return { pct: p, fonte: p ? "histórico de metas" : "sem configuração de comissão" };
   } catch {
-    return 0;
+    return { pct: 0, fonte: "sem configuração de comissão" };
   }
 }
 
@@ -297,10 +295,12 @@ async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: stri
   const valorTroca = r2(itens.reduce((s, i) => s + i.valor, 0));
 
   let pct = 0;
+  let comissaoFonte: string | null = null;
   if (motivo === "vencido" && vendedorId) {
     // % do registrante no mês da NF dele; sem NF dele para o cliente, o % dele no mês da troca.
     const [a, m] = String(nfDoVendedor ? nf.data : ymBrasil()).split("-").map(Number);
-    pct = await pctComissao(vendedorId, a, m);
+    const det = await pctComissaoDetalhe(vendedorId, a, m);
+    pct = det.pct; comissaoFonte = det.fonte;
   }
   const desconto = motivo === "vencido" ? r2((valorTroca * pct) / 100) : 0;
 
@@ -311,6 +311,7 @@ async function calcularTroca(card: any, motivo: MotivoTroca, registranteId: stri
     nfData: nf?.data ? String(nf.data) : null,
     nfDoVendedor,
     vendedorRegra: resolvido.regra,
+    comissaoFonte,
     // nf_seller_* = vendedor DESCONTADO (quem registrou a troca)
     nfSellerId: vendedorId,
     nfSellerName: vendedorNome,
@@ -622,7 +623,7 @@ export function sincronizarFaturamentoTrocas(forcar = false): Promise<void> {
   syncEmAndamento = (async () => {
     try {
       const regs: any = await db.execute(sql`
-        SELECT id, sales_card_id, customer_id, card_seller_id, created_by, itens, created_at, nf_troca_id, faturado_em
+        SELECT id, sales_card_id, customer_id, card_seller_id, created_by, itens, created_at, nf_troca_id, faturado_em, comissao_fonte
         FROM troca_registros
         WHERE motivo = 'vencido' AND COALESCE(origem, '') <> 'backfill' AND created_at >= now() - interval '180 days'`);
       for (const reg of (regs.rows || []) as any[]) {
@@ -647,7 +648,8 @@ export function sincronizarFaturamentoTrocas(forcar = false): Promise<void> {
             }
             continue;
           }
-          if (reg.nf_troca_id && String(reg.nf_troca_id) === String(x.id) && reg.faturado_em) continue;
+          // Já lançado com a regra atual do % (comissao_fonte preenchida): nada a fazer.
+          if (reg.nf_troca_id && String(reg.nf_troca_id) === String(x.id) && reg.faturado_em && reg.comissao_fonte) continue;
           const quando = new Date(x.dt);
           const calc = await calcularTroca(
             { customer_id: reg.customer_id, seller_id: reg.card_seller_id, products: Array.isArray(reg.itens) ? reg.itens : [] },
@@ -657,7 +659,7 @@ export function sincronizarFaturamentoTrocas(forcar = false): Promise<void> {
               valor_troca = ${calc.valorTroca}, itens = ${JSON.stringify(calc.itens)}::jsonb, nf_id = ${calc.nfId},
               nf_numero = ${calc.nfNumero}, nf_data = ${calc.nfData}, nf_seller_id = ${calc.nfSellerId},
               nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct}, desconto = ${calc.desconto},
-              nf_do_vendedor = ${calc.nfDoVendedor}, vendedor_regra = ${calc.vendedorRegra},
+              nf_do_vendedor = ${calc.nfDoVendedor}, vendedor_regra = ${calc.vendedorRegra}, comissao_fonte = ${calc.comissaoFonte},
               nf_troca_id = ${x.id}, nf_troca_numero = ${x.invoice_number != null ? String(x.invoice_number) : null},
               faturado_em = ${quando.toISOString()}::timestamptz, ym = ${ymBrasil(quando)}, regra_versao = 3, updated_at = now()
             WHERE id = ${reg.id}`);
@@ -813,7 +815,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
         SELECT id, sales_card_id, customer_id, customer_name, motivo, categoria, temperatura_c, valor_troca, itens,
                nf_numero, to_char(nf_data, 'YYYY-MM-DD') AS nf_data, nf_seller_id, nf_seller_name,
                comissao_pct, desconto, ym, created_at, faturado_em, nf_troca_numero, vendedor_regra,
-               desconto_cancelado_em, desconto_cancelado_por_nome, admin_obs
+               desconto_cancelado_em, desconto_cancelado_por_nome, admin_obs, comissao_fonte
         FROM troca_registros
         WHERE ym = ${ym} AND COALESCE(origem, '') <> 'backfill'
           AND (${soVencido} = false OR motivo = 'vencido')
@@ -842,6 +844,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
         canceladoEm: x.desconto_cancelado_em,
         canceladoPor: x.desconto_cancelado_por_nome || null,
         adminObs: x.admin_obs || null,
+        comissaoFonte: x.comissao_fonte || null,
         vendedorRegra: x.vendedor_regra || null,
       }));
       const porVendedor: Record<string, { vendedorId: string; vendedor: string; trocas: number; valorTroca: number; desconto: number }> = {};
