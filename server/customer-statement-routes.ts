@@ -320,7 +320,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
                r.issue_date, r.due_date, r.amount, r.amount_paid, r.status,
                r.payment_method, r.notes, r.fiscal_invoice_id, r.billing_pipeline_id, r.sales_card_id,
                r.cancel_reason, r.import_origin,
-               r.omie_instance_id, r.created_at
+               r.omie_instance_id, r.created_at, r.created_by
         FROM receivables r
         WHERE r.deleted_at IS NULL
           AND ${condCliente}${filtroOrigem}
@@ -466,6 +466,8 @@ export function registerCustomerStatementRoutes(app: Express): void {
         bpId?: string | null;
         scId?: string | null;
         fiId?: string | null;
+        /** `receivables.created_by`: quem registrou o título no Financeiro. */
+        criadoPorTitulo?: string | null;
       };
       const notas = new Map<string, NotaAgg>();
       const nfSeen = new Set<string>();
@@ -515,6 +517,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
             bpId: r.billing_pipeline_id || null,
             scId: r.sales_card_id || null,
             fiId: r.fiscal_invoice_id || null,
+            criadoPorTitulo: r.created_by || null,
           });
         } else {
           if (cancelado) cur.valorCancelado += num(r.amount);
@@ -535,6 +538,7 @@ export function registerCustomerStatementRoutes(app: Express): void {
           if (!cur.bpId && r.billing_pipeline_id) cur.bpId = r.billing_pipeline_id;
           if (!cur.scId && r.sales_card_id) cur.scId = r.sales_card_id;
           if (!cur.fiId && r.fiscal_invoice_id) cur.fiId = r.fiscal_invoice_id;
+          if (!cur.criadoPorTitulo && r.created_by) cur.criadoPorTitulo = r.created_by;
         }
         if (nf) nfSeen.add(nf);
       }
@@ -745,6 +749,42 @@ export function registerCustomerStatementRoutes(app: Express): void {
         }
       } catch (_e) {}
 
+      // ── VENDEDOR DA OCASIÃO DO FATURAMENTO, inclusive no histórico do Omie ──
+      // O pipeline só existe para pedidos nascidos no INTEGRA 2.0 (6.030 dos 60.451
+      // títulos). O faturamento do Omie, migrado para `billings`, guarda o vendedor
+      // de quem a nota saiu: casando pelo NÚMERO DA NF ou pelo NÚMERO DO PEDIDO
+      // (`pedido=` nas notas do título), 46.750 títulos passam a ter vendedor.
+      // Nunca se usa o vendedor da carteira de hoje: ele mudaria o passado.
+      const blPorNf = new Map<string, string>();
+      const blPorPedido = new Map<string, string>();
+      try {
+        const nfsBusca = Array.from(new Set(notasArrAll.map((n) => nfKeyOf(n.nf)).filter(Boolean)));
+        const pedidosBusca = Array.from(new Set(notasArrAll.map((n) => String(n.pedido || "").trim()).filter(Boolean)));
+        const lotes = Math.max(Math.ceil(nfsBusca.length / 400), Math.ceil(pedidosBusca.length / 400), 0);
+        for (let i = 0; i < lotes; i++) {
+          const ln = nfsBusca.slice(i * 400, (i + 1) * 400);
+          const lp = pedidosBusca.slice(i * 400, (i + 1) * 400);
+          if (!ln.length && !lp.length) continue;
+          const condNf = ln.length
+            ? sql`LTRIM(REGEXP_REPLACE(COALESCE(b.invoice_number,''), '\\D', '', 'g'), '0') IN (${idsIn(ln)})`
+            : sql`FALSE`;
+          const condPed = lp.length ? sql`TRIM(COALESCE(b.order_number,'')) IN (${idsIn(lp)})` : sql`FALSE`;
+          const r: any = await db.execute(sql`
+            SELECT LTRIM(REGEXP_REPLACE(COALESCE(b.invoice_number,''), '\\D', '', 'g'), '0') AS nfnum,
+                   TRIM(COALESCE(b.order_number,'')) AS pedido,
+                   NULLIF(TRIM(COALESCE(b.seller_name,'')), '') AS vendedor
+            FROM billings b
+            WHERE NULLIF(TRIM(COALESCE(b.seller_name,'')), '') IS NOT NULL
+              AND (${condNf} OR ${condPed})`);
+          for (const row of (r.rows || r) as any[]) {
+            if (row.nfnum && !blPorNf.has(String(row.nfnum))) blPorNf.set(String(row.nfnum), String(row.vendedor));
+            if (row.pedido && !blPorPedido.has(String(row.pedido))) blPorPedido.set(String(row.pedido), String(row.vendedor));
+          }
+        }
+      } catch (e: any) {
+        console.error("[extrato-cliente] falha ao ler vendedor do faturamento:", e?.message || e);
+      }
+
       /** Rótulo amigável para quando o pedido não foi implantado por uma pessoa. */
       const ROTULO_ROTINA: Array<[RegExp, string]> = [
         [/^balcao/i, "Balcão (maquininha)"],
@@ -757,8 +797,14 @@ export function registerCustomerStatementRoutes(app: Express): void {
       ];
       const implantadorDaNota = (n: NotaAgg): { nome: string | null; tipo: "pessoa" | "rotina" | null } => {
         const bp = n.bpId ? bpAutorMap.get(String(n.bpId)) : null;
-        const cru = String(bp?.criadoPor || "").trim();
-        if (!cru) return { nome: null, tipo: null };
+        // Sem pipeline, a melhor pista é quem registrou o título no Financeiro;
+        // e, no histórico migrado, o INTEGRA 2.0 simplesmente não existia ainda.
+        const cru = String(bp?.criadoPor || n.criadoPorTitulo || "").trim();
+        if (!cru) {
+          return n.historico
+            ? { nome: "Pedido anterior ao INTEGRA 2.0 (migrado do Omie)", tipo: "rotina" }
+            : { nome: null, tipo: null };
+        }
         const m = cru.match(/^auto\s*\((.*)\)$/i);
         const quem = (m ? m[1] : cru).trim();
         const chave = quem.toLowerCase();
@@ -769,13 +815,22 @@ export function registerCustomerStatementRoutes(app: Express): void {
         for (const [rx, rotulo] of ROTULO_ROTINA) if (rx.test(chave)) return { nome: rotulo, tipo: "rotina" };
         return { nome: quem, tipo: "rotina" };
       };
-      const vendedorDaNota = (n: NotaAgg): string | null => {
+      /**
+       * Vendedor DA ÉPOCA da nota. A ordem importa: primeiro o pedido do INTEGRA 2.0,
+       * depois o faturamento migrado do Omie. `fonte` diz de onde veio, para a tela
+       * poder ser honesta sobre o dado.
+       */
+      const vendedorDaNota = (n: NotaAgg): { nome: string | null; fonte: "pedido" | "faturamento" | null } => {
         const bp = n.bpId ? bpAutorMap.get(String(n.bpId)) : null;
-        if (bp?.sellerId && userPorId.get(String(bp.sellerId))) return userPorId.get(String(bp.sellerId)) || null;
-        if (bp?.sellerNome) return String(bp.sellerNome);
+        if (bp?.sellerId && userPorId.get(String(bp.sellerId))) return { nome: userPorId.get(String(bp.sellerId)) || null, fonte: "pedido" };
+        if (bp?.sellerNome) return { nome: String(bp.sellerNome), fonte: "pedido" };
         const scSeller = n.scId ? scSellerMap.get(String(n.scId)) : null;
-        if (scSeller && userPorId.get(String(scSeller))) return userPorId.get(String(scSeller)) || null;
-        return null;
+        if (scSeller && userPorId.get(String(scSeller))) return { nome: userPorId.get(String(scSeller)) || null, fonte: "pedido" };
+        const porNf = blPorNf.get(nfKeyOf(n.nf));
+        if (porNf) return { nome: porNf, fonte: "faturamento" };
+        const porPedido = n.pedido ? blPorPedido.get(String(n.pedido).trim()) : null;
+        if (porPedido) return { nome: porPedido, fonte: "faturamento" };
+        return { nome: null, fonte: null };
       };
 
       const produtosDaNota = (n: NotaAgg): any[] => {
@@ -850,6 +905,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
           }
         }
 
+        // Vendedor e implantador da ocasião: vão na linha (para a lista) e no detalhe.
+        const vendedor = vendedorDaNota(n);
+        const implantador = implantadorDaNota(n);
+
         linhas.push({
           key: `${n.key}|nf`,
           data: n.data,
@@ -881,6 +940,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
           diasAtraso: vencido ? diffDias(hojeDia, diaUTC(n.vencimento)) : null,
           formaPagamento: null,
           estimado: false,
+          vendedor: vendedor.nome,
+          vendedorFonte: vendedor.fonte,
+          implantadoPor: implantador.nome,
+          implantadoPorTipo: implantador.tipo,
           detalhe: {
             tipo: "NF",
             nf: n.nf,
@@ -903,9 +966,10 @@ export function registerCustomerStatementRoutes(app: Express): void {
             // Identificador da NF-e, para o espelho buscar os dados fiscais completos.
             fiscalInvoiceId: n.fiId || null,
             produtos: produtosDaNota(n),
-            implantadoPor: implantadorDaNota(n).nome,
-            implantadoPorTipo: implantadorDaNota(n).tipo,
-            vendedor: vendedorDaNota(n),
+            implantadoPor: implantador.nome,
+            implantadoPorTipo: implantador.tipo,
+            vendedor: vendedor.nome,
+            vendedorFonte: vendedor.fonte,
           },
         });
 
