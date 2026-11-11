@@ -108,6 +108,8 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li>O cliente <b>volta a aparecer para os demais</b> quando o capturador: clica em <b>Liberar</b>, <b>registra um pedido</b> (o cliente sai da repescagem), ou <b>automaticamente às 18h</b> (encerramento do dia — rotina agendada às 18:00).</li>
                 <li><b>IA da repescagem (16h, dias úteis):</b> manda WhatsApp para os clientes da repescagem ainda sem atendimento, <b>exceto os capturados</b>. O contato da IA <b>não conta como atendimento</b>: o card continua na rota com o selo <b>"IA contatou às HH:MM"</b> e só sai quando alguém registra o atendimento ou sai um pedido.</li>
                 <li><b>Limite de 5 capturas por atendente</b> ao mesmo tempo. A vaga abre quando ele <b>libera</b> um capturado ou quando o <b>atendimento</b> de um capturado é registrado (o card fecha). Admin não tem limite.</li>
+                <li><b>Registro obrigatório:</b> toda captura precisa terminar com um desfecho — <b>venda</b> (não precisa texto), <b>registro de atendimento</b> com texto, ou <b>Liberar com justificativa escrita</b> (sem atendimento). Cada desfecho vai para o <b>Inbox</b>, um item por cliente.</li>
+                <li><b>Pendência às 18h:</b> captura que chega às 18h sem registro, sem venda e sem liberar vira <b>pendência</b> do atendente (também vai ao Inbox). Enquanto houver pendência ele <b>não captura nenhum cliente novo</b>; resolve na Rota do Dia registrando o atendimento ou justificando. Capturas novas encerram às 18h.</li>
                 <li>O <b>capturador</b> continua vendo o cliente (com o botão Liberar); o <b>admin vê tudo</b>, com o selo "capturado por…", e pode liberar.</li>
                 <li><b>Sem trava/redistribuição automática</b> no sorteio: o cliente só fica preso a um atendente quando é capturado.</li>
               </ul>
@@ -122,7 +124,8 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Automação</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Job às <b>00:10 (horário de Brasília)</b>: gera as rotas do dia e, <b>de segunda a sexta</b>, roda a distribuição da repescagem (na segunda entram também os não atendidos de sexta). Sábado e domingo: sem sorteio.</li>
-                <li>Job diário às <b>18:00 (horário de Brasília)</b>: libera todas as capturas de atendimento do dia.</li>
+                <li>Job diário às <b>18:00 (horário de Brasília)</b>: transforma em pendência as capturas sem registro e libera todas as capturas de atendimento do dia.</li>
+                <li>A cada <b>5 minutos</b> (dias úteis, 7h–18h): fecha as capturas que tiveram pedido ou registro de atendimento e manda o desfecho ao Inbox.</li>
                 <li><b>Report das 17h no Inbox (seg a sex):</b> lista os clientes <b>atendidos</b> na repescagem do dia — de que <b>carteira</b> são, <b>quem atendeu</b> (incluindo a IA) e se houve <b>venda</b> (valor e quem implantou o pedido).</li>
                 <li><b>Report das 18h no Inbox:</b> no mesmo horário, o admin recebe <b>um único report</b> com todos os clientes que caíram na repescagem do dia e <b>não foram atendidos</b> (sem atendimento virtual, check-in de rota ou pedido no dia). No report ele escolhe se eles <b>voltam para a repescagem</b> (todos ou os marcados) — entram no sorteio do <b>próximo dia útil</b> e são <b>redistribuídos</b> conforme o painel de carteiras — ou <b>não devolve</b> (seguem as regras normais).</li>
               </ul>
