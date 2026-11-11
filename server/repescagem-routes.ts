@@ -1706,6 +1706,8 @@ async function releaseExpiredCaptures(opts?: { endOfDay?: boolean }): Promise<vo
     const now = new Date();
     const localBR = new Date(now.getTime() + (-180 - now.getTimezoneOffset()) * 60000);
     const hourBR = localBR.getUTCHours();
+    // Captura sem desfecho ao encerrar → pendência do atendente (registro obrigatório, nov/2026).
+    await marcarCapturasSemRegistro(!!(opts?.endOfDay || hourBR >= 18));
     if (opts?.endOfDay || hourBR >= 18) {
       // Após 18h: libera TODAS as capturas (encerramento do dia).
       await db.execute(sql`UPDATE repescagem_assignments SET locked = false, locked_by = null, locked_date = null, updated_at = now() WHERE locked = true`);
@@ -2139,6 +2141,20 @@ export function registerRepescagemRoutes(app: Express, opts: {
       // máximo N clientes capturados ao mesmo tempo (padrão 5; system_settings
       // 'repescagem_max_capturas'). A vaga abre quando ele LIBERA um capturado ou quando o
       // atendimento de um capturado é registrado (o card fecha). Admin não tem limite.
+      // REGISTRO OBRIGATÓRIO (nov/2026): toda captura precisa de desfecho. Capturas encerram às 18h;
+      // depois disso não há captura nova (o encerramento liberaria na hora e viraria pendência).
+      if (locked && !isAdmin && !(capturadoHoje && dono === actor?.id)) {
+        if (horaBR() >= 18) {
+          return res.status(409).json({ message: 'As capturas de repescagem encerram às 18h. Volte a capturar no próximo dia útil.' });
+        }
+        await resolverCapturasRepescagem({ attendantId: actor?.id || '' });
+        const pend = rowsOfAny(await db.execute(sql`
+          SELECT COUNT(*)::int AS n FROM repescagem_capturas WHERE attendant_id = ${actor?.id || ''} AND status = 'pendente'`));
+        const nPend = Number(pend[0]?.n || 0);
+        if (nPend > 0) {
+          return res.status(409).json({ message: `Você tem ${nPend} captura(s) sem registro de atendimento. Registre o atendimento ou justifique na Rota do Dia antes de capturar outro cliente.`, pendencias: nPend });
+        }
+      }
       if (locked && !isAdmin && !(capturadoHoje && dono === actor?.id)) {
         let max = 5;
         try {
@@ -2167,7 +2183,38 @@ export function registerRepescagemRoutes(app: Express, opts: {
             action: 'reassigned', reason: 'Captura de atendimento (telemarketing)',
           });
         } catch { /* histórico best-effort */ }
+        // Abre o acompanhamento da captura (registro obrigatório). Admin não tem essa obrigação.
+        if (!isAdmin && actor?.id) {
+          await ensureRepescagemCapturasTable();
+          await db.execute(sql`
+            INSERT INTO repescagem_capturas (assignment_id, customer_id, attendant_id, capture_date, status)
+            SELECT ${id}, ${a.customerId}, ${actor.id}, ${today}::date, 'aberta'
+             WHERE NOT EXISTS (SELECT 1 FROM repescagem_capturas WHERE customer_id = ${a.customerId}
+                                 AND attendant_id = ${actor.id} AND capture_date = ${today}::date AND status = 'aberta')`);
+        }
       } else {
+        // LIBERAR COM JUSTIFICATIVA (nov/2026): quem capturou e vai liberar sem ter registrado
+        // atendimento nem venda precisa justificar por escrito (vai para o Inbox).
+        if (capturadoHoje && dono) {
+          await ensureRepescagemCapturasTable();
+          await resolverCapturasRepescagem({ customerId: a.customerId });
+          const aberta = rowsOfAny(await db.execute(sql`
+            SELECT id FROM repescagem_capturas WHERE customer_id = ${a.customerId} AND attendant_id = ${dono} AND status = 'aberta'
+             ORDER BY captured_at DESC LIMIT 1`))[0];
+          if (aberta) {
+            if (dono === actor?.id && !isAdmin) {
+              const just = String(req.body?.justificativa || '').trim();
+              if (just.length < 10) {
+                return res.status(400).json({ message: 'Para liberar sem atendimento, escreva a justificativa (mínimo 10 caracteres).', precisaJustificativa: true });
+              }
+              await db.execute(sql`UPDATE repescagem_capturas SET status = 'liberada', texto = ${just.slice(0, 2000)}, desfecho_at = now(), resolved_by = ${actor?.id || null}, updated_at = now() WHERE id = ${aberta.id} AND status = 'aberta'`);
+              await inboxDesfechoCaptura(aberta.id);
+            } else {
+              const nmAdm = (await nomeUsuarioRep(actor?.id)) || 'admin';
+              await db.execute(sql`UPDATE repescagem_capturas SET status = 'liberada_admin', texto = ${'Liberado pelo admin ' + nmAdm}, desfecho_at = now(), resolved_by = ${actor?.id || null}, updated_at = now() WHERE id = ${aberta.id} AND status = 'aberta'`);
+            }
+          }
+        }
         // LIBERAR: apenas remove a captura (mantém a atribuição atual); volta a aparecer p/ os demais.
         await db.execute(sql`UPDATE repescagem_assignments
           SET locked = false, locked_date = null, locked_by = null, updated_at = now()
@@ -2192,6 +2239,55 @@ export function registerRepescagemRoutes(app: Express, opts: {
       res.json({ ok: true, locked, affected: (upd?.rowCount ?? null) });
     } catch (e: any) {
       console.error('POST /api/repescagem/assignments/lock-all', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // 🎯 Capturas do atendente logado: abertas (em atendimento) e PENDÊNCIAS (sem registro até
+  // as 18h — bloqueiam novas capturas até registrar o atendimento ou justificar).
+  app.get('/api/repescagem/capturas/minhas', authenticateUser, async (req: any, res) => {
+    try {
+      const actor = (req as any).currentUser;
+      if (!actor?.id) return res.json({ abertas: [], pendentes: [] });
+      await ensureRepescagemCapturasTable();
+      await resolverCapturasRepescagem({ attendantId: actor.id });
+      const rows = rowsOfAny(await db.execute(sql`
+        SELECT rc.id, rc.customer_id, rc.status, rc.capture_date::text AS data,
+               to_char(rc.captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS capturado_em,
+               COALESCE(NULLIF(TRIM(cu.fantasy_name), ''), cu.name) AS nome
+          FROM repescagem_capturas rc LEFT JOIN customers cu ON cu.id = rc.customer_id
+         WHERE rc.attendant_id = ${actor.id} AND rc.status IN ('aberta', 'pendente')
+         ORDER BY rc.captured_at ASC`));
+      const map = (r: any) => ({ id: r.id, customerId: r.customer_id, nome: r.nome || r.customer_id, data: r.data, capturadoEm: r.capturado_em });
+      res.json({
+        abertas: rows.filter((r: any) => r.status === 'aberta').map(map),
+        pendentes: rows.filter((r: any) => r.status === 'pendente').map(map),
+      });
+    } catch (e: any) {
+      console.error('GET /api/repescagem/capturas/minhas', e);
+      res.status(500).json({ message: e?.message || 'erro' });
+    }
+  });
+
+  // Justificar uma PENDÊNCIA de captura (o atendente não registrou atendimento nem liberou).
+  app.post('/api/repescagem/capturas/:id/justificar', authenticateUser, async (req: any, res) => {
+    try {
+      const actor = (req as any).currentUser;
+      const isAdmin = actor?.role === 'admin';
+      await ensureRepescagemCapturasTable();
+      const c = rowsOfAny(await db.execute(sql`SELECT id, attendant_id, customer_id, status FROM repescagem_capturas WHERE id = ${req.params.id} LIMIT 1`))[0];
+      if (!c) return res.status(404).json({ message: 'Captura não encontrada.' });
+      if (c.attendant_id !== actor?.id && !isAdmin) return res.status(403).json({ message: 'Só quem capturou pode justificar.' });
+      await resolverCapturasRepescagem({ customerId: c.customer_id });
+      const atual = rowsOfAny(await db.execute(sql`SELECT status FROM repescagem_capturas WHERE id = ${c.id}`))[0];
+      if (atual?.status !== 'pendente') return res.json({ ok: true, status: atual?.status, jaResolvida: true });
+      const just = String(req.body?.justificativa || '').trim();
+      if (just.length < 10) return res.status(400).json({ message: 'Escreva a justificativa (mínimo 10 caracteres).' });
+      await db.execute(sql`UPDATE repescagem_capturas SET status = 'justificada', texto = ${just.slice(0, 2000)}, desfecho_at = now(), resolved_by = ${actor?.id || null}, updated_at = now() WHERE id = ${c.id} AND status = 'pendente'`);
+      await inboxDesfechoCaptura(c.id);
+      res.json({ ok: true, status: 'justificada' });
+    } catch (e: any) {
+      console.error('POST /api/repescagem/capturas/:id/justificar', e);
       res.status(500).json({ message: e?.message || 'erro' });
     }
   });
@@ -3444,4 +3540,214 @@ export async function notifyRepescagemWhatsApp(): Promise<any> {
     console.error('[REPESCAGEM-WHATSAPP] falha:', e?.message);
     return { error: e?.message };
   }
+}
+
+// ============================================================================
+// 🎯 CAPTURA COM REGISTRO OBRIGATÓRIO (nov/2026, decisão do Flavio).
+// Toda captura de repescagem por um atendente (não admin) abre um registro em
+// repescagem_capturas e precisa terminar com um desfecho:
+//   - venda       → pedido de venda do cliente depois da captura (não precisa texto);
+//   - atendida    → registro de atendimento (com texto) ou check-in depois da captura;
+//   - liberada    → o atendente liberou SEM atendimento, com justificativa escrita;
+//   - pendente    → chegou às 18h sem nada: vira PENDÊNCIA BLOQUEANTE (não captura outro
+//                   cliente até registrar o atendimento ou justificar);
+//   - justificada → pendência resolvida com justificativa;
+//   - cancelada / liberada_admin → captura desfeita pelo admin (sem cobrança).
+// Cada desfecho (venda, atendida, liberada, pendente, justificada) vira UM item no Inbox.
+// ============================================================================
+const REP_CAPTURA_KIND = 'repescagem_captura';
+let _capturasTableOk = false;
+export async function ensureRepescagemCapturasTable(): Promise<void> {
+  if (_capturasTableOk) return;
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS repescagem_capturas (
+    id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+    assignment_id varchar,
+    customer_id varchar NOT NULL,
+    attendant_id varchar NOT NULL,
+    capture_date date NOT NULL,
+    captured_at timestamp NOT NULL DEFAULT now(),
+    status varchar NOT NULL DEFAULT 'aberta',
+    desfecho_at timestamp,
+    pendente_at timestamp,
+    texto text,
+    valor numeric,
+    quem_vendeu text,
+    service_type varchar,
+    resolved_by varchar,
+    created_at timestamp DEFAULT now(),
+    updated_at timestamp DEFAULT now()
+  )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_rep_capt_att_status ON repescagem_capturas (attendant_id, status)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_rep_capt_cust_status ON repescagem_capturas (customer_id, status)`);
+  // Capturas que já estavam ativas antes desta regra entrar no ar passam a ser acompanhadas.
+  try {
+    await ensureRepescagemLockCol();
+    const today = brTodayStr();
+    await db.execute(sql`
+      INSERT INTO repescagem_capturas (assignment_id, customer_id, attendant_id, capture_date, captured_at, status)
+      SELECT DISTINCT ON (ra.customer_id, ra.locked_by) ra.id, ra.customer_id, ra.locked_by, ra.locked_date::date, COALESCE(ra.updated_at, now()), 'aberta'
+        FROM repescagem_assignments ra
+        JOIN users u ON u.id = ra.locked_by AND COALESCE(u.role::text, '') <> 'admin'
+       WHERE ra.locked = true AND ra.locked_date = ${today} AND ra.locked_by IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM repescagem_capturas rc
+                          WHERE rc.customer_id = ra.customer_id AND rc.attendant_id = ra.locked_by AND rc.capture_date = ra.locked_date::date)
+       ORDER BY ra.customer_id, ra.locked_by, ra.updated_at DESC NULLS LAST`);
+  } catch (e) { console.warn('[REP-CAPTURA] backfill:', (e as any)?.message); }
+  _capturasTableOk = true;
+}
+
+const rowsOfAny = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
+const horaBR = (): number => {
+  const now = new Date();
+  return new Date(now.getTime() + (-180 - now.getTimezoneOffset()) * 60000).getUTCHours();
+};
+
+const DESFECHO_LABEL: Record<string, string> = {
+  venda: 'Atendido com venda',
+  atendida: 'Atendido sem venda',
+  liberada: 'Liberado sem atendimento (justificado)',
+  pendente: 'Capturado sem registro — pendência',
+  justificada: 'Pendência justificada',
+};
+const DESFECHO_EMOJI: Record<string, string> = { venda: '💰', atendida: '📝', liberada: '🔓', pendente: '⚠️', justificada: '✍️' };
+
+async function nomeUsuarioRep(id: string | null | undefined): Promise<string | null> {
+  const k = String(id || '');
+  if (!k) return null;
+  if (k.toLowerCase() === 'ia') return 'IA';
+  try {
+    const u = rowsOfAny(await db.execute(sql`SELECT first_name, last_name, email FROM users WHERE id = ${k} OR omie_vendor_code = ${k.replace(/^omie-vendor-/, '')} LIMIT 1`))[0];
+    if (u) return (((u.first_name || '') + ' ' + (u.last_name || '')).trim() || (u.email ? String(u.email).split('@')[0] : '')) || k;
+  } catch { /* sem nome */ }
+  return k;
+}
+
+// Cria o item do Inbox para um desfecho de captura (um item por cliente e desfecho).
+async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
+  try {
+    const c = rowsOfAny(await db.execute(sql`
+      SELECT rc.*, rc.capture_date::text AS cap_dt, to_char(rc.captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS cap_at,
+             to_char(COALESCE(rc.desfecho_at, rc.pendente_at) AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS desf_at,
+             COALESCE(NULLIF(TRIM(cu.fantasy_name), ''), cu.name) AS nome, cu.seller_id AS carteira_id
+        FROM repescagem_capturas rc LEFT JOIN customers cu ON cu.id = rc.customer_id
+       WHERE rc.id = ${capturaId} LIMIT 1`))[0];
+    if (!c || !DESFECHO_LABEL[c.status]) return;
+    const { ensureTables } = await import('./change-requests-routes');
+    await ensureTables();
+    const entityId = `repescagem-captura-${c.id}-${c.status}`;
+    const ja = rowsOfAny(await db.execute(sql`SELECT id FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${entityId} LIMIT 1`));
+    if (ja.length) return;
+    const atendente = (await nomeUsuarioRep(c.attendant_id)) || '—';
+    const carteira = (await nomeUsuarioRep(c.carteira_id)) || '(sem vendedor)';
+    const quemRegistrou = c.resolved_by && c.resolved_by !== c.attendant_id ? await nomeUsuarioRep(c.resolved_by) : null;
+    const brl = (v: any) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const nome = c.nome || String(c.customer_id);
+    const texto = String(c.texto || '').trim();
+    let resumo = '';
+    if (c.status === 'venda') resumo = `${nome} (carteira ${carteira}) foi atendido na repescagem por ${atendente} com venda de ${brl(c.valor)}${c.quem_vendeu ? ` — pedido de ${c.quem_vendeu}` : ''}.`;
+    else if (c.status === 'atendida') resumo = `${nome} (carteira ${carteira}) foi atendido na repescagem por ${atendente}, sem venda.${quemRegistrou ? ` Registro feito por ${quemRegistrou}.` : ''}`;
+    else if (c.status === 'liberada') resumo = `${atendente} capturou ${nome} (carteira ${carteira}) e liberou sem atendimento.`;
+    else if (c.status === 'pendente') resumo = `${atendente} capturou ${nome} (carteira ${carteira}) em ${fmtBR(String(c.cap_dt).slice(0, 10))} e chegou às 18h sem registro de atendimento, sem venda e sem liberar. Ficou com pendência: não captura outro cliente até registrar o atendimento ou justificar.`;
+    else if (c.status === 'justificada') resumo = `${atendente} justificou a pendência da captura de ${nome} (carteira ${carteira}).`;
+    const details = {
+      reportKind: REP_CAPTURA_KIND, reportLabel: 'Captura de repescagem', desfecho: c.status, desfechoLabel: DESFECHO_LABEL[c.status],
+      customerId: String(c.customer_id), cliente: nome, carteira, atendente, atendenteId: c.attendant_id,
+      capturadoEm: c.cap_at || null, desfechoEm: c.desf_at || null, data: String(c.cap_dt).slice(0, 10),
+      texto: texto || null, valor: c.valor != null ? Number(c.valor) : null, quemVendeu: c.quem_vendeu || null,
+      serviceType: c.service_type || null, quemRegistrou, resumo,
+    };
+    const nomeCard = `${DESFECHO_EMOJI[c.status] || ''} ${nome} — ${DESFECHO_LABEL[c.status]}`.trim();
+    const msgTxt = texto ? `${resumo}\n\n${c.status === 'liberada' || c.status === 'justificada' ? 'Justificativa' : 'Registro'}: ${texto}` : resumo;
+    const msg = { id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, role: 'admin', by: null, byName: 'Sistema', text: msgTxt, at: new Date().toISOString(), kind: 'system' };
+    await db.execute(sql`
+      INSERT INTO change_requests
+        (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
+         types, details, status, kind, requested_by, requested_by_name, messages)
+      VALUES
+        ('repescagem', ${entityId}, NULL, ${nomeCard}, NULL, ${atendente},
+         ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
+         ${JSON.stringify([msg])}::jsonb)`);
+  } catch (e) { console.warn('[REP-CAPTURA] inbox:', (e as any)?.message); }
+}
+
+// Fecha as capturas abertas/pendentes que já tiveram venda ou registro de atendimento
+// depois do momento da captura. Chamado ao registrar atendimento, a cada 5 min, antes de
+// capturar/liberar e no encerramento das 18h.
+export async function resolverCapturasRepescagem(f?: { customerId?: string; attendantId?: string }): Promise<number> {
+  await ensureRepescagemCapturasTable();
+  const abertas = rowsOfAny(await db.execute(sql`
+    SELECT id, customer_id, attendant_id, captured_at::text AS cap_at, status FROM repescagem_capturas
+     WHERE status IN ('aberta', 'pendente')
+       ${f?.customerId ? sql`AND customer_id = ${f.customerId}` : sql``}
+       ${f?.attendantId ? sql`AND attendant_id = ${f.attendantId}` : sql``}`));
+  let n = 0;
+  for (const c of abertas) {
+    try {
+      const venda = rowsOfAny(await db.execute(sql`
+        SELECT COALESCE(SUM(COALESCE(sale_value, 0)), 0) AS v, COUNT(*)::int AS q,
+               STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(seller_name), ''), seller_id), ', ') AS quem
+          FROM billing_pipeline
+         WHERE customer_id::text = ${c.customer_id} AND COALESCE(operation_type, 'venda') = 'venda'
+           AND created_at >= ${c.cap_at}::timestamp`))[0];
+      const log = rowsOfAny(await db.execute(sql`
+        SELECT attendant_id, notes, service_type FROM virtual_service_logs
+         WHERE customer_id = ${c.customer_id} AND created_at >= ${c.cap_at}::timestamp
+           AND NOT (attendant_id = 'ia' AND COALESCE(service_type, '') = 'repescagem_ia')
+         ORDER BY (attendant_id = ${c.attendant_id}) DESC, created_at ASC LIMIT 1`))[0];
+      let checkin: any = null;
+      if (!log) {
+        checkin = rowsOfAny(await db.execute(sql`
+          SELECT seller_id FROM route_checkpoints
+           WHERE customer_id = ${c.customer_id} AND checkpoint_type = 'check_in' AND checkpoint_time >= ${c.cap_at}::timestamp
+           ORDER BY checkpoint_time ASC LIMIT 1`))[0];
+      }
+      let status: string | null = null; let texto: string | null = null; let valor: number | null = null; let quem: string | null = null; let st: string | null = null; let by: string | null = null;
+      if (Number(venda?.q || 0) > 0) {
+        status = 'venda'; valor = Number(venda.v || 0); quem = venda.quem ? (await nomeUsuarioRep(String(venda.quem).split(',')[0].trim())) : null;
+        if (log) { texto = log.notes || null; st = log.service_type || null; by = log.attendant_id || null; }
+      } else if (log) {
+        status = 'atendida'; texto = String(log.notes || '').trim() || '(registro sem texto)'; st = log.service_type || null; by = log.attendant_id || null;
+      } else if (checkin) {
+        status = 'atendida'; texto = 'Check-in de visita na rota'; by = checkin.seller_id || null;
+      }
+      if (!status) continue;
+      const upd = rowsOfAny(await db.execute(sql`
+        UPDATE repescagem_capturas
+           SET status = ${status}, desfecho_at = now(), texto = ${texto}, valor = ${valor}, quem_vendeu = ${quem},
+               service_type = ${st}, resolved_by = ${by}, updated_at = now()
+         WHERE id = ${c.id} AND status IN ('aberta', 'pendente')
+         RETURNING id`));
+      if (upd.length) { n++; await inboxDesfechoCaptura(c.id); }
+    } catch (e) { console.warn('[REP-CAPTURA] resolver:', (e as any)?.message); }
+  }
+  return n;
+}
+
+// Encerramento: capturas abertas que chegaram ao fim do dia sem desfecho viram PENDÊNCIA
+// (se o atendente ainda segurava o cliente) ou são canceladas (captura desfeita pelo admin).
+async function marcarCapturasSemRegistro(endOfDay: boolean): Promise<void> {
+  try {
+    await ensureRepescagemCapturasTable();
+    const today = brTodayStr();
+    const alvo = rowsOfAny(await db.execute(sql`
+      SELECT id FROM repescagem_capturas
+       WHERE status = 'aberta' AND ${endOfDay ? sql`capture_date <= ${today}::date` : sql`capture_date < ${today}::date`} LIMIT 1`));
+    if (!alvo.length) return;
+    await resolverCapturasRepescagem();
+    const abertas = rowsOfAny(await db.execute(sql`
+      SELECT rc.id,
+             EXISTS (SELECT 1 FROM repescagem_assignments ra
+                      WHERE ra.customer_id = rc.customer_id AND ra.locked = true AND ra.locked_by = rc.attendant_id
+                        AND ra.locked_date = rc.capture_date::text) AS segura
+        FROM repescagem_capturas rc
+       WHERE rc.status = 'aberta' AND ${endOfDay ? sql`rc.capture_date <= ${today}::date` : sql`rc.capture_date < ${today}::date`}`));
+    for (const r of abertas) {
+      if (r.segura) {
+        const upd = rowsOfAny(await db.execute(sql`UPDATE repescagem_capturas SET status = 'pendente', pendente_at = now(), updated_at = now() WHERE id = ${r.id} AND status = 'aberta' RETURNING id`));
+        if (upd.length) await inboxDesfechoCaptura(r.id);
+      } else {
+        await db.execute(sql`UPDATE repescagem_capturas SET status = 'cancelada', desfecho_at = now(), texto = COALESCE(texto, 'Captura desfeita pelo admin'), updated_at = now() WHERE id = ${r.id} AND status = 'aberta'`);
+      }
+    }
+  } catch (e) { console.warn('[REP-CAPTURA] fim do dia:', (e as any)?.message); }
 }

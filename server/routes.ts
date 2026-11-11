@@ -4399,6 +4399,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       } catch (_e: any) { console.warn('[INBOX] atendimento virtual:', _e?.message); }
 
+      // 🎯 Repescagem: registro de atendimento fecha a captura do cliente (desfecho → Inbox).
+      if (entityType === 'customer') {
+        import('./repescagem-routes')
+          .then((m) => m.resolverCapturasRepescagem({ customerId: String(entityId) }))
+          .catch((e: any) => console.warn('[REP-CAPTURA] pós-registro:', e?.message));
+      }
+
       res.json(serviceLog);
     } catch (error) {
       console.error("Error creating service log:", error);

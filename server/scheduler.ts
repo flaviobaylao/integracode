@@ -552,6 +552,18 @@ cron.schedule('0 17 * * 1-5', async () => {
   }
 }, { timezone: 'America/Sao_Paulo' });
 
+// 🎯 CAPTURA COM REGISTRO OBRIGATÓRIO (repescagem): a cada 5 min (seg a sex, 7h–18h) fecha as
+// capturas que tiveram pedido de venda ou registro de atendimento — cada desfecho vai ao Inbox.
+cron.schedule('*/5 7-18 * * 1-5', async () => {
+  try {
+    const { resolverCapturasRepescagem } = await import('./repescagem-routes');
+    const n = await resolverCapturasRepescagem();
+    if (n > 0) console.log(`🎯 [REP-CAPTURA] ${n} captura(s) fechada(s) com desfecho.`);
+  } catch (e: any) {
+    console.error('❌ [REP-CAPTURA] falha ao resolver capturas:', e?.message || e);
+  }
+}, { timezone: 'America/Sao_Paulo' });
+
 // 🎯 CAPTURA DE ATENDIMENTO (repescagem): às 18:00 (BRT) encerra o dia e libera TODAS as
 // capturas — os clientes voltam a aparecer para os demais telemarketings na hora, sem depender
 // de alguém abrir a tela (antes só liberava no próximo carregamento depois das 18h).
