@@ -312,7 +312,9 @@ export default function Dashboard() {
     const fmtD = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
     for (const p of src) {
       const raw = p.created_at || p.createdAt; if (!raw) continue;
-      const dt = new Date(raw); if (isNaN(dt.getTime())) continue;
+      // created_at vem do banco em UTC sem fuso ("2026-11-11 00:02:51"): tratar como UTC antes de converter para SP.
+      const rs = String(raw);
+      const dt = new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(rs) ? rs : rs.replace(" ", "T") + "Z"); if (isNaN(dt.getTime())) continue;
       if (fmtD.format(dt) !== bounds.today) continue;
       const v = Number(p.sale_value ?? p.saleValue) || 0; if (v <= 0) continue;
       const nm = String(p.seller_name || p.sellerName || "Sem vendedor").trim();
