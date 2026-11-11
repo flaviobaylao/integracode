@@ -2135,6 +2135,27 @@ export function registerRepescagemRoutes(app: Express, opts: {
       if (locked && capturadoHoje && dono && dono !== actor?.id && !isAdmin) {
         return res.status(403).json({ message: 'Cliente já capturado por outro atendente.' });
       }
+      // LIMITE DE CAPTURAS SIMULTÂNEAS (nov/2026, decisão do Flavio): cada atendente pode ter no
+      // máximo N clientes capturados ao mesmo tempo (padrão 5; system_settings
+      // 'repescagem_max_capturas'). A vaga abre quando ele LIBERA um capturado ou quando o
+      // atendimento de um capturado é registrado (o card fecha). Admin não tem limite.
+      if (locked && !isAdmin && !(capturadoHoje && dono === actor?.id)) {
+        let max = 5;
+        try {
+          const st: any = await db.execute(sql`SELECT value FROM system_settings WHERE key = 'repescagem_max_capturas' LIMIT 1`);
+          const v = parseInt(String((st.rows || [])[0]?.value ?? '').replace(/"/g, ''), 10);
+          if (Number.isFinite(v) && v > 0) max = v;
+        } catch { /* padrão 5 */ }
+        const cnt: any = await db.execute(sql`
+          SELECT COUNT(DISTINCT customer_id)::int AS n FROM repescagem_assignments
+           WHERE locked = true AND locked_date = ${today} AND locked_by = ${actor?.id || ''}
+             AND customer_id <> ${a.customerId}
+             AND (status = 'pending' OR (status = 'in_route' AND draw_date = ${today}))`);
+        const emCaptura = Number((cnt.rows || [])[0]?.n || 0);
+        if (emCaptura >= max) {
+          return res.status(409).json({ message: `Você já tem ${emCaptura} clientes capturados (limite de ${max}). Libere ou registre o atendimento de um deles para capturar outro.`, limite: max, emCaptura });
+        }
+      }
       if (locked) {
         // CAPTURA: reatribui o cliente ao capturador e trava nele no dia (não some p/ ele; some p/ os demais).
         await db.execute(sql`UPDATE repescagem_assignments
