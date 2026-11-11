@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import VirtualServiceLogModal from '@/components/VirtualServiceLogModal';
 import WhatsAppIconLink from '@/components/WhatsAppIconLink';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
 import RepescagemRulesInfo from '@/components/RepescagemRulesInfo';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -257,11 +258,18 @@ export default function Repescagem() {
 
   // Capturar / liberar um cliente. Capturar reatribui ao capturador e some para os demais
   // telemarketings até: liberar, registrar pedido, ou às 18h (liberação automática do dia).
+  // Liberar sem atendimento exige justificativa (registro obrigatório da captura, nov/2026):
+  // o servidor responde precisaJustificativa e abrimos o diálogo.
+  const [liberarJust, setLiberarJust] = useState<{ assignmentId: string; nome: string } | null>(null);
+  const [liberarTxt, setLiberarTxt] = useState('');
   const toggleLock = useMutation({
-    mutationFn: async ({ assignmentId, locked }: { assignmentId: string; locked: boolean }) =>
-      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked }),
-    onSuccess: (_d, v) => { invalidateDistribution(); refetch(); toast({ title: v.locked ? 'Atendimento capturado' : 'Captura liberada', description: v.locked ? 'O cliente é seu e some para os demais até você liberar, registrar pedido ou às 18h.' : 'O cliente volta a aparecer para os demais.' }); },
-    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' }),
+    mutationFn: async ({ assignmentId, locked, justificativa }: { assignmentId: string; locked: boolean; justificativa?: string; nome?: string }) =>
+      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked, ...(justificativa ? { justificativa } : {}) }),
+    onSuccess: (_d, v) => { if (!v.locked) { setLiberarJust(null); setLiberarTxt(''); } invalidateDistribution(); refetch(); toast({ title: v.locked ? 'Atendimento capturado' : 'Captura liberada', description: v.locked ? 'O cliente é seu e some para os demais. Registre o atendimento, a venda ou libere com justificativa.' : 'O cliente volta a aparecer para os demais.' }); },
+    onError: (e: any, v) => {
+      if (!v.locked && e?.precisaJustificativa) { setLiberarTxt(''); setLiberarJust({ assignmentId: v.assignmentId, nome: v.nome || 'cliente' }); return; }
+      toast({ title: 'Não foi possível', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' });
+    },
   });
 
   // Liberar TODAS as capturas do dia (admin) — botão do cabeçalho.
@@ -393,6 +401,19 @@ export default function Repescagem() {
   return (
     <div className="container mx-auto p-3 md:p-4 max-w-[1500px] space-y-3">
       <BackToDashboardButton />
+      <Dialog open={!!liberarJust} onOpenChange={(o) => { if (!o) { setLiberarJust(null); setLiberarTxt(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Liberar {liberarJust?.nome} sem atendimento</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Você capturou este cliente e não registrou atendimento nem venda. Justifique por que está liberando. A justificativa vai para o Inbox do admin.</p>
+          <Textarea value={liberarTxt} onChange={(e) => setLiberarTxt(e.target.value)} rows={4} placeholder="Ex.: cliente não atendeu 3 ligações; WhatsApp sem resposta." data-testid="input-rep-justificativa-liberar" />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => { setLiberarJust(null); setLiberarTxt(''); }}>Cancelar</Button>
+            <Button disabled={liberarTxt.trim().length < 10 || toggleLock.isPending} onClick={() => liberarJust && toggleLock.mutate({ assignmentId: liberarJust.assignmentId, locked: false, justificativa: liberarTxt.trim(), nome: liberarJust.nome })}>
+              Liberar com justificativa
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
@@ -1044,7 +1065,7 @@ export default function Repescagem() {
                               <div className="inline-flex flex-col items-start gap-0.5">
                                 <button
                                   type="button"
-                                  onClick={() => { if (a.locked && !a.canUnlock) return; toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked }); }}
+                                  onClick={() => { if (a.locked && !a.canUnlock) return; toggleLock.mutate({ assignmentId: a.assignmentId, locked: !a.locked, nome: a.customerName }); }}
                                   disabled={toggleLock.isPending || (!!a.locked && !a.canUnlock)}
                                   title={a.locked
                                     ? (a.canUnlock ? 'Capturado por você — clique para liberar' : `Capturado por ${a.capturedByName || 'outro atendente'}`)

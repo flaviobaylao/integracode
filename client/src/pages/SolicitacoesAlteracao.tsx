@@ -447,6 +447,64 @@ function CardRepescagemAtendida({ r, resolved }: { r: any; resolved?: boolean })
   );
 }
 
+// 🎯 CAPTURA DE REPESCAGEM (nov/2026): um item por cliente e desfecho da captura — venda,
+// atendido sem venda (com o registro), liberado com justificativa, pendência (18h sem registro)
+// e pendência justificada. O admin só lê (marcar como lido).
+const REP_CAPT_COR: Record<string, string> = {
+  venda: "bg-green-50 text-green-700 border-green-300",
+  atendida: "bg-emerald-50 text-emerald-700 border-emerald-300",
+  liberada: "bg-orange-50 text-orange-700 border-orange-300",
+  pendente: "bg-red-50 text-red-700 border-red-300",
+  justificada: "bg-amber-50 text-amber-800 border-amber-300",
+};
+function CardRepescagemCaptura({ r, resolved }: { r: any; resolved?: boolean }) {
+  const { toast } = useToast();
+  const rd = r?.details || {};
+  const brl = (v: any) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const lidoMut = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" }),
+    onSuccess: () => {
+      toast({ title: "Marcado como lido" });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const rotuloTexto = rd.desfecho === "liberada" || rd.desfecho === "justificada" ? "Justificativa" : "Registro do atendimento";
+  const borda = rd.desfecho === "pendente" ? "border-red-300 dark:border-red-900" : rd.desfecho === "venda" ? "border-green-200 dark:border-green-900" : "";
+  return (
+    <Card className={`p-4 space-y-2 ${borda}`} data-testid={`cr-rep-captura-${r.id}`}>
+      <div>
+        <div className="font-semibold">{rd.cliente || r.entityName}</div>
+        <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+          <Badge variant="outline" className={`text-[10px] ${REP_CAPT_COR[rd.desfecho] || ""}`}>{rd.desfechoLabel || "Captura de repescagem"}</Badge>
+          <Badge variant="outline" className="text-[10px]">Captura de repescagem</Badge>
+          <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
+        </div>
+      </div>
+      <div className="text-xs grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+        <div><span className="text-muted-foreground">Atendente:</span> <b>{rd.atendente || "—"}</b></div>
+        <div><span className="text-muted-foreground">Carteira:</span> {rd.carteira || "—"}</div>
+        <div><span className="text-muted-foreground">Capturado em:</span> {rd.capturadoEm || "—"}</div>
+        <div><span className="text-muted-foreground">Desfecho em:</span> {rd.desfechoEm || "—"}</div>
+        {rd.desfecho === "venda" && <div><span className="text-muted-foreground">Venda:</span> <b className="text-green-700 dark:text-green-400">{brl(rd.valor)}</b>{rd.quemVendeu ? ` (${rd.quemVendeu})` : ""}</div>}
+        {rd.quemRegistrou && <div><span className="text-muted-foreground">Registrado por:</span> {rd.quemRegistrou}</div>}
+      </div>
+      {rd.resumo && <div className="text-sm text-muted-foreground">{rd.resumo}</div>}
+      {rd.texto && (
+        <div className="text-sm rounded-md bg-muted/50 border p-2.5 whitespace-pre-wrap"><span className="text-xs font-medium text-muted-foreground block mb-0.5">{rotuloTexto}</span>{rd.texto}</div>
+      )}
+      {!resolved && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={lidoMut.isPending} onClick={() => lidoMut.mutate()} data-testid={`rep-capt-lido-${r.id}`}>
+            {lidoMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function CardRepescagemNaoAtendida({ r, resolved }: { r: any; resolved?: boolean }) {
   const { toast } = useToast();
   const rd = r?.details || {};
@@ -743,6 +801,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
   const rd = r?.details || {};
   if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} />;
   if (isReport && rd.reportKind === "repescagem_atendida") return <CardRepescagemAtendida r={r} />;
+  if (isReport && rd.reportKind === "repescagem_captura") return <CardRepescagemCaptura r={r} />;
 
   return (
     <Card className="p-4 space-y-3">
@@ -1038,6 +1097,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
   });
   if (isReport && rd.reportKind === "repescagem_nao_atendida") return <CardRepescagemNaoAtendida r={r} resolved />;
   if (isReport && rd.reportKind === "repescagem_atendida") return <CardRepescagemAtendida r={r} resolved />;
+  if (isReport && rd.reportKind === "repescagem_captura") return <CardRepescagemCaptura r={r} resolved />;
   return (
     <Card className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">

@@ -11,6 +11,7 @@ import BackToDashboardButton from "@/components/BackToDashboardButton";
 import { VirtualServiceSummary } from "@/components/VirtualServiceSummary";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -447,16 +448,53 @@ export default function RotaDoDia() {
   });
 
   // Capturar / liberar atendimento de um card de repescagem na rota do dia.
+  // REGISTRO OBRIGATÓRIO (nov/2026): liberar um capturado sem atendimento exige justificativa
+  // escrita (vai para o Inbox). Captura que chega às 18h sem registro vira PENDÊNCIA e bloqueia
+  // novas capturas até o atendente registrar o atendimento ou justificar.
+  const [liberarDialog, setLiberarDialog] = useState<{ assignmentId: string; nome: string } | null>(null);
+  const [justificarDialog, setJustificarDialog] = useState<{ capturaId: string; nome: string } | null>(null);
+  const [justificativaTxt, setJustificativaTxt] = useState('');
+  const { data: minhasCapturasSrv } = useQuery<{ abertas: any[]; pendentes: any[] }>({
+    queryKey: ['/api/repescagem/capturas/minhas'],
+    enabled: !!user?.id && user?.role !== 'admin',
+    refetchInterval: 60000,
+  });
+  const pendenciasCaptura: any[] = Array.isArray(minhasCapturasSrv?.pendentes) ? minhasCapturasSrv!.pendentes : [];
   const toggleCaptureMutation = useMutation({
-    mutationFn: async ({ assignmentId, locked }: { assignmentId: string; locked: boolean }) =>
-      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked }),
+    mutationFn: async ({ assignmentId, locked, justificativa }: { assignmentId: string; locked: boolean; justificativa?: string; nome?: string }) =>
+      apiRequest('POST', `/api/repescagem/assignments/${assignmentId}/lock`, { locked, ...(justificativa ? { justificativa } : {}) }),
     onSuccess: (_d, v) => {
       queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate] });
       queryClient.invalidateQueries({ queryKey: ['/api/repescagem/assignments'] });
-      toast({ title: v.locked ? 'Atendimento capturado' : 'Captura liberada', description: v.locked ? 'O cliente é seu e some para os demais até liberar, registrar pedido ou às 18h.' : 'O cliente volta a aparecer para os demais.' });
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/capturas/minhas'] });
+      if (!v.locked) { setLiberarDialog(null); setJustificativaTxt(''); }
+      toast({ title: v.locked ? 'Atendimento capturado' : 'Captura liberada', description: v.locked ? 'O cliente é seu e some para os demais. Registre o atendimento, a venda ou libere com justificativa.' : 'O cliente volta a aparecer para os demais.' });
     },
-    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' }),
+    onError: (e: any, v) => {
+      if (!v.locked && e?.precisaJustificativa) { setJustificativaTxt(''); setLiberarDialog({ assignmentId: v.assignmentId, nome: v.nome || 'cliente' }); return; }
+      if (e?.pendencias) queryClient.invalidateQueries({ queryKey: ['/api/repescagem/capturas/minhas'] });
+      toast({ title: 'Não foi possível', description: e?.message || 'Falha ao capturar/liberar', variant: 'destructive' });
+    },
   });
+  const justificarPendenciaMutation = useMutation({
+    mutationFn: async ({ capturaId, justificativa }: { capturaId: string; justificativa: string }) =>
+      apiRequest('POST', `/api/repescagem/capturas/${capturaId}/justificar`, { justificativa }),
+    onSuccess: () => {
+      setJustificarDialog(null); setJustificativaTxt('');
+      queryClient.invalidateQueries({ queryKey: ['/api/repescagem/capturas/minhas'] });
+      toast({ title: 'Pendência justificada', description: 'A justificativa foi enviada ao Inbox.' });
+    },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Falha ao justificar', variant: 'destructive' }),
+  });
+  // Liberar: quem capturou (não admin) precisa justificar; admin libera direto.
+  const liberarCaptura = (r: any) => {
+    if (user?.role !== 'admin' && r?.capturedBy === user?.id) {
+      setJustificativaTxt('');
+      setLiberarDialog({ assignmentId: r.assignmentId, nome: r.customerName || 'cliente' });
+      return;
+    }
+    toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: false, nome: r.customerName });
+  };
   // TODO atendimento de repescagem passa pelo card CAPTURADO (carteira compartilhada: vários
   // atendentes veem o mesmo cliente): ao clicar em WhatsApp ou Registrar num card ainda não
   // capturado, ele é capturado primeiro (some para os demais) e só então a ação segue. Capturado
@@ -472,6 +510,10 @@ export default function RotaDoDia() {
     if (r.captured && r.canRelease) { acao(); return; }
     if (r.captured && !r.canRelease) {
       toast({ title: 'Cliente já capturado', description: `Este cliente está com ${r.capturedByName || 'outro atendente'}.`, variant: 'destructive' });
+      return;
+    }
+    if (pendenciasCaptura.length > 0) {
+      toast({ title: 'Captura bloqueada', description: `Você tem ${pendenciasCaptura.length} captura(s) sem registro. Registre o atendimento ou justifique antes de capturar outro cliente.`, variant: 'destructive' });
       return;
     }
     if (limiteCapturas) {
@@ -2214,6 +2256,37 @@ export default function RotaDoDia() {
               Box BEGE (distinto do amarelo/ouro de lead) + tag "Repescagem". Paradas
               travadas: ficam fora da rota otimizada, então não são movidas/removidas
               pela otimização nem pela auto-regeneração. Só admin pode remover. */}
+          {/* ⚠️ PENDÊNCIAS DE CAPTURA (registro obrigatório, nov/2026): capturas que chegaram às 18h
+              sem registro de atendimento, sem venda e sem liberar. Bloqueiam novas capturas. */}
+          {user?.role !== 'admin' && pendenciasCaptura.length > 0 && (
+            <Card className="border-2 border-red-400 bg-red-50/60 dark:bg-red-950/30" data-testid="repescagem-pendencias-captura">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2 text-red-700 dark:text-red-300">
+                  <AlertCircle className="h-4 w-4" />
+                  {pendenciasCaptura.length} captura(s) de repescagem sem registro de atendimento
+                </CardTitle>
+                <p className="text-xs text-red-700/90 dark:text-red-300/90">Você não pode capturar novos clientes até registrar o atendimento ou justificar cada uma.</p>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {pendenciasCaptura.map((p: any) => (
+                  <div key={p.id} className="flex items-center justify-between gap-2 flex-wrap rounded-md border border-red-200 dark:border-red-900 bg-white dark:bg-gray-900 p-2" data-testid={`pendencia-captura-${p.id}`}>
+                    <div className="text-sm">
+                      <div className="font-medium">{p.nome}</div>
+                      <div className="text-xs text-muted-foreground">Capturado em {p.capturadoEm || p.data}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" className="h-8 gap-1 text-xs" onClick={() => setVirtualServiceCustomer({ id: p.customerId, name: p.nome })} data-testid={`pendencia-registrar-${p.id}`}>
+                        <FileText className="h-3.5 w-3.5" /> Registrar atendimento
+                      </Button>
+                      <Button size="sm" className="h-8 gap-1 text-xs bg-red-600 hover:bg-red-700" onClick={() => { setJustificativaTxt(''); setJustificarDialog({ capturaId: p.id, nome: p.nome }); }} data-testid={`pendencia-justificar-${p.id}`}>
+                        Justificar
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
           {Array.isArray(repescagemOverlay) && repescagemOverlay.length > 0 && (
             <Card className="border-[#d6c7a1]">
               <CardHeader className="pb-2">
@@ -2437,9 +2510,9 @@ export default function RotaDoDia() {
                         <Button
                           size="sm" variant="outline"
                           className={`h-8 px-2.5 gap-1 text-xs font-semibold ${r.captured ? (r.canRelease ? 'border-orange-400 text-orange-700 hover:bg-orange-50 dark:text-orange-300 dark:hover:bg-orange-950' : 'border-gray-300 text-gray-500 cursor-not-allowed') : 'border-blue-500 text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-950'}`}
-                          onClick={(e) => { e.stopPropagation(); if (r.captured && !r.canRelease) return; if (!r.captured && limiteCapturas) { toast({ title: `Limite de ${MAX_CAPTURAS} capturas`, description: 'Libere ou registre o atendimento de um cliente capturado para capturar outro.', variant: 'destructive' }); return; } toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: !r.captured }); }}
+                          onClick={(e) => { e.stopPropagation(); if (r.captured && !r.canRelease) return; if (r.captured) { liberarCaptura(r); return; } if (!isAdmin && pendenciasCaptura.length > 0) { toast({ title: 'Captura bloqueada', description: `Você tem ${pendenciasCaptura.length} captura(s) sem registro. Registre o atendimento ou justifique antes de capturar outro cliente.`, variant: 'destructive' }); return; } if (limiteCapturas) { toast({ title: `Limite de ${MAX_CAPTURAS} capturas`, description: 'Libere ou registre o atendimento de um cliente capturado para capturar outro.', variant: 'destructive' }); return; } toggleCaptureMutation.mutate({ assignmentId: r.assignmentId, locked: true, nome: r.customerName }); }}
                           disabled={toggleCaptureMutation.isPending || (r.captured && !r.canRelease)}
-                          title={r.captured ? (r.canRelease ? 'Capturado por você — clique para liberar' : `Capturado por ${r.capturedByName || 'outro atendente'}`) : 'Capturar atendimento (fica só com você; some para os demais até liberar, registrar pedido ou às 18h)'}
+                          title={r.captured ? (r.canRelease ? 'Capturado por você — para liberar sem atendimento é preciso justificar' : `Capturado por ${r.capturedByName || 'outro atendente'}`) : 'Capturar atendimento (fica só com você; o registro do atendimento é obrigatório)'}
                           data-testid={`button-repescagem-capture-${r.customerId}`}
                         >
                           {r.captured ? (r.canRelease ? <LockOpen className="h-3.5 w-3.5" /> : <Hand className="h-3.5 w-3.5" />) : <Hand className="h-3.5 w-3.5" />}
@@ -4319,9 +4392,58 @@ export default function RotaDoDia() {
           serviceDate={selectedDate || getBrazilDateISO()}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['/api/service-logs/count/customer', selectedSellerId, selectedDate] });
+            // Registro de atendimento fecha a captura (o servidor resolve em segundo plano).
+            setTimeout(() => {
+              queryClient.invalidateQueries({ queryKey: ['/api/repescagem/capturas/minhas'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/repescagem/route-overlay', selectedSellerId, selectedDate] });
+            }, 1500);
           }}
         />
       )}
+
+      {/* Liberar captura sem atendimento: justificativa obrigatória (vai para o Inbox). */}
+      <Dialog open={!!liberarDialog} onOpenChange={(o) => { if (!o) { setLiberarDialog(null); setJustificativaTxt(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Liberar {liberarDialog?.nome} sem atendimento</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Você capturou este cliente e não registrou atendimento nem venda. Justifique por que está liberando. A justificativa vai para o Inbox do admin.</p>
+          <Textarea value={justificativaTxt} onChange={(e) => setJustificativaTxt(e.target.value)} placeholder="Ex.: cliente não atendeu 3 ligações; WhatsApp sem resposta." rows={4} data-testid="input-justificativa-liberar" />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => { setLiberarDialog(null); setJustificativaTxt(''); }}>Cancelar</Button>
+            <Button
+              disabled={justificativaTxt.trim().length < 10 || toggleCaptureMutation.isPending}
+              onClick={() => liberarDialog && toggleCaptureMutation.mutate({ assignmentId: liberarDialog.assignmentId, locked: false, justificativa: justificativaTxt.trim(), nome: liberarDialog.nome })}
+              data-testid="button-confirmar-liberar"
+            >
+              {toggleCaptureMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Liberar com justificativa'}
+            </Button>
+          </div>
+          {justificativaTxt.trim().length > 0 && justificativaTxt.trim().length < 10 && <p className="text-xs text-red-600">Mínimo de 10 caracteres.</p>}
+        </DialogContent>
+      </Dialog>
+
+      {/* Justificar pendência de captura (chegou às 18h sem registro). */}
+      <Dialog open={!!justificarDialog} onOpenChange={(o) => { if (!o) { setJustificarDialog(null); setJustificativaTxt(''); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Justificar pendência — {justificarDialog?.nome}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Esta captura chegou às 18h sem registro de atendimento, sem venda e sem ser liberada. Explique o que aconteceu. A justificativa vai para o Inbox do admin.</p>
+          <Textarea value={justificativaTxt} onChange={(e) => setJustificativaTxt(e.target.value)} placeholder="O que aconteceu com este atendimento?" rows={4} data-testid="input-justificativa-pendencia" />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => { setJustificarDialog(null); setJustificativaTxt(''); }}>Cancelar</Button>
+            <Button
+              disabled={justificativaTxt.trim().length < 10 || justificarPendenciaMutation.isPending}
+              onClick={() => justificarDialog && justificarPendenciaMutation.mutate({ capturaId: justificarDialog.capturaId, justificativa: justificativaTxt.trim() })}
+              data-testid="button-confirmar-justificativa"
+            >
+              {justificarPendenciaMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enviar justificativa'}
+            </Button>
+          </div>
+          {justificativaTxt.trim().length > 0 && justificativaTxt.trim().length < 10 && <p className="text-xs text-red-600">Mínimo de 10 caracteres.</p>}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
