@@ -223,6 +223,17 @@ function brTodayStr(): string {
 // ÚLTIMA visita registrada (passada) é "vermelha" (agendada não efetuada
 // e SEM pedido na data).
 type SkipCiclo = { customerId: string; anchor: string };
+// Data (YYYY-MM-DD) de início do fornecimento/atendimento do cliente (quarentena), ou null.
+function dataInicioAtendimento(v: any): string | null {
+  if (!v) return null;
+  try {
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v));
+    if (m) return m[1];
+    const d = new Date(String(v));
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  } catch { return null; }
+}
 // Pular ciclo automatico por venda fora do dia de rota: desligado (ver gatilho abaixo).
 const AUTO_PULAR_CICLO = false;
 async function computeRedCandidates(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]): Promise<any[]> {
@@ -578,7 +589,12 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     // customers.isActive e active_customers). E2-C: is_active e a unica regra de ativo.
     if ((c as any).isActive === false
       || String((c as any).situacao || '').toLowerCase() === 'inativo') continue;
-    const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr).sort();
+    // 🔒 QUARENTENA (nov/2026, decisão do Flavio): cliente com início de fornecimento/atendimento
+    // FUTURO (service_start_date > hoje — selo "Atend. a partir de DD/MM/AAAA") NÃO cai em
+    // repescagem. Depois da data, só cai por visita perdida A PARTIR dela (as anteriores não contam).
+    const inicioAtend = dataInicioAtendimento((c as any).serviceStartDate);
+    if (inicioAtend && inicioAtend > todayStr) continue;
+    const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr && (!inicioAtend || d >= inicioAtend)).sort();
     if (scheduled.length === 0) continue;
     const lastDate = scheduled[scheduled.length - 1];
 
@@ -608,6 +624,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n, (c as any).semanaAtendimento);
     const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
     if (!ev.falls || !ev.lastRedAnchor) continue;
+    if (inicioAtend && ev.lastRedAnchor < inicioAtend) continue; // visita perdida antes do início do atendimento
 
     // REFINO (proxima data de visita): para QUINZENAL e MENSAL, se ainda ha uma visita agendada
     // NESTA semana (de hoje ate domingo) o cliente esta na SEMANA DA PROXIMA VISITA -> NAO cai em
