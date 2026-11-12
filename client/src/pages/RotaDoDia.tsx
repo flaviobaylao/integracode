@@ -589,7 +589,7 @@ export default function RotaDoDia() {
     try {
       await apiRequest('PUT', `/api/horario-fornecedor/${editHorario.customerId}`, { inicio, fim });
       await queryClient.invalidateQueries({ queryKey: ['/api/horario-fornecedor'] });
-      toast({ title: limpar ? 'Horário removido' : 'Horário salvo', description: limpar ? editHorario.nome : `${editHorario.nome}: atende fornecedor ${rotuloHorarioForn({ inicio: inicio || null, fim: fim || null })}` });
+      toast({ title: limpar ? 'Horário removido' : 'Horário salvo', description: limpar ? editHorario.nome : `${editHorario.nome}: comprador ${rotuloHorarioForn({ inicio: inicio || null, fim: fim || null })}` });
       setEditHorario(null);
     } catch (e: any) {
       toast({ title: 'Erro ao salvar horário', description: e?.message || 'Tente novamente.', variant: 'destructive' });
@@ -2919,8 +2919,8 @@ export default function RotaDoDia() {
                                     onClick={(e) => { e.stopPropagation(); setEditHorario({ customerId: String(visit.customerId), nome: visit.customerName || '', inicio: '', fim: '' }); }}
                                     onPointerDown={(e) => e.stopPropagation()}
                                     draggable={false}
-                                    title="Marcar horário de atendimento ao fornecedor"
-                                    aria-label="Marcar horário de atendimento ao fornecedor"
+                                    title="Marcar horário do comprador"
+                                    aria-label="Marcar horário do comprador"
                                     className="shrink-0 text-gray-400 opacity-60 hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200 transition-opacity"
                                     data-testid={`horario-forn-add-${visit.customerId}`}
                                   >
@@ -2959,11 +2959,11 @@ export default function RotaDoDia() {
                                     onClick={(e) => { e.stopPropagation(); setEditHorario({ customerId: String(visit.customerId), nome: visit.customerName || '', inicio: h?.inicio || '', fim: h?.fim || '' }); }}
                                     onPointerDown={(e) => e.stopPropagation()}
                                     draggable={false}
-                                    title="Horário em que o cliente atende fornecedor (toque para editar)"
+                                    title="Horário em que o comprador atende o vendedor (toque para editar)"
                                     className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
                                     data-testid={`badge-horario-forn-${visit.customerId}`}
                                   >
-                                    <Clock className="h-3 w-3" /> Fornecedor {rotuloHorarioForn(h)}
+                                    <Clock className="h-3 w-3" /> Comprador {rotuloHorarioForn(h)}
                                   </button>
                                 );
                               })()}
@@ -3878,12 +3878,12 @@ export default function RotaDoDia() {
       <Dialog open={!!editHorario} onOpenChange={(o) => { if (!o && !salvandoHorario) setEditHorario(null); }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Clock className="h-5 w-5 text-amber-600" /> Atendimento ao fornecedor</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Clock className="h-5 w-5 text-amber-600" /> Horário do comprador</DialogTitle>
           </DialogHeader>
           {editHorario && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Em que horário <b className="text-foreground">{editHorario.nome}</b> atende fornecedor/vendedor?
+                Em que horário o comprador de <b className="text-foreground">{editHorario.nome}</b> atende o vendedor?
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <label className="text-sm font-medium space-y-1">
