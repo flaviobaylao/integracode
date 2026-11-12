@@ -3604,6 +3604,8 @@ export async function ensureRepescagemCapturasTable(): Promise<void> {
          AND seller_id IS NULL AND COALESCE(details->>'atendenteId', '') <> ''`);
   } catch (e) { console.warn('[REP-CAPTURA] seller_id inbox:', (e as any)?.message); }
   _capturasTableOk = true;
+  // Limpa na subida os cards de captura que ficaram duplicados com o report normal.
+  void unificarCardsCapturaDuplicados().then((k) => { if (k) console.log(`🔗 [REP-CAPTURA] ${k} card(s) de captura unificados com o report do atendimento.`); });
 }
 
 const rowsOfAny = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
@@ -3644,6 +3646,19 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
     if (!c || !DESFECHO_LABEL[c.status]) return;
     const { ensureTables } = await import('./change-requests-routes');
     await ensureTables();
+    // 🔗 UM CARD SÓ (nov/2026): atendimento/venda que já gerou o report normal do atendimento
+    // (Não-venda, atendimento virtual…) não abre um 2º card — o report normal já mostra o selo
+    // "Repescagem · Cliente de X · atendido por Y" e recebe os dados da captura.
+    if (c.status === 'atendida' || c.status === 'venda') {
+      const rel = await reportNormalDaCaptura(c.id);
+      if (rel) {
+        await db.execute(sql`
+          UPDATE change_requests
+             SET details = COALESCE(details, '{}'::jsonb) || ${JSON.stringify({ capturaRepescagem: { capturaId: c.id, desfecho: c.status, capturadoEm: c.cap_at || null, desfechoEm: c.desf_at || null } })}::jsonb
+           WHERE id = ${rel}`);
+        return;
+      }
+    }
     const entityId = `repescagem-captura-${c.id}-${c.status}`;
     const ja = rowsOfAny(await db.execute(sql`SELECT id FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${entityId} LIMIT 1`));
     if (ja.length) return;
@@ -3678,6 +3693,57 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
          ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
          ${JSON.stringify([msg])}::jsonb)`);
   } catch (e) { console.warn('[REP-CAPTURA] inbox:', (e as any)?.message); }
+}
+
+// Report NORMAL (kind='report', entity_type='customer') do mesmo cliente feito por quem capturou
+// depois da captura — é o card que fica no Inbox no lugar do card de captura.
+async function reportNormalDaCaptura(capturaId: string): Promise<string | null> {
+  try {
+    const r = rowsOfAny(await db.execute(sql`
+      SELECT cr.id FROM change_requests cr, repescagem_capturas rc
+       WHERE rc.id = ${capturaId}
+         AND cr.kind = 'report' AND cr.entity_type = 'customer'
+         AND (cr.entity_id = rc.customer_id OR cr.customer_id = rc.customer_id)
+         AND (cr.seller_id = rc.attendant_id OR cr.requested_by = rc.attendant_id)
+         AND cr.created_at >= (rc.captured_at AT TIME ZONE 'UTC') - interval '5 minutes'
+         AND cr.status <> 'cancelled'
+       ORDER BY cr.created_at ASC LIMIT 1`));
+    return r[0]?.id ? String(r[0].id) : null;
+  } catch { return null; }
+}
+
+// Remove o card de captura (atendido/venda) que ficou DUPLICADO com o report normal do mesmo
+// atendimento — a captura passa para o report normal. Só remove card sem conversa do admin.
+async function unificarCardsCapturaDuplicados(): Promise<number> {
+  let n = 0;
+  try {
+    const dups = rowsOfAny(await db.execute(sql`
+      SELECT cr.id, cr.details->>'desfecho' AS desfecho,
+             split_part(replace(cr.entity_id, 'repescagem-captura-', ''), '-' || (cr.details->>'desfecho'), 1) AS captura_id
+        FROM change_requests cr
+       WHERE cr.entity_type = 'repescagem' AND cr.details->>'reportKind' = ${REP_CAPTURA_KIND}
+         AND cr.details->>'desfecho' IN ('atendida', 'venda')
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(cr.messages, '[]'::jsonb)) m
+                          WHERE m->>'kind' IN ('reply', 'resend') )
+         AND cr.created_at >= now() - interval '30 days'`));
+    for (const d of dups) {
+      const capId = String(d.captura_id || '');
+      if (!capId) continue;
+      const rel = await reportNormalDaCaptura(capId);
+      if (!rel) continue;
+      const cap = rowsOfAny(await db.execute(sql`
+        SELECT to_char(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS cap_at,
+               to_char(desfecho_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS desf_at
+          FROM repescagem_capturas WHERE id = ${capId}`))[0] || {};
+      await db.execute(sql`
+        UPDATE change_requests
+           SET details = COALESCE(details, '{}'::jsonb) || ${JSON.stringify({ capturaRepescagem: { capturaId: capId, desfecho: d.desfecho, capturadoEm: cap.cap_at || null, desfechoEm: cap.desf_at || null } })}::jsonb
+         WHERE id = ${rel}`);
+      await db.execute(sql`DELETE FROM change_requests WHERE id = ${d.id}`);
+      n++;
+    }
+  } catch (e) { console.warn('[REP-CAPTURA] unificar:', (e as any)?.message); }
+  return n;
 }
 
 // Fecha as capturas abertas/pendentes que já tiveram venda ou registro de atendimento
@@ -3730,6 +3796,8 @@ export async function resolverCapturasRepescagem(f?: { customerId?: string; atte
       if (upd.length) { n++; await inboxDesfechoCaptura(c.id); }
     } catch (e) { console.warn('[REP-CAPTURA] resolver:', (e as any)?.message); }
   }
+  // Varredura geral (cron de 5 min): junta cards duplicados de captura com o report normal.
+  if (!f?.customerId && !f?.attendantId) await unificarCardsCapturaDuplicados();
   return n;
 }
 
