@@ -518,6 +518,8 @@ export default function MinhaAgenda() {
               const el = arg.el as HTMLElement;
               el.dataset.evId = arg.event.id;
               el.draggable = true;
+              // o plugin de interação do FullCalendar cancela o arrastar nativo; isola o mousedown/toque da linha
+              ["pointerdown", "mousedown", "touchstart"].forEach((t) => el.addEventListener(t, (e) => e.stopPropagation()));
               el.classList.add("agenda-lista-arrastavel");
               el.addEventListener("dragstart", (e) => { e.dataTransfer?.setData("text/agenda-id", arg.event.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; el.classList.add("opacity-40"); });
               el.addEventListener("dragend", () => { el.classList.remove("opacity-40"); limparAlvoLista(); });
