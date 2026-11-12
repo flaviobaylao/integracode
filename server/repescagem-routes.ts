@@ -2116,7 +2116,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
 
   // Travar / destravar UMA linha (qualquer usuário). A trava vale só para o dia vigente.
   // Quem trava vira "dono" da trava; só ele ou um admin conseguem destravar.
-  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+  // Vendedores externos também capturam clientes da repescagem na Rota do Dia (nov/2026, pedido
+  // do Flavio) — mesmas regras do telemarketing: limite de 5, registro obrigatório e pendência.
+  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole([...ALLOWED_ROLES, 'vendedor']), async (req: any, res) => {
     try {
       const { id } = req.params;
       const actor = (req as any).currentUser;
