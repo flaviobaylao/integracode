@@ -1403,14 +1403,18 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         JOIN users u ON u.id = c.user_id
         WHERE u.is_active = true
         ORDER BY nome, c.vigencia_data DESC`);
-      // O seletor só oferece quem participa do resumo.
+      // O seletor oferece TODOS os ativos de papel de vendas (vendedor, telemarketing,
+      // administrativo, motorista) + quem foi incluído à mão na aba Participantes.
+      // Quem está desligado na aba Participantes também aparece (marcado "fora do
+      // resumo"), para poder ter a remuneração configurada (pedido do Flavio, 12/nov/2026).
       const colabs: any = await db.execute(sql`
         SELECT u.id, COALESCE(NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')), ''), u.email) AS nome,
-               u.role, u.seller_type
+               u.role, u.seller_type,
+               COALESCE(p.incluir, u.role::text = ANY(${arraySql(PAPEIS)})) AS no_resumo
         FROM users u
         LEFT JOIN resumo_participantes p ON p.user_id = u.id
         WHERE u.is_active = true
-          AND ((u.role::text = ANY(${arraySql(PAPEIS)}) AND COALESCE(p.incluir, true) = true) OR p.incluir = true)
+          AND (u.role::text = ANY(${arraySql(PAPEIS)}) OR p.incluir = true)
         ORDER BY u.role, u.first_name, u.last_name`);
       // Lista completa para a aba Participantes, com o estado de cada um.
       const todos: any = await db.execute(sql`
