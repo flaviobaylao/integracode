@@ -227,6 +227,56 @@ export default function MinhaAgenda() {
     const ro = new ResizeObserver(fit); ro.observe(el); (el as any)._ro = ro;
   }, []);
 
+  // Mover um compromisso (usado pelo arrastar na Lista); respeita Hora marcada
+  const moverEvento = (ev: Ev, novoInicio: Date, novoFim: Date | null, allDay: boolean) => {
+    if (ev.fixedTime) { setConfirmaMover({ ev, novoInicio, novoFim, allDay, revert: () => {} }); return; }
+    alterar.mutate({ id: ev.id, start: novoInicio, end: novoFim, allDay });
+  };
+  const limparAlvoLista = () => secRef.current?.querySelectorAll(".agenda-alvo-dia,.agenda-alvo-ev").forEach((n) => n.classList.remove("agenda-alvo-dia", "agenda-alvo-ev"));
+  const alvoLista = (t: EventTarget | null) => {
+    const el = t as HTMLElement | null;
+    const dia = el?.closest?.("tr.fc-list-day") as HTMLElement | null;
+    if (dia?.dataset.date) return { tipo: "dia" as const, el: dia, date: dia.dataset.date };
+    const row = el?.closest?.("tr.fc-list-event") as HTMLElement | null;
+    if (row?.dataset.evId) return { tipo: "ev" as const, el: row, id: row.dataset.evId };
+    return null;
+  };
+  const listaDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes("text/agenda-id")) return;
+    const a = alvoLista(e.target); limparAlvoLista();
+    if (!a) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = "move";
+    a.el.classList.add(a.tipo === "dia" ? "agenda-alvo-dia" : "agenda-alvo-ev");
+  };
+  const listaDrop = (e: React.DragEvent) => {
+    const id = e.dataTransfer.getData("text/agenda-id"); limparAlvoLista();
+    const a = alvoLista(e.target); if (!id || !a) return;
+    e.preventDefault();
+    const ev = eventos.find((x) => x.id === id); if (!ev) return;
+    const ini = new Date(ev.start); const fim = ev.end ? new Date(ev.end) : null;
+    const dur = fim ? fim.getTime() - ini.getTime() : (ev.allDay ? 0 : UMA_HORA);
+    if (a.tipo === "dia") {
+      // solta no cabeçalho do dia: vai para aquele dia mantendo a hora
+      const [y, m, d] = a.date.split("-").map(Number);
+      const ns = new Date(ini); ns.setFullYear(y, m - 1, d);
+      if (ns.getTime() === ini.getTime()) return;
+      moverEvento(ev, ns, ev.allDay ? (fim ? new Date(ns.getTime() + dur) : null) : new Date(ns.getTime() + dur), ev.allDay);
+      return;
+    }
+    if (a.id === ev.id) return;
+    const alvo = eventos.find((x) => x.id === a.id); if (!alvo) return;
+    const aIni = new Date(alvo.start);
+    if (alvo.allDay) {
+      // alvo de dia inteiro: vai para o dia dele mantendo a hora
+      const ns = new Date(ini); ns.setFullYear(aIni.getFullYear(), aIni.getMonth(), aIni.getDate());
+      moverEvento(ev, ns, ev.allDay ? (fim ? new Date(ns.getTime() + dur) : null) : new Date(ns.getTime() + dur), ev.allDay);
+      return;
+    }
+    // solta sobre um compromisso com hora: fica logo depois dele, mantendo a duração
+    const ns = alvo.end ? new Date(alvo.end) : new Date(aIni.getTime() + UMA_HORA);
+    moverEvento(ev, ns, new Date(ns.getTime() + (ev.allDay || dur <= 0 ? UMA_HORA : dur)), false);
+  };
+
   const abrirNovo = () => {
     const s = new Date(); s.setMinutes(0, 0, 0); s.setHours(s.getHours() + 1);
     const e = new Date(s); e.setHours(e.getHours() + 1);
@@ -270,6 +320,9 @@ export default function MinhaAgenda() {
         .agenda .fc-event{border:0;border-radius:4px;padding:1px 4px;font-size:12px;cursor:pointer;color:#fff}
         .agenda .fc-event.agenda-done{opacity:.55;text-decoration:line-through}
         .agenda .fc-event.agenda-fixa{box-shadow:inset 3px 0 0 rgba(0,0,0,.45)}
+        .agenda tr.agenda-lista-arrastavel{cursor:grab}
+        .agenda tr.agenda-alvo-dia > *{background:rgba(42,120,214,.18)!important;box-shadow:inset 0 -2px 0 #2a78d6}
+        .agenda tr.agenda-alvo-ev > *{box-shadow:inset 0 -3px 0 #2a78d6}
         .agenda .fc .fc-timegrid-slot{height:2.6em}
         .agenda .fc .fc-list-event-title a{color:inherit}
         /* Lista: fc-list-event tambem tem a classe fc-event (texto branco) e sumia no fundo claro */
@@ -403,12 +456,14 @@ export default function MinhaAgenda() {
           <div className="text-[11.5px] text-muted-foreground leading-relaxed border-t pt-2">
             {modo === "clientes"
               ? "Clientes da Rota do Dia pela periodicidade, dia da semana e semana do mês do cadastro. Muda sozinho quando o cadastro muda. ☎ = atendimento virtual."
-              : "Clique num horário vazio para criar, arraste para mover, estique a borda para mudar a duração. Só você vê esta agenda."}
+              : view.startsWith("list")
+                ? "Lista: arraste um compromisso para o cabeçalho de um dia (mantém a hora) ou para cima de outro compromisso (fica logo depois dele). Para escolher qualquer horário, use Dia ou Semana."
+                : "Clique num horário vazio para criar, arraste para mover, estique a borda para mudar a duração. No celular, segure o card meio segundo antes de arrastar. Só você vê esta agenda."}
             <div className="mt-1">Arraste a barra entre "dia inteiro" e as horas para ampliar ou reduzir a faixa ({allDayRows} {allDayRows === 1 ? "linha" : "linhas"}); duplo clique volta ao padrão.</div>
           </div>
         </aside>
 
-        <section ref={secRef} className="flex-1 min-w-0 relative">
+        <section ref={secRef} className="flex-1 min-w-0 relative" onDragOver={listaDragOver} onDrop={listaDrop} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) limparAlvoLista(); }}>
           {(modo === "agenda" ? isLoading : cliLoading) && <div className="absolute right-2 top-2 text-xs text-muted-foreground z-10">Carregando…</div>}
           <FullCalendar
             ref={calRef}
@@ -455,6 +510,18 @@ export default function MinhaAgenda() {
             selectable={modo === "agenda"}
             editable={modo === "agenda"}
             eventResizableFromStart
+            eventLongPressDelay={500}
+            selectLongPressDelay={500}
+            eventDidMount={(arg) => {
+              // Lista: FullCalendar não arrasta nesta visão, então liga o arrastar nativo na linha
+              if (!arg.view.type.startsWith("list") || modo !== "agenda" || (arg.event.extendedProps as any)?.cli) return;
+              const el = arg.el as HTMLElement;
+              el.dataset.evId = arg.event.id;
+              el.draggable = true;
+              el.classList.add("agenda-lista-arrastavel");
+              el.addEventListener("dragstart", (e) => { e.dataTransfer?.setData("text/agenda-id", arg.event.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; el.classList.add("opacity-40"); });
+              el.addEventListener("dragend", () => { el.classList.remove("opacity-40"); limparAlvoLista(); });
+            }}
             selectMirror
             events={modo === "agenda" ? fcEvents : cliEvents}
             datesSet={(a) => {
