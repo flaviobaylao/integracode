@@ -3595,6 +3595,14 @@ export async function ensureRepescagemCapturasTable(): Promise<void> {
                           WHERE rc.customer_id = ra.customer_id AND rc.attendant_id = ra.locked_by AND rc.capture_date = ra.locked_date::date)
        ORDER BY ra.customer_id, ra.locked_by, ra.updated_at DESC NULLS LAST`);
   } catch (e) { console.warn('[REP-CAPTURA] backfill:', (e as any)?.message); }
+  // Itens do Inbox de captura criados antes da réplica (nov/2026) passam a apontar para quem
+  // capturou — assim a réplica do admin chega nas Pendências do Inbox da Rota do Dia dele.
+  try {
+    await db.execute(sql`
+      UPDATE change_requests SET seller_id = details->>'atendenteId'
+       WHERE entity_type = 'repescagem' AND details->>'reportKind' = ${REP_CAPTURA_KIND}
+         AND seller_id IS NULL AND COALESCE(details->>'atendenteId', '') <> ''`);
+  } catch (e) { console.warn('[REP-CAPTURA] seller_id inbox:', (e as any)?.message); }
   _capturasTableOk = true;
 }
 
@@ -3666,7 +3674,7 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
         (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
          types, details, status, kind, requested_by, requested_by_name, messages)
       VALUES
-        ('repescagem', ${entityId}, NULL, ${nomeCard}, NULL, ${atendente},
+        ('repescagem', ${entityId}, NULL, ${nomeCard}, ${c.attendant_id || null}, ${atendente},
          ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
          ${JSON.stringify([msg])}::jsonb)`);
   } catch (e) { console.warn('[REP-CAPTURA] inbox:', (e as any)?.message); }
