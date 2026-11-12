@@ -77,7 +77,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Atribuição da venda e fechamento de rota</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Quem implanta o pedido fica com a venda; o card do outro fica <b>inativo/desabilitado</b>.</li>
-                <li>No fechamento, <b>só o vendedor de cadastro (dono) justifica</b> repescagem não atendida; o atendente habilitado não. Card inativo (já vendido/atendido) fica isento.</li>
+                <li>Report/justificativa de repescagem <b>só é obrigatório quando há captura</b>: no fechamento entra apenas o cliente que o vendedor <b>capturou</b> e não atendeu. Repescagem sem captura (só na lista ou na rota) não exige justificativa de ninguém. Card inativo (já vendido/atendido) fica isento.</li>
               </ul>
             </div>
             <div>
