@@ -470,6 +470,41 @@ function CardRepescagemCaptura({ r, resolved }: { r: any; resolved?: boolean }) 
     },
     onError: (e: any) => toast({ title: "Erro", description: e?.message || "Tente novamente.", variant: "destructive" }),
   });
+  // 💬 Réplica a QUEM CAPTUROU (nov/2026): mesma conversa dos reports — a mensagem cai nas
+  // "Pendências do Inbox" da Rota do Dia do atendente; a tréplica dele devolve o card para cá.
+  const [note, setNote] = useState("");
+  const [anexos, setAnexos] = useState<AnexoNovo[]>([]);
+  const [preparandoAnexo, setPreparandoAnexo] = useState(false);
+  const adicionarAnexos = async (files: File[]) => {
+    if (!files.length) return;
+    setPreparandoAnexo(true);
+    try {
+      const { anexos: novos, avisos } = await prepararAnexos(files, anexos.length);
+      if (novos.length) setAnexos((p) => [...p, ...novos].slice(0, 5));
+      if (avisos.length) toast({ title: "Alguns anexos não entraram", description: avisos.join(" "), variant: "destructive" });
+    } finally { setPreparandoAnexo(false); }
+  };
+  const temResposta = !!note.trim() || anexos.length > 0;
+  const replyMut = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/change-requests/${r.id}/reply`, {
+        text: note.trim(),
+        attachments: anexos.length ? anexos.map((a) => ({ name: a.name, type: a.type, dataUrl: a.dataUrl })) : undefined,
+      });
+      if (!resolved) return apiRequest("POST", `/api/change-requests/${r.id}/resolve`, { status: "lido" });
+    },
+    onSuccess: () => {
+      toast({ title: "Réplica enviada", description: `${rd.atendente || "O atendente"} recebe a mensagem nas Pendências do Inbox da Rota do Dia.` });
+      setNote(""); setAnexos([]);
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
+    },
+    onError: (e: any) => toast({ title: "Erro ao enviar réplica", description: e?.message || "Tente novamente.", variant: "destructive" }),
+  });
+  const conversa = (Array.isArray(r.messages) ? r.messages : []).filter((m: any) => m && m.kind !== "system");
+  const ultima = conversa[conversa.length - 1];
+  const temTreplica = !!ultima && ultima.role === "seller";
+  const podeReplicar = !!r.sellerId;
   const rotuloTexto = rd.desfecho === "liberada" || rd.desfecho === "justificada" ? "Justificativa" : "Registro do atendimento";
   const borda = rd.desfecho === "pendente" ? "border-red-300 dark:border-red-900" : rd.desfecho === "venda" ? "border-green-200 dark:border-green-900" : "";
   return (
@@ -479,6 +514,7 @@ function CardRepescagemCaptura({ r, resolved }: { r: any; resolved?: boolean }) 
         <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
           <Badge variant="outline" className={`text-[10px] ${REP_CAPT_COR[rd.desfecho] || ""}`}>{rd.desfechoLabel || "Captura de repescagem"}</Badge>
           <Badge variant="outline" className="text-[10px]">Captura de repescagem</Badge>
+          {temTreplica && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300"><Reply className="h-3 w-3 mr-1" /> Tréplica de {rd.atendente || "quem capturou"}</Badge>}
           <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {fmtDate(r.createdAt)}</span>
         </div>
       </div>
@@ -494,13 +530,42 @@ function CardRepescagemCaptura({ r, resolved }: { r: any; resolved?: boolean }) 
       {rd.texto && (
         <div className="text-sm rounded-md bg-muted/50 border p-2.5 whitespace-pre-wrap"><span className="text-xs font-medium text-muted-foreground block mb-0.5">{rotuloTexto}</span>{rd.texto}</div>
       )}
-      {!resolved && (
-        <div className="flex flex-wrap gap-2">
+      {conversa.length > 0 && (
+        <div className="pt-1 border-t">
+          <div className="text-[11px] font-semibold text-muted-foreground mb-1">Conversa</div>
+          <MessageThread messages={conversa} />
+        </div>
+      )}
+      {podeReplicar && (
+        <div className="space-y-1">
+          <Textarea placeholder={`Escreva uma réplica para ${rd.atendente || "quem capturou"}… Pode colar imagens (Ctrl+V).`} value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+            onPaste={(e) => {
+              const fs = arquivosDoColar(e);
+              if (!fs.length) return;
+              if (!e.clipboardData.getData("text/plain")) e.preventDefault();
+              adicionarAnexos(fs);
+            }}
+            data-testid={`rep-capt-replica-txt-${r.id}`} />
+          <div className="flex flex-wrap items-center gap-2">
+            <VoiceDictateButton onText={(t) => setNote((p) => (p ? p.trim() + " " : "") + t)} testId={`rep-capt-audio-${r.id}`} />
+            <AnexosPicker value={anexos} onAdd={adicionarAnexos} onRemove={(i) => setAnexos((p) => p.filter((_, j) => j !== i))}
+              disabled={replyMut.isPending || preparandoAnexo} testId={`rep-capt-anexar-${r.id}`} />
+            {preparandoAnexo && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {podeReplicar && (
+          <Button size="sm" variant="outline" className="border-indigo-300 text-indigo-700 hover:bg-indigo-50" disabled={replyMut.isPending || preparandoAnexo || !temResposta} onClick={() => replyMut.mutate()} data-testid={`rep-capt-replica-${r.id}`}>
+            {replyMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Reply className="h-4 w-4 mr-1" /> Réplica</>}
+          </Button>
+        )}
+        {!resolved && (
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" disabled={lidoMut.isPending} onClick={() => lidoMut.mutate()} data-testid={`rep-capt-lido-${r.id}`}>
             {lidoMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><CheckCircle2 className="h-4 w-4 mr-1" /> Marcar como lido</>}
           </Button>
-        </div>
-      )}
+        )}
+      </div>
     </Card>
   );
 }
