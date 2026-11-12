@@ -2383,7 +2383,15 @@ export default function RotaDoDia() {
                     className={` flex items-start justify-between p-2 rounded-lg border ${_rBorder}`}
                     data-testid={`card-repescagem-${r.customerId}`}
                   >
-                    <div className="min-w-0">
+                    {/* Clique no card = MESMO card de venda da rota (check-in, registrar/editar pedido,
+                        não venda). Passa pela captura (atendente não dono), igual ao WhatsApp/Registrar.
+                        (nov/2026, pedido do Flavio) */}
+                    <div
+                      className={`min-w-0 flex-1 ${(r.inactive || _rCref || !r.customerId) ? 'cursor-default' : 'cursor-pointer'} ${loadingCardId === r.customerId ? 'opacity-60 pointer-events-none' : ''}`}
+                      onClick={(r.inactive || _rCref || !r.customerId) ? undefined : () => comCaptura(r, () => { void handleVisitClick(r.customerId, false); })}
+                      title={(r.inactive || _rCref) ? undefined : 'Abrir card de venda (registrar / editar pedido)'}
+                      data-testid={`open-card-repescagem-${r.customerId}`}
+                    >
                       <div className="flex items-center gap-1.5 flex-wrap mb-1">
                         <span className="font-medium truncate">{r.customerName}</span>
                         <button
