@@ -3621,6 +3621,8 @@ export async function ensureRepescagemCapturasTable(): Promise<void> {
          AND seller_id IS NULL AND COALESCE(details->>'atendenteId', '') <> ''`);
   } catch (e) { console.warn('[REP-CAPTURA] seller_id inbox:', (e as any)?.message); }
   _capturasTableOk = true;
+  // Corrige capturas marcadas como "venda" em que o pedido foi implantado por OUTRA pessoa.
+  void corrigirVendasDeOutro();
   // Limpa na subida os cards de captura que ficaram duplicados com o report normal.
   void unificarCardsCapturaDuplicados().then((k) => { if (k) console.log(`🔗 [REP-CAPTURA] ${k} card(s) de captura unificados com o report do atendimento.`); });
 }
@@ -3636,9 +3638,10 @@ const DESFECHO_LABEL: Record<string, string> = {
   atendida: 'Atendido sem venda',
   liberada: 'Liberado sem atendimento (justificado)',
   pendente: 'Capturado sem registro — pendência',
+  venda_outro: 'Venda implantada por outro vendedor',
   justificada: 'Pendência justificada',
 };
-const DESFECHO_EMOJI: Record<string, string> = { venda: '💰', atendida: '📝', liberada: '🔓', pendente: '⚠️', justificada: '✍️' };
+const DESFECHO_EMOJI: Record<string, string> = { venda_outro: '🔁', venda: '💰', atendida: '📝', liberada: '🔓', pendente: '⚠️', justificada: '✍️' };
 
 async function nomeUsuarioRep(id: string | null | undefined): Promise<string | null> {
   const k = String(id || '');
@@ -3687,6 +3690,7 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
     const texto = String(c.texto || '').trim();
     let resumo = '';
     if (c.status === 'venda') resumo = `${nome} (carteira ${carteira}) foi atendido na repescagem por ${atendente} com venda de ${brl(c.valor)}${c.quem_vendeu ? ` — pedido de ${c.quem_vendeu}` : ''}.`;
+    else if (c.status === 'venda_outro') resumo = `${atendente} capturou ${nome} (carteira ${carteira}), mas o pedido de ${brl(c.valor)} foi implantado por ${c.quem_vendeu || 'outro vendedor'} — a venda é de quem implantou. A captura foi encerrada.`;
     else if (c.status === 'atendida') resumo = `${nome} (carteira ${carteira}) foi atendido na repescagem por ${atendente}, sem venda.${quemRegistrou ? ` Registro feito por ${quemRegistrou}.` : ''}`;
     else if (c.status === 'liberada') resumo = `${atendente} capturou ${nome} (carteira ${carteira}) e liberou sem atendimento.`;
     else if (c.status === 'pendente') resumo = `${atendente} capturou ${nome} (carteira ${carteira}) em ${fmtBR(String(c.cap_dt).slice(0, 10))} e chegou às 18h sem registro de atendimento, sem venda e sem liberar. Ficou com pendência: não captura outro cliente até registrar o atendimento ou justificar.`;
@@ -3710,6 +3714,30 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
          ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
          ${JSON.stringify([msg])}::jsonb)`);
   } catch (e) { console.warn('[REP-CAPTURA] inbox:', (e as any)?.message); }
+}
+
+// Captura fechada como "venda" cujo pedido NÃO foi implantado por quem capturou → 'venda_outro'
+// (e o card do Inbox passa a dizer quem implantou). Roda na subida do servidor.
+async function corrigirVendasDeOutro(): Promise<void> {
+  try {
+    const rows = rowsOfAny(await db.execute(sql`
+      SELECT rc.id FROM repescagem_capturas rc
+       WHERE rc.status = 'venda' AND rc.created_at >= now() - interval '30 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM billing_pipeline bp
+            WHERE bp.customer_id::text = rc.customer_id AND COALESCE(bp.operation_type, 'venda') = 'venda'
+              AND bp.created_at >= rc.captured_at
+              AND (bp.seller_id = rc.attendant_id OR EXISTS (SELECT 1 FROM users u WHERE u.id = rc.attendant_id
+                    AND u.omie_vendor_code IS NOT NULL AND bp.seller_id IN (u.omie_vendor_code, 'omie-vendor-' || u.omie_vendor_code))))`));
+    for (const r of rows) {
+      await db.execute(sql`UPDATE repescagem_capturas SET status = 'venda_outro', updated_at = now() WHERE id = ${r.id} AND status = 'venda'`);
+      // Card antigo (desfecho "venda") sai e entra o card correto.
+      await db.execute(sql`DELETE FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${'repescagem-captura-' + r.id + '-venda'}
+                             AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(messages, '[]'::jsonb)) m WHERE m->>'kind' IN ('reply', 'resend'))`);
+      await inboxDesfechoCaptura(r.id);
+    }
+    if (rows.length) console.log(`🔁 [REP-CAPTURA] ${rows.length} captura(s) corrigidas para "venda de outro vendedor".`);
+  } catch (e) { console.warn('[REP-CAPTURA] corrigir vendas:', (e as any)?.message); }
 }
 
 // Report NORMAL (kind='report', entity_type='customer') do mesmo cliente feito por quem capturou
@@ -3776,12 +3804,17 @@ export async function resolverCapturasRepescagem(f?: { customerId?: string; atte
   let n = 0;
   for (const c of abertas) {
     try {
+      // Venda depois da captura, separando a de QUEM CAPTUROU (o pedido é de quem implantou) da
+      // implantada por outra pessoa (ex.: o dono da carteira vendeu enquanto o cliente estava capturado).
       const venda = rowsOfAny(await db.execute(sql`
-        SELECT COALESCE(SUM(COALESCE(sale_value, 0)), 0) AS v, COUNT(*)::int AS q,
-               STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(seller_name), ''), seller_id), ', ') AS quem
-          FROM billing_pipeline
-         WHERE customer_id::text = ${c.customer_id} AND COALESCE(operation_type, 'venda') = 'venda'
-           AND created_at >= ${c.cap_at}::timestamp`))[0];
+        SELECT COALESCE(SUM(COALESCE(bp.sale_value, 0)), 0) AS v, COUNT(*)::int AS q,
+               COUNT(*) FILTER (WHERE bp.seller_id = ${c.attendant_id}
+                 OR EXISTS (SELECT 1 FROM users u WHERE u.id = ${c.attendant_id} AND u.omie_vendor_code IS NOT NULL
+                             AND bp.seller_id IN (u.omie_vendor_code, 'omie-vendor-' || u.omie_vendor_code)))::int AS proprio,
+               STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(bp.seller_name), ''), bp.seller_id), ', ') AS quem
+          FROM billing_pipeline bp
+         WHERE bp.customer_id::text = ${c.customer_id} AND COALESCE(bp.operation_type, 'venda') = 'venda'
+           AND bp.created_at >= ${c.cap_at}::timestamp`))[0];
       const log = rowsOfAny(await db.execute(sql`
         SELECT attendant_id, notes, service_type FROM virtual_service_logs
          WHERE customer_id = ${c.customer_id} AND created_at >= ${c.cap_at}::timestamp
@@ -3796,7 +3829,7 @@ export async function resolverCapturasRepescagem(f?: { customerId?: string; atte
       }
       let status: string | null = null; let texto: string | null = null; let valor: number | null = null; let quem: string | null = null; let st: string | null = null; let by: string | null = null;
       if (Number(venda?.q || 0) > 0) {
-        status = 'venda'; valor = Number(venda.v || 0); quem = venda.quem ? (await nomeUsuarioRep(String(venda.quem).split(',')[0].trim())) : null;
+        status = Number(venda?.proprio || 0) > 0 ? 'venda' : 'venda_outro'; valor = Number(venda.v || 0); quem = venda.quem ? (await nomeUsuarioRep(String(venda.quem).split(',')[0].trim())) : null;
         if (log) { texto = log.notes || null; st = log.service_type || null; by = log.attendant_id || null; }
       } else if (log) {
         status = 'atendida'; texto = String(log.notes || '').trim() || '(registro sem texto)'; st = log.service_type || null; by = log.attendant_id || null;
