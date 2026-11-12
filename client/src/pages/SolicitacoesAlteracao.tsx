@@ -452,6 +452,7 @@ function CardRepescagemAtendida({ r, resolved }: { r: any; resolved?: boolean })
 // e pendência justificada. O admin só lê (marcar como lido).
 const REP_CAPT_COR: Record<string, string> = {
   venda: "bg-green-50 text-green-700 border-green-300",
+  venda_outro: "bg-sky-50 text-sky-700 border-sky-300",
   atendida: "bg-emerald-50 text-emerald-700 border-emerald-300",
   liberada: "bg-orange-50 text-orange-700 border-orange-300",
   pendente: "bg-red-50 text-red-700 border-red-300",
@@ -523,7 +524,7 @@ function CardRepescagemCaptura({ r, resolved }: { r: any; resolved?: boolean }) 
         <div><span className="text-muted-foreground">Carteira:</span> {rd.carteira || "—"}</div>
         <div><span className="text-muted-foreground">Capturado em:</span> {rd.capturadoEm || "—"}</div>
         <div><span className="text-muted-foreground">Desfecho em:</span> {rd.desfechoEm || "—"}</div>
-        {rd.desfecho === "venda" && <div><span className="text-muted-foreground">Venda:</span> <b className="text-green-700 dark:text-green-400">{brl(rd.valor)}</b>{rd.quemVendeu ? ` (${rd.quemVendeu})` : ""}</div>}
+        {(rd.desfecho === "venda" || rd.desfecho === "venda_outro") && <div><span className="text-muted-foreground">{rd.desfecho === "venda_outro" ? "Pedido implantado por outro:" : "Venda:"}</span> <b className="text-green-700 dark:text-green-400">{brl(rd.valor)}</b>{rd.quemVendeu ? ` (${rd.quemVendeu})` : ""}</div>}
         {rd.quemRegistrou && <div><span className="text-muted-foreground">Registrado por:</span> {rd.quemRegistrou}</div>}
       </div>
       {rd.resumo && <div className="text-sm text-muted-foreground">{rd.resumo}</div>}
