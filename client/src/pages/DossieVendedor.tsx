@@ -76,24 +76,26 @@ const ROTULO_GRUPO: Record<Grupo3, string> = {
 };
 
 /**
- * Quem aparece no RESUMO POR VENDEDOR (Flavio, 13/11/2026): "somente vendedores
- * com qualquer tipo de valor, exceto Honest colaborador, admin e sistema".
+ * Quem aparece no RESUMO POR VENDEDOR (Flavio, 13/11/2026): contas de serviço
+ * fora, e só quem TEM CARTEIRA hoje.
  *
  * Dos 27 usuários da base, a maioria não é vendedor: administradores, o usuário
- * SISTEMA, a conta de colaboradores e a de fornecedores. Eles têm carteira por
- * acidente de cadastro e enchiam um quadro que existe para comparar quem vende.
- * Ficam de fora por PAPEL (admin/administrative) e por uma lista curta de contas
- * de serviço — o papel sozinho não resolve, porque "Honest Colaboradores" está
- * cadastrado como vendedor. Além disso é preciso ter valor: faturamento na
- * carteira ou venda digitada no ano. O quadro diz na descrição quem saiu, para
- * ninguém procurar um nome e achar que o número sumiu.
+ * SISTEMA, a conta de colaboradores e a de fornecedores. Ficam de fora por PAPEL
+ * (admin/administrative) e por uma lista curta de contas de serviço — o papel
+ * sozinho não resolve, porque "Honest Colaboradores" está cadastrado como
+ * vendedor.
+ *
+ * A segunda regra é ter cliente na carteira AGORA. A primeira versão pedia
+ * "qualquer tipo de valor" e deixava entrar quem só tinha venda digitada no
+ * passado: seis linhas de vendedor com carteira zerada — gente que saiu, e a
+ * conta da indústria — num quadro que existe para comparar carteiras. Repare
+ * que a regra é a carteira, não o faturamento: vendedor com carteira e R$ 0 no
+ * ano PRECISA aparecer, é justamente o caso que se quer enxergar.
  */
 const CONTAS_DE_SERVICO = /^(sistema|honest\s+(colaborador|admin|fornecedor))/i;
 const ehContaDeServico = (v: any) =>
   ["admin", "administrative"].includes(String(v?.papel || "")) || CONTAS_DE_SERVICO.test(String(v?.nome || "").trim());
-const temValor = (v: any) =>
-  (Number(v?.carteira?.fatAno) || 0) > 0 ||
-  Object.values((v?.vendasMes || {}) as Record<string, number>).some((x) => Number(x) > 0);
+const temCarteira = (v: any) => (Number(v?.carteira?.total) || 0) > 0;
 
 /**
  * A setinha de subiu/caiu de um mês para o anterior.
@@ -210,9 +212,9 @@ export default function DossieVendedor() {
     return vendedores.filter((v) => selIds.includes(v.id));
   }, [restrito, vendedores, modo, selIds]);
   const umSo = modo === "sel" && selecionados.length === 1 ? selecionados[0] : null;
-  /** Quem entra no quadro "Resumo por vendedor" — ver ehContaDeServico/temValor. */
+  /** Quem entra no quadro "Resumo por vendedor" — ver ehContaDeServico/temCarteira. */
   const resumoVendedores = useMemo(
-    () => vendedores.filter((v) => !ehContaDeServico(v) && temValor(v)),
+    () => vendedores.filter((v) => !ehContaDeServico(v) && temCarteira(v)),
     [vendedores],
   );
 
@@ -534,9 +536,9 @@ export default function DossieVendedor() {
                 <CardHeader>
                   <CardTitle>Resumo por vendedor</CardTitle>
                   <CardDescription>
-                    {resumoVendedores.length} com faturamento ou venda digitada em {ano}. Clique em um nome para abrir o dossiê dele.
+                    {resumoVendedores.length} com carteira hoje. Clique em um nome para abrir o dossiê dele.
                     {vendedores.length - resumoVendedores.length > 0 &&
-                      ` Fora do quadro: ${vendedores.length - resumoVendedores.length} contas sem valor no ano ou de serviço (administração, sistema, colaboradores).`}
+                      ` Fora do quadro: ${vendedores.length - resumoVendedores.length} contas sem carteira ou de serviço (administração, sistema, colaboradores).`}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="overflow-x-auto">
