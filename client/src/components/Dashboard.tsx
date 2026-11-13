@@ -263,7 +263,7 @@ export default function Dashboard() {
     return weeks;
   }, [bounds.today]);
   // Monta as linhas (vendedor x dia do mes) a partir de uma lista { seller, d, v }.
-  // extras: vendedores que devem aparecer mesmo sem valor no mes (aba Mesclado: so pedidos de hoje).
+  // extras: vendedores que devem aparecer mesmo sem faturamento no mes (aba Mesclado: so pedidos a faturar).
   const montarLinhas = (src: any, extras?: Record<string, { nome: string; v: number }>) => {
     const map = new Map<string, any>();
     if (Array.isArray(src)) {
@@ -305,9 +305,12 @@ export default function Dashboard() {
   // REGRA (Flavio): credita o faturamento pelo vendedor que COLOCOU o pedido (billing_pipeline.seller_name),
   // servido em visitSummary.sellerDaily, e nao pelo dono atual do cliente. Base oficial (aba Faturado e projecao).
   const sellerDaily = useMemo(() => montarLinhas(data?.visitSummary?.sellerDaily), [data, monthWeeks]);
-  // Pedidos A FATURAR que entraram HOJE, por vendedor que colocou o pedido (aba Mesclado, em amarelo).
-  const pendHoje = useMemo(() => {
-    const out: Record<string, { nome: string; v: number }> = {};
+  // Pedidos AINDA A FATURAR do mes, por vendedor que colocou o pedido e pelo dia (horario SP) em que entraram.
+  // Aba Mesclado: aparecem em amarelo nesse dia ate serem faturados; faturados viram NF-e (verde) no dia da nota.
+  const pendMes = useMemo(() => {
+    const porVend: Record<string, { nome: string; v: number; dias: Record<string, number> }> = {};
+    const porDia: Record<string, number> = {};
+    let total = 0;
     const src: any[] = (data as any)?.ordersOverview?.aFaturar || (data as any)?.ordersOverview?.unbilled || [];
     const fmtD = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
     for (const p of src) {
@@ -315,21 +318,25 @@ export default function Dashboard() {
       // created_at vem do banco em UTC sem fuso ("2026-11-11 00:02:51"): tratar como UTC antes de converter para SP.
       const rs = String(raw);
       const dt = new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(rs) ? rs : rs.replace(" ", "T") + "Z"); if (isNaN(dt.getTime())) continue;
-      if (fmtD.format(dt) !== bounds.today) continue;
+      const iso = fmtD.format(dt);
+      if (iso.slice(0, 7) !== bounds.today.slice(0, 7)) continue;
       const v = Number(p.sale_value ?? p.saleValue) || 0; if (v <= 0) continue;
       const nm = String(p.seller_name || p.sellerName || "Sem vendedor").trim();
       const S = nm.toLowerCase().replace(/\s+/g, " ").replace(/\.+$/, "").trim();
-      (out[S] = out[S] || { nome: nm, v: 0 }).v += v;
+      const o = (porVend[S] = porVend[S] || { nome: nm, v: 0, dias: {} });
+      o.v += v; o.dias[iso] = (o.dias[iso] || 0) + v;
+      porDia[iso] = (porDia[iso] || 0) + v;
+      total += v;
     }
-    return out;
+    return { porVend, porDia, total };
   }, [data, bounds.today]);
-  const pendHojeTotal = useMemo(() => Object.values(pendHoje).reduce((a, x) => a + x.v, 0), [pendHoje]);
+  const wkPend = (dias: Record<string, number> | undefined, wi: number) => !dias ? 0 : monthWeeks[wi].days.reduce((a: number, d: any) => a + (d.inMonth ? (dias[d.iso] || 0) : 0), 0);
   // Linhas exibidas conforme a aba escolhida.
   const tabRows = useMemo(() => {
     if (cmpAba === "ped") return montarLinhas((data as any)?.visitSummary?.pedidosDaily);
-    if (cmpAba === "mix") return montarLinhas(data?.visitSummary?.sellerDaily, pendHoje);
+    if (cmpAba === "mix") return montarLinhas(data?.visitSummary?.sellerDaily, pendMes.porVend);
     return sellerDaily;
-  }, [cmpAba, data, monthWeeks, sellerDaily, pendHoje]);
+  }, [cmpAba, data, monthWeeks, sellerDaily, pendMes]);
   const tabTotals = useMemo(() => somarLinhas(tabRows), [tabRows, monthWeeks]);
   const sortedSellerDaily = useMemo(() => {
     const arr = [...tabRows];
@@ -609,7 +616,7 @@ export default function Dashboard() {
             <div className="text-xs text-gray-500">{cmpAba === "ped"
               ? "Pedidos implantados por vendedor no mês vigente, pelo dia em que entraram — o pedido continua no dia mesmo depois de faturado. Exclui pedidos na lixeira, cancelados, trocas, transferências, remessas, bonificações e amostras."
               : cmpAba === "mix"
-                ? "Faturamento efetivo (NF-e de venda) por vendedor no mês vigente, somado aos pedidos que entraram hoje e ainda não foram faturados (em amarelo, na coluna de hoje)."
+                ? "Faturado (NF-e de venda, em verde, no dia da nota) e pedidos ainda não faturados (em amarelo, no dia em que entraram), por vendedor no mês vigente."
                 : "Faturamento efetivo (NF-e de venda) por vendedor no mês vigente — nota fiscal real, excluindo devoluções, trocas, transferências, remessas, bonificações e amostras."}</div>
           </div>
         </CardHeader>
@@ -644,19 +651,19 @@ export default function Dashboard() {
                         const day = monthWeeks[wi].days[di];
                         const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.map[x.sellerId]?.[day.iso] || 0) : 0;
                         const showFc = fc > 0 && (v == null || v === 0);
-                        if (day && day.iso === bounds.today) {
-                          if (cmpAba === "ped") return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold text-amber-700 " + (di === 0 ? "border-l" : "")} title="Pedidos implantados hoje">{v ? nfmt(v) : ""}</td>);
-                          if (cmpAba === "mix") {
-                            const pend = pendHoje[x.sellerId]?.v || 0;
-                            return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700" title="NF-e faturadas hoje">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700" title="Pedidos de hoje ainda a faturar">{nfmt(pend)}</div> : null}</td>);
-                          }
-                          return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold text-green-700 " + (di === 0 ? "border-l" : "")} title="NF-e faturadas hoje">{v ? nfmt(v) : ""}</td>);
+                        if (cmpAba === "mix" && day && day.inMonth) {
+                          const pend = pendMes.porVend[x.sellerId]?.dias[day.iso] || 0;
+                          if (v || pend) return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700" title="Faturado (NF-e)">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700" title="Pedidos deste dia ainda a faturar">{nfmt(pend)}</div> : null}</td>);
                         }
                         return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-indigo-400 italic " : "text-gray-700 ") + (di === 0 ? "border-l" : "")}>{v == null || v === 0 ? (showFc ? nfmt(fc) : "") : nfmt(v)}</td>);
                       }),
-                      <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.map[x.sellerId] || {}, wi); return t ? nfmt(t) : ""; })()}</td>
+                      cmpAba === "mix"
+                        ? <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold bg-gray-50">{(() => { const pw = wkPend(pendMes.porVend[x.sellerId]?.dias, wi); const fw = wkFc(forecast.map[x.sellerId] || {}, wi); return (<>{wk.total ? <div className="text-green-700">{nfmt(wk.total)}</div> : null}{pw ? <div className="text-amber-700">{nfmt(pw)}</div> : null}{!wk.total && !pw && fw ? <div className="text-indigo-400 italic font-normal">{nfmt(fw)}</div> : null}</>); })()}</td>
+                        : <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums font-semibold text-gray-800 bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.map[x.sellerId] || {}, wi); return t ? nfmt(t) : ""; })()}</td>
                     ])}
-                    <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>
+                    {cmpAba === "mix"
+                      ? <td className="py-1 px-2 text-right tabular-nums font-bold border-l"><div className="text-green-700">{brl(x.mensal)}</div>{pendMes.porVend[x.sellerId]?.v ? <div className="text-amber-700">{brl(pendMes.porVend[x.sellerId].v)}</div> : null}</td>
+                      : <td className="py-1 px-2 text-right tabular-nums font-bold text-gray-900 border-l">{brl(x.mensal)}</td>}
                     <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(x.mensal + (forecast.bySeller[x.sellerId] || 0))}</td>
                     <td className="py-1 px-2 text-right tabular-nums font-semibold text-sky-700 border-l bg-sky-50">{brl(businessDays.elapsed > 0 ? (x.mensal / businessDays.elapsed) * businessDays.total : x.mensal)}</td>
                   </tr>
@@ -673,16 +680,19 @@ export default function Dashboard() {
                       const day = monthWeeks[wi].days[di];
                       const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.byDate[day.iso] || 0) : 0;
                       const showFc = fc > 0 && !v;
-                      if (day && day.iso === bounds.today) {
-                        if (cmpAba === "ped") return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums text-amber-700 " + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : ""}</td>);
-                        if (cmpAba === "mix") return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700">{nfmt(v)}</div> : null}{pendHojeTotal ? <div className="text-amber-700">{nfmt(pendHojeTotal)}</div> : null}</td>);
-                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums text-green-700 " + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : ""}</td>);
+                      if (cmpAba === "mix" && day && day.inMonth) {
+                        const pend = pendMes.porDia[day.iso] || 0;
+                        if (v || pend) return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700">{nfmt(pend)}</div> : null}</td>);
                       }
                       return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (showFc ? "text-indigo-400 italic " : "") + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : (showFc ? nfmt(fc) : "")}</td>);
                     }),
-                    <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.byDate, wi); return t ? nfmt(t) : ""; })()}</td>
+                    cmpAba === "mix"
+                      ? <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{(() => { const pw = wkPend(pendMes.porDia, wi); const fw = wkFc(forecast.byDate, wi); return (<>{wk.total ? <div className="text-green-700">{nfmt(wk.total)}</div> : null}{pw ? <div className="text-amber-700">{nfmt(pw)}</div> : null}{!wk.total && !pw && fw ? <div className="text-indigo-400 italic font-normal">{nfmt(fw)}</div> : null}</>); })()}</td>
+                      : <td key={wi + "s"} className="py-1 px-2 text-right tabular-nums bg-gray-50">{(() => { const t = (wk.total || 0) + wkFc(forecast.byDate, wi); return t ? nfmt(t) : ""; })()}</td>
                   ])}
-                  <td className="py-1 px-2 text-right tabular-nums font-bold border-l">{brl(tabTotals.mensal)}</td>
+                  {cmpAba === "mix"
+                    ? <td className="py-1 px-2 text-right tabular-nums font-bold border-l"><div className="text-green-700">{brl(tabTotals.mensal)}</div>{pendMes.total ? <div className="text-amber-700">{brl(pendMes.total)}</div> : null}</td>
+                    : <td className="py-1 px-2 text-right tabular-nums font-bold border-l">{brl(tabTotals.mensal)}</td>}
                   <td className="py-1 px-2 text-right tabular-nums font-semibold text-indigo-700 border-l bg-indigo-50">{brl(tabProjTotal)}</td>
                   <td className="py-1 px-2 text-right tabular-nums font-semibold text-sky-700 border-l bg-sky-50">{brl(tabProjLinear)}</td>
                 </tr>
@@ -690,14 +700,14 @@ export default function Dashboard() {
             </table>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] mt-2">
-            {cmpAba === "ped" ? (<>
-              <span className="text-gray-700">Cinza: pedidos implantados em dias anteriores</span>
-              <span className="text-amber-700 font-semibold">Amarelo: pedidos implantados hoje</span>
-            </>) : (<>
-              <span className="text-gray-700">Cinza: faturado em dias anteriores</span>
-              <span className="text-green-700 font-semibold">Verde: NF-e faturadas hoje</span>
-              {cmpAba === "mix" && <span className="text-amber-700 font-semibold">Amarelo: pedidos de hoje ainda a faturar</span>}
-            </>)}
+            {cmpAba === "mix" ? (<>
+              <span className="text-green-700 font-semibold">Verde: faturado (NF-e), no dia da nota</span>
+              <span className="text-amber-700 font-semibold">Amarelo: pedidos ainda a faturar, no dia em que entraram</span>
+            </>) : cmpAba === "ped" ? (
+              <span className="text-gray-700">Pedidos implantados, no dia em que entraram</span>
+            ) : (
+              <span className="text-gray-700">NF-e faturadas, no dia da nota</span>
+            )}
             <span className="text-indigo-400 italic">Lilás: previsão por histórico</span>
           </div>
           <div className="text-[10px] text-gray-400 mt-1">Faturamento diario (seg a dom) por semana do mes vigente, domingos inclusos. Colunas de dia em R$ sem centavos; subtotais e mensal em R$. A projecao linear usa o realizado do mes inteiro (com domingos) sobre a contagem de dias uteis seg-sex.</div>
