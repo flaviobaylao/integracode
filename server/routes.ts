@@ -3144,7 +3144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (_wantsInactivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET status_reason = ${_motivoStatus}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
-        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
+        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
       } else if (_wantsActivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id = ${id}`); } catch (_e) {}
@@ -3294,7 +3294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email };
         await logCustomerChanges({ customerId: id, before: { isActive: existingCustomer.isActive }, changes: { isActive: false }, actor, source: 'inactivate' });
-        await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: motivo, actor, source: 'inactivate' });
+        await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo, actor, source: 'inactivate' });
       } catch (_e) {}
       
       // Build success message
@@ -3979,7 +3979,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (_wantsInactivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET status_reason = ${_motivoStatus}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
-        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
+        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
       } else if (_wantsActivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id = ${id}`); } catch (_e) {}
@@ -4067,7 +4067,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const u = req.currentUser;
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
       try { await logCustomerChanges({ customerId: id, before: { isActive: before.isActive }, changes: { isActive: false }, actor, source: 'delete' }); } catch (_e) {}
-      try { await logCustomerNote({ customerId: id, label: 'Motivo da exclusão', text: motivo, actor, source: 'delete' }); } catch (_e) {}
+      try { await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo, actor, source: 'delete', exclusao: true }); } catch (_e) {}
       res.json({ message: "Cliente excluído (inativado com trilha). Nenhum dado foi apagado." });
     } catch (error) {
       console.error("Error deleting customer:", error);
@@ -5165,7 +5165,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
       for (const cid of (result.inactivatedIds || [])) {
         try { await logCustomerChanges({ customerId: cid, before: { isActive: true }, changes: { isActive: false }, actor, source: 'bulk' }); } catch (_e) {}
-        try { await logCustomerNote({ customerId: cid, label: 'Motivo da inativação', text: motivoTxt, actor, source: 'bulk' }); } catch (_e) {}
+        try { await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: cid, motivo: motivoTxt, actor, source: 'bulk' }); } catch (_e) {}
       }
       res.json({ ok: true, ...result });
     } catch (error: any) {

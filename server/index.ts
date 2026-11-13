@@ -428,6 +428,7 @@ run();
   // Visitas FORÇADAS na agenda (ex.: não positivados do mês na rota da semana).
   try { registerAgendaForcadaRoutes(app); } catch (e) { console.error('[agenda-forcada]', e); }
   try { const { registerPresentialMonthlyJob } = await import('./presential-monthly-job'); registerPresentialMonthlyJob(app); } catch (e) { console.error('[visita-mensal]', e); }
+  try { const { registerInativacaoTrilha } = await import('./inativacao-trilha'); registerInativacaoTrilha(app); } catch (e) { console.error('[inativacao-trilha]', e); }
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
