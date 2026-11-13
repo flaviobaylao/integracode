@@ -28,6 +28,7 @@ const TZ = "America/Sao_Paulo";
 const rows = (r: any) => ((r?.rows ?? r ?? []) as any[]);
 const SEM_MOTIVO_ANTIGO = "Motivo não informado (inativação anterior ao histórico do Integra, 06/09/2026)";
 const SEM_MOTIVO_SISTEMA = "Motivo não informado (inativado pelo sistema, sem motivo registrado)";
+const SEM_MOTIVO_USUARIO = "Motivo não informado (inativado antes de o motivo ser obrigatório)";
 
 let __ready: Promise<void> | null = null;
 function ensureCols(): Promise<void> {
@@ -143,8 +144,9 @@ export async function reconciliarInativacoes(opts: { dry?: boolean; desde?: stri
   for (const r of pendentes) {
     const quando = r.ev_quando ? new Date(r.ev_quando) : (r.inactivated_at ? new Date(r.inactivated_at) : (r.updated_at ? new Date(r.updated_at) : null));
     const antigo = !r.ev_quando && (!quando || quando.toISOString() < "2026-09-06");
-    const motivo = r.nota_motivo || r.status_reason || (antigo ? SEM_MOTIVO_ANTIGO : SEM_MOTIVO_SISTEMA);
-    const fonteMotivo = r.nota_motivo ? "nota do momento" : r.status_reason ? "coluna Motivo" : antigo ? "não informado (antigo)" : "não informado (sistema)";
+    const porUsuario = !!r.ev_por && !/trigger|sistema|migra/i.test(String(r.ev_por) + " " + String(r.ev_source || ""));
+    const motivo = r.nota_motivo || r.status_reason || (antigo ? SEM_MOTIVO_ANTIGO : porUsuario ? SEM_MOTIVO_USUARIO : SEM_MOTIVO_SISTEMA);
+    const fonteMotivo = r.nota_motivo ? "nota do momento" : r.status_reason ? "coluna Motivo" : antigo ? "não informado (antigo)" : porUsuario ? "não informado (usuário, antes do obrigatório)" : "não informado (sistema)";
     conta(`motivo: ${fonteMotivo}`);
     conta(`autor: ${r.ev_por ? "registrado" : "não registrado"}`);
     if (opts.dry || gravados >= lim) continue;
