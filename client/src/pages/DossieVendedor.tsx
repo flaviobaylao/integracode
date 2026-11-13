@@ -543,8 +543,9 @@ export default function DossieVendedor() {
                 cor="text-emerald-700" />}
             </CardContent>
             <div className="px-6 pb-4 -mt-1 text-xs text-muted-foreground">
-              “Com compra” conta o cliente <b>ativo</b> que faturou em {janela3.length === 1 ? "" : "algum d"}
-              {janela3.length ? <b>{rotJanela}</b> : "—"}; “sem compra” é o resto da carteira ativa.
+              “Com compra” conta o cliente <b>ativo</b> que faturou em{" "}
+              {janela3.length ? <b>{janela3.map((m) => rotMes(m)).join(", ").replace(/, ([^,]*)$/, " ou $1")}</b> : "—"};
+              {" "}“sem compra” é o resto da carteira ativa.
               {janela3.length > 0 && janela3.length < 3 && <> Só {janela3.length} mês(es) porque o ano carregado começa aí.</>}
               {var3m !== null && <> A seta compara com os 3 meses anteriores ({janela3Antes.map((m) => rotMes(m)).reverse().join(", ")}).</>}
               {" "}Rezoneados, conquistados e leads são do cadastro de hoje / do ano inteiro.
