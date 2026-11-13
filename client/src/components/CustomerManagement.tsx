@@ -25,7 +25,7 @@ import WhatsAppButton from "./WhatsAppButton";
 import GeocodeAllButton from "./GeocodeAllButton";
 import CustomerHistoryBox from "./CustomerHistoryBox";
 import type { Customer, User, CustomerWithSeller } from "@shared/schema";
-import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
+import { AJUDA_SEMANA_ATENDIMENTO, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 import { Plus, Search, Edit, Trash2, MapPin, Phone, Mail, User as UserIcon, Building2, Download, RefreshCw, AlertTriangle, CheckCircle, XCircle, X, Clock, AlertCircle, Calendar, Upload, History, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 
 // Função para normalizar dias da semana de qualquer formato para o padrão abreviado
@@ -81,6 +81,11 @@ function normalizeWeekdays(weekdays: string | string[]): string[] {
     })
     .filter(day => day); // Remove valores vazios
 }
+
+// 📅 SEMANA DO MÊS (semanaAtendimento): rótulo curto na coluna; o completo no title e no Excel.
+const SEMANA_CURTA: Record<string, string> = { toda: "Toda", impar: "1ª e 3ª", par: "2ª e 4ª", "1": "1ª", "2": "2ª", "3": "3ª", "4": "4ª", ultima: "Última" };
+const semanaCurta = (v: any) => SEMANA_CURTA[normalizarSemana(v)] || "Toda";
+const semanaLonga = (v: any) => ROTULO_SEMANA[normalizarSemana(v)] || "Toda semana";
 
 export default function CustomerManagement() {
   const delegMarks = useDelegacaoMarks();
@@ -526,7 +531,7 @@ export default function CustomerManagement() {
             </Button>
           )}
           {perms.can(CARD_CLIENTES, "exportar") && (
-          <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: (c.isActive === false ? 'inativo' : 'ativo'), Periodicidade: c.visitPeriodicity, Segmento: c.segmentoPrincipal, 'Coordenadas (Lat,Long)': (() => { const la = c.latitude, lo = c.longitude; if (la == null || la === '' || lo == null || lo === '') return ''; const nla = Number(la), nlo = Number(lo); return (isNaN(nla) || isNaN(nlo)) ? `${la},${lo}` : `${nla.toFixed(6)},${nlo.toFixed(6)}`; })() })), "clientes")} />
+          <ExportExcelButton testId="export-customers" onClick={() => exportToExcel(filteredCustomers.map((c: any) => ({ Nome: c.name, Fantasia: c.fantasyName, Documento: c.cnpj || c.cpf, Telefone: c.phone, Vendedor: resolveSeller(c.sellerName || c.sellerId), Cidade: c.city, Bairro: c.neighborhood, Status: (c.isActive === false ? 'inativo' : 'ativo'), Periodicidade: c.visitPeriodicity, 'Semana do mês': semanaLonga(c.semanaAtendimento), Segmento: c.segmentoPrincipal, 'Coordenadas (Lat,Long)': (() => { const la = c.latitude, lo = c.longitude; if (la == null || la === '' || lo == null || lo === '') return ''; const nla = Number(la), nlo = Number(lo); return (isNaN(nla) || isNaN(nlo)) ? `${la},${lo}` : `${nla.toFixed(6)},${nlo.toFixed(6)}`; })() })), "clientes")} />
           )}
           {perms.can(CARD_CLIENTES, "criar") && (
           <Button
@@ -747,6 +752,7 @@ export default function CustomerManagement() {
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Coordenadas</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Dias da Semana</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Periodicidade</th>
+                  <th className="px-6 py-4 text-left text-sm font-medium text-gray-600 whitespace-nowrap">Semana do mês</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Positivado</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Última Atividade</th>
                   <th className="px-6 py-4 text-left text-sm font-medium text-gray-600">Situação</th>
@@ -818,6 +824,11 @@ export default function CustomerManagement() {
                       <td className="px-6 py-4">
                         <span className="text-sm text-gray-600 capitalize">
                           {(customer as any).visitPeriodicity || 'Semanal'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="text-sm text-gray-600 whitespace-nowrap" title={semanaLonga((customer as any).semanaAtendimento)} data-testid={`semana-${customer.id}`}>
+                          {semanaCurta((customer as any).semanaAtendimento)}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -944,7 +955,7 @@ export default function CustomerManagement() {
                     </tr>
                     {historyOpenId === customer.id && (
                       <tr className="bg-gray-50">
-                        <td colSpan={11} className="px-6 py-1">
+                        <td colSpan={12} className="px-6 py-1">
                           <CustomerHistoryBox customerId={customer.id} />
                         </td>
                       </tr>
@@ -953,7 +964,7 @@ export default function CustomerManagement() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={11} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={12} className="px-6 py-12 text-center text-gray-500">
                       Nenhum cliente encontrado
                       {/* A busca acha o cliente, mas ele está INATIVO e o filtro padrão é "Ativo". */}
                       {statusFilter === 'active' && searchTerm.trim() && (() => {
