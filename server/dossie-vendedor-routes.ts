@@ -151,6 +151,22 @@ export function registerDossieVendedor(app: Express) {
       // ── leads ─────────────────────────────────────────────────────────────
       const leadRows = await q(`SELECT created_by, assigned_to, status::text AS status FROM leads`);
 
+      // ── rede de cada cliente (a mesma da aba Rede de Cliente) ────────────
+      // Serve ao sub-filtro por rede da tabela anual: numa rede, o movimento de
+      // uma filial so' faz sentido lido junto com o das outras. Num ambiente
+      // sem a tabela de redes a consulta falha e o filtro simplesmente nao tem
+      // o que oferecer — nenhuma tela cai por causa de um filtro a mais.
+      const redePorCliente = new Map<string, string>();
+      try {
+        for (const r of await q(`
+          SELECT m.customer_id, r.nome
+          FROM cliente_rede_membros m
+          JOIN cliente_redes r ON r.id = m.rede_id`)) {
+          const nome = String(r.nome || "").trim();
+          if (nome) redePorCliente.set(String(r.customer_id), nome);
+        }
+      } catch (e: any) { console.warn("[dossie-vendedores] redes indisponiveis:", e?.message || e); }
+
       // ── monta por vendedor ───────────────────────────────────────────────
       type Cli = any;
       const porVend = new Map<string, Cli[]>();
@@ -237,6 +253,7 @@ export function registerDossieVendedor(app: Express) {
         return {
           id: c.customerId || c.chave, nome: c.nome, doc: c.doc || null, cidade: c.cidade || "", segmento: c.segmento,
           ativo: c.ativo === true, vendedorId: cad ? cad.vendedorId : null, vendedor: c.vendedor || "Sem vendedor",
+          rede: c.customerId ? (redePorCliente.get(String(c.customerId)) || "") : "",
           porMes: c.porMes || {}, total: Number(c.total) || 0,
         };
       });
