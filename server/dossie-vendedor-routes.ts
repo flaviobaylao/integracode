@@ -424,8 +424,15 @@ export function registerDossieVendedor(app: Express) {
       const users = await q(`SELECT id, first_name, last_name, email FROM users`);
       const nomeDe = new Map<string, string>();
       for (const x of users) nomeDe.set(String(x.id), [x.first_name, x.last_name].filter(Boolean).join(" ").trim() || x.email || x.id);
-      const vendedorDo = (r: any) =>
-        String(r.seller_name || "").trim() || nomeDe.get(String(r.seller_id || "")) || "Sem vendedor";
+      // O ID MANDA, nao o nome gravado no report. `seller_name` foi gravado ora
+      // com o nome completo, ora com o prefixo do e-mail ("Gilmar M" e
+      // "gilmarmfilho", "Carlos T" e "Carlos T.", "leticia"): confiar nele parte
+      // a mesma pessoa em duas linhas e o levantamento mente por construcao.
+      // `resolve` ainda cobre o id em formato de codigo Omie.
+      const vendedorDo = (r: any) => {
+        const porId = nomeDe.get(String(r.seller_id || "")) || nomeDe.get(resolve(r.seller_id) || "");
+        return porId || String(r.seller_name || "").trim() || "Sem vendedor";
+      };
 
       // 6) Primeiro report de estoque de cada par cliente+vendedor.
       type Linha = { clienteId: string; vendedor: string; primeiro: string; ultimo: string; reports: number };
