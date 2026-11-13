@@ -796,18 +796,55 @@ function SemVendedorTabela({ lista, ano }: { lista: any[]; ano: number }) {
   // à direita, que é como número se compara (a mesma regra que ele já pediu nas
   // exportações: texto centralizado, dinheiro à direita).
   const c = "px-2 text-center";
+  // Ordenação A-Z em Cliente, Cidade e Situação (Flavio, 13/11/2026). O VALOR
+  // também ordena, de propósito: sem ele não haveria volta para a ordem de
+  // entrada da lista (maior faturamento primeiro) depois do primeiro clique.
+  const [ord, setOrd] = useState<{ col: string; dir: "asc" | "desc" }>({ col: "valor", dir: "desc" });
+  const ordenar = (col: string) =>
+    setOrd((o) => (o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "valor" ? "desc" : "asc" }));
+
+  const linhas = useMemo(() => {
+    const dir = ord.dir === "asc" ? 1 : -1;
+    const chave = (x: any): any => {
+      if (ord.col === "cliente") return String(x.nome || "").trim();
+      if (ord.col === "cidade") return String(x.cidade || "").trim();
+      // Situação: Ativo antes de Inativo em A-Z, e dentro de cada grupo a data
+      // da inativação, que é o que se quer ver depois de agrupar por situação.
+      if (ord.col === "situacao") return `${x.ativo ? "0 Ativo" : "1 Inativo"} ${x.inativado || ""}`;
+      return Number(x.fatAno) || 0;
+    };
+    return [...lista].sort((a, b) => {
+      const x = chave(a), y = chave(b);
+      if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y), "pt-BR") * dir;
+      return (x - y) * dir;
+    });
+  }, [lista, ord]);
+
+  const total = useMemo(() => linhas.reduce((s, x) => s + (Number(x.fatAno) || 0), 0), [linhas]);
+  const seta = (col: string) => (
+    <span className={ord.col === col ? "text-slate-700" : "text-transparent group-hover:text-slate-300"}>
+      {ord.col === col && ord.dir === "asc" ? "▲" : "▼"}
+    </span>
+  );
+  const Cab = ({ col, children, className = c }: { col: string; children: any; className?: string }) => (
+    <th className={`${className} cursor-pointer select-none group`} onClick={() => ordenar(col)}
+      title="Clique para ordenar; clique de novo para inverter">
+      <span className="inline-flex items-center gap-0.5">{children}{seta(col)}</span>
+    </th>
+  );
+
   return (
     <table className="w-full text-sm">
-      <thead className="sticky top-0 bg-white"><tr className="text-muted-foreground border-b">
-        <th className={`py-1 ${c}`}>Cliente</th>
+      <thead className="sticky top-0 bg-white z-10"><tr className="text-muted-foreground border-b">
+        <Cab col="cliente" className={`py-1 ${c}`}>Cliente</Cab>
         <th className={c}>Último vendedor</th>
-        <th className={c}>Cidade</th>
-        <th className={c}>Situação</th>
+        <Cab col="cidade">Cidade</Cab>
+        <Cab col="situacao">Situação</Cab>
         <th className="px-2 text-left min-w-[260px]">Motivo da inativação</th>
         <th className={c}>Entrada</th>
-        <th className="px-2 text-right">Em {ano}</th></tr></thead>
+        <Cab col="valor" className="px-2 text-right">Em {ano}</Cab></tr></thead>
       <tbody>
-        {lista.map((x) => (
+        {linhas.map((x) => (
           <tr key={x.id} className="border-b last:border-0">
             <td className={`py-1 ${c}`}>{x.nome}</td>
             {/* Sem linha no histórico não quer dizer "nunca teve vendedor": quer
@@ -830,6 +867,13 @@ function SemVendedorTabela({ lista, ano }: { lista: any[]; ano: number }) {
             <td className="px-2 text-right">{brl(x.fatAno)}</td>
           </tr>
         ))}
+        {/* Somatório preso no rodapé: a lista passa de 4 mil linhas e o total
+            tem que continuar à vista enquanto se rola. */}
+        <tr className="border-t-2 font-semibold bg-slate-50 sticky bottom-0">
+          <td className={`py-2 ${c}`}>Total ({linhas.length.toLocaleString("pt-BR")})</td>
+          <td colSpan={5} />
+          <td className="px-2 text-right">{brl(total)}</td>
+        </tr>
       </tbody>
     </table>
   );
