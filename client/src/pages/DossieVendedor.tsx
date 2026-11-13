@@ -55,8 +55,27 @@ const variacao = (atual: number, base: number): number | null => {
 };
 const pct = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : ""}${v.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%`);
 
-/** É vendedor de rua? telemarketing atende de dentro; o resto vai à rua. */
-const ehInterno = (v: any) => String(v?.tipo || "") === "telemarketing" || String(v?.papel || "") === "telemarketing";
+/**
+ * Em que grupo do seletor o usuário entra, pelo `seller_type` do cadastro:
+ *   • EXTERNO  — vendedor_clt / vendedor_pj: vai à rua.
+ *   • INTERNO  — telemarketing: atende de dentro.
+ *   • OUTRO    — canal (HOTSITE), admin, indústria, sem tipo.
+ * O terceiro grupo existe porque a lista tem 27 usuários e só 8 deles são
+ * vendedor de verdade. Chamar HOTSITE ou um administrador de "externo" — que
+ * era o que acontecia com a divisão em dois — poria no mesmo balde quem roda
+ * rota e quem nunca pisou na rua, e é exatamente essa a comparação que o
+ * seletor existe para permitir.
+ */
+type Grupo3 = "externo" | "interno" | "outro";
+const grupoDe = (v: any): Grupo3 => {
+  const t = String(v?.tipo || "");
+  if (t === "vendedor_clt" || t === "vendedor_pj") return "externo";
+  if (t === "telemarketing") return "interno";
+  return "outro";
+};
+const ROTULO_GRUPO: Record<Grupo3, string> = {
+  externo: "Vendedor externo", interno: "Telemarketing (interno)", outro: "Outro acesso com carteira",
+};
 
 /**
  * A setinha de subiu/caiu de um mês para o anterior.
@@ -159,8 +178,9 @@ export default function DossieVendedor() {
     () => vendedores.filter((v) => incluirInativos || v.ativoUsuario),
     [vendedores, incluirInativos],
   );
-  const externos = useMemo(() => naLista.filter((v) => !ehInterno(v)), [naLista]);
-  const internos = useMemo(() => naLista.filter((v) => ehInterno(v)), [naLista]);
+  const externos = useMemo(() => naLista.filter((v) => grupoDe(v) === "externo"), [naLista]);
+  const internos = useMemo(() => naLista.filter((v) => grupoDe(v) === "interno"), [naLista]);
+  const outros = useMemo(() => naLista.filter((v) => grupoDe(v) === "outro"), [naLista]);
 
   // Vendedor/telemarketing recebe só o próprio dossiê — não há seletor para ele.
   const restrito = data?.restrito === true;
@@ -274,7 +294,10 @@ export default function DossieVendedor() {
     // — quem parou de comprar é justamente o que não pode sumir da tela.
     if (mesSel) arr = arr.filter((c) => noMes(c, mesSel) > 0 || (temAnterior && noMes(c, mesAnt) > 0));
     const dir = ord.dir === "asc" ? 1 : -1;
-    const txt = (s: any) => String(s || "");
+    // .trim(): nome com espaco na frente existe no cadastro e, sem isto, ele
+    // fura a ordem alfabetica e aparece antes do "2 IRMAOS" — o usuario ve uma
+    // lista "ordenada" com duas linhas fora de lugar e nao confia em mais nada.
+    const txt = (s: any) => String(s || "").trim();
     const chave = (c: any): any => {
       if (ord.col === "cliente") return txt(c.nome);
       if (ord.col === "vendedor") return txt(c.vendedor);
@@ -402,6 +425,8 @@ export default function DossieVendedor() {
                         marcarTodos={() => { setEscopo("sel"); setSelIds(externos.map((v) => v.id)); setLimite(100); }} />
                       <Grupo titulo="Internos" dica="Telemarketing — atende de dentro" lista={internos} selIds={selIds} alterna={alterna}
                         marcarTodos={() => { setEscopo("sel"); setSelIds(internos.map((v) => v.id)); setLimite(100); }} />
+                      <Grupo titulo="Outros" dica="Canal, administração, indústria — não é vendedor" lista={outros} selIds={selIds} alterna={alterna}
+                        marcarTodos={() => { setEscopo("sel"); setSelIds(outros.map((v) => v.id)); setLimite(100); }} />
                       {naLista.length === 0 && <div className="text-sm text-muted-foreground py-4 text-center">Nenhum vendedor ativo.</div>}
                     </div>
                     <div className="p-2 border-t flex items-center justify-between gap-2">
@@ -446,7 +471,7 @@ export default function DossieVendedor() {
               <CardTitle className="text-2xl">{titulo}</CardTitle>
               {umSo && (
                 <CardDescription className="flex flex-wrap items-center gap-2">
-                  <span>{ehInterno(umSo) ? "Telemarketing (interno)" : "Vendedor externo"}{umSo.ativoUsuario ? "" : " · usuário inativo"}</span>
+                  <span>{ROTULO_GRUPO[grupoDe(umSo)]}{umSo.ativoUsuario ? "" : " · usuário inativo"}</span>
                   <span>· Início na atividade: <b>{dataBR(umSo.inicio)}</b> ({origemInicio})</span>
                   {podeAjustar && (
                     <span className="flex items-center gap-1">
@@ -551,7 +576,7 @@ export default function DossieVendedor() {
                         <tr key={v.id} className="border-b last:border-0 hover:bg-slate-50 cursor-pointer"
                           onClick={() => { setEscopo("sel"); setSelIds([v.id]); setLimite(100); }}>
                           <td className="py-1 text-blue-700">{v.nome}{v.ativoUsuario ? "" : <span className="text-xs text-muted-foreground"> (inativo)</span>}</td>
-                          <td className="text-xs text-muted-foreground">{ehInterno(v) ? "Interno" : "Externo"}</td>
+                          <td className="text-xs text-muted-foreground">{grupoDe(v) === "interno" ? "Interno" : grupoDe(v) === "externo" ? "Externo" : "Outro"}</td>
                           <td>{dataBR(v.inicio)}</td>
                           <td className="text-right">{v.carteira.total}</td><td className="text-right">{v.herdados.total}</td>
                           <td className="text-right">{v.conquistados.length}</td><td className="text-right">{v.inativadosPorEle.total}</td>
