@@ -491,6 +491,21 @@ export function registerDossieVendedor(app: Express) {
       const A = ordena(tabA), B = ordena(tabB);
       const dias = reports.map((r: any) => String(r.dia)).sort();
 
+      // DIAGNOSTICO DO CRUZAMENTO. A tabela B veio vazia na primeira rodada e um
+      // zero sem explicacao nao e' resposta: pode ser "nenhum cliente com
+      // estoque foi pedido para inativar" ou "o cruzamento nao esta' casando".
+      // Estes numeros separam os dois casos sem precisar de outra consulta.
+      const diasInat = inativacoes.map((i: any) => String(i.dia)).sort();
+      const idsComEstoque = new Set(Array.from(porPar.values()).map((l) => l.clienteId));
+      const primeiroReportDe = new Map<string, string>();
+      for (const l of porPar.values()) {
+        const atual = primeiroReportDe.get(l.clienteId);
+        if (!atual || l.primeiro < atual) primeiroReportDe.set(l.clienteId, l.primeiro);
+      }
+      const inatDeQuemTemEstoque = inativacoes.filter((i: any) => idsComEstoque.has(String(i.cliente_id || "")));
+      const antesDoReport = inatDeQuemTemEstoque.filter(
+        (i: any) => String(i.dia) < (primeiroReportDe.get(String(i.cliente_id)) || "9999"));
+
       res.json({
         ok: true,
         periodo: { primeiroReport: dias[0] || null, ultimoReport: dias[dias.length - 1] || null },
@@ -506,6 +521,10 @@ export function registerDossieVendedor(app: Express) {
         conferencia: {
           porSalesCards: porCard[0] || null,
           pedidosInativacaoNoTotal: inativacoes.length,
+          pedidosInativacaoPeriodo: { primeiro: diasInat[0] || null, ultimo: diasInat[diasInat.length - 1] || null },
+          clientesComEstoqueQueTemAlgumPedidoDeInativacao: new Set(inatDeQuemTemEstoque.map((i: any) => String(i.cliente_id))).size,
+          dessesComPedidoANTESDoReport: new Set(antesDoReport.map((i: any) => String(i.cliente_id))).size,
+          clientesDoEstoqueJaInativos: detalhe.filter((d) => !d.clienteAtivoHoje).length,
           observacao: "Vendedor = quem registrou o report. Cliente reportado por dois vendedores conta em cada linha, por isso a soma das linhas pode passar do total de clientes distintos.",
         },
         detalhe: detalhe.sort((a, b) => String(a.vendedorReport).localeCompare(String(b.vendedorReport), "pt-BR") || String(a.cliente).localeCompare(String(b.cliente), "pt-BR")),
