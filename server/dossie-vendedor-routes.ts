@@ -341,4 +341,171 @@ export function registerDossieVendedor(app: Express) {
       res.status(500).json({ ok: false, error: e?.message || String(e) });
     }
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // GET /api/reports/estoque-levantamento
+  //
+  // Levantamento pedido pelo Flavio (13/11/2026): desde que existem o report e o
+  // Inbox, quantos CLIENTES tiveram report de "Cliente com Estoque", por VENDEDOR
+  // e por PERIODICIDADE; e, no mesmo molde, quantos desses tiveram DEPOIS uma
+  // solicitação de inativação.
+  //
+  // POR QUE UMA CONSULTA PRÓPRIA, e não a lista do Inbox: a rota que a tela usa
+  // tem teto de 500 linhas e esconde cliente INATIVO — e cliente inativo é
+  // justamente a segunda tabela inteira. Ler por lá daria um número baixo e
+  // plausível, que é o pior tipo de número errado.
+  //
+  // O QUE CONTA COMO "COM ESTOQUE": report do Inbox (kind='report',
+  // reportKind='nao_venda') cujo motivo gravado menciona estoque. São dois
+  // textos, do atendimento presencial e do virtual ("Cliente com Estoque" e
+  // "Não Venda (virtual) — Cliente com Estoque"), por isso o ILIKE em vez de
+  // igualdade. A conferência contra sales_cards.no_sale_reason='com_estoque'
+  // vai junto na resposta.
+  //
+  // VENDEDOR é quem REGISTROU o report, não o dono da carteira hoje: a pergunta
+  // é sobre o que cada vendedor está reportando. Cliente reportado por dois
+  // vendedores conta uma vez em cada linha — por isso o total das linhas pode
+  // passar do total de clientes distintos, que vem separado na resposta.
+  // PERIODICIDADE é a do cadastro de hoje (é o único valor que existe).
+  // ───────────────────────────────────────────────────────────────────────────
+  app.get("/api/reports/estoque-levantamento", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const u: any = (req as any).currentUser || (req as any).user || null;
+      if (!["admin", "coordinator", "administrative"].includes(String(u?.role || ""))) {
+        return res.status(403).json({ ok: false, error: "Sem permissão" });
+      }
+
+      // 1) Reports de estoque: um por cliente+vendedor+momento.
+      const reports = await q(`
+        SELECT cr.id,
+               COALESCE(cr.customer_id, cr.entity_id) AS cliente_id,
+               cr.seller_id, cr.seller_name,
+               cr.details->>'motivo'  AS motivo,
+               (cr.created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
+               cr.created_at
+        FROM change_requests cr
+        WHERE cr.kind = 'report'
+          AND cr.details->>'reportKind' = 'nao_venda'
+          AND cr.details->>'motivo' ILIKE '%estoque%'
+          AND cr.entity_type = 'customer'
+        ORDER BY cr.created_at`);
+
+      // 2) Solicitações de inativação (o vendedor pedindo para inativar).
+      const inativacoes = await q(`
+        SELECT COALESCE(cr.customer_id, cr.entity_id) AS cliente_id,
+               cr.seller_id, cr.seller_name, cr.status,
+               cr.details->>'inativar' AS motivo,
+               (cr.created_at AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia,
+               cr.created_at
+        FROM change_requests cr
+        WHERE cr.kind = 'solicitacao'
+          AND cr.types ? 'inativar'
+          AND cr.entity_type = 'customer'
+        ORDER BY cr.created_at`);
+
+      // 3) Conferência independente: a mesma não-venda pelo lado do card.
+      const porCard = await q(`
+        SELECT COUNT(*)::int AS reports, COUNT(DISTINCT customer_id)::int AS clientes
+        FROM sales_cards
+        WHERE no_sale_reason = 'com_estoque'`);
+
+      // 4) Cadastro dos clientes citados.
+      const ids = Array.from(new Set([...reports, ...inativacoes].map((r: any) => String(r.cliente_id || "")).filter(Boolean)));
+      const lista = ids.length ? ids.map((x) => `'${String(x).replace(/'/g, "''")}'`).join(",") : `''`;
+      const cad = await q(`
+        SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.city,
+               LOWER(COALESCE(c.visit_periodicity::text,'semanal')) AS periodicidade,
+               c.is_active, c.seller_id,
+               c.inactivated_at::date::text AS inativado
+        FROM customers c WHERE c.id IN (${lista})`);
+      const cadPorId = new Map(cad.map((c: any) => [String(c.id), c]));
+
+      // 5) Nome do vendedor: o gravado no report, e o do cadastro como reserva.
+      const users = await q(`SELECT id, first_name, last_name, email FROM users`);
+      const nomeDe = new Map<string, string>();
+      for (const x of users) nomeDe.set(String(x.id), [x.first_name, x.last_name].filter(Boolean).join(" ").trim() || x.email || x.id);
+      const vendedorDo = (r: any) =>
+        String(r.seller_name || "").trim() || nomeDe.get(String(r.seller_id || "")) || "Sem vendedor";
+
+      // 6) Primeiro report de estoque de cada par cliente+vendedor.
+      type Linha = { clienteId: string; vendedor: string; primeiro: string; ultimo: string; reports: number };
+      const porPar = new Map<string, Linha>();
+      for (const r of reports) {
+        const cid = String(r.cliente_id || ""); if (!cid) continue;
+        const v = vendedorDo(r);
+        const k = `${cid}|${v}`;
+        const atual = porPar.get(k);
+        if (atual) { atual.reports++; atual.ultimo = String(r.dia); }
+        else porPar.set(k, { clienteId: cid, vendedor: v, primeiro: String(r.dia), ultimo: String(r.dia), reports: 1 });
+      }
+
+      // 7) Inativação DEPOIS do report: a data do pedido tem que ser posterior
+      //    (ou igual) à do primeiro report de estoque daquele cliente.
+      const inatPorCliente = new Map<string, any[]>();
+      for (const i of inativacoes) {
+        const cid = String(i.cliente_id || ""); if (!cid) continue;
+        const a = inatPorCliente.get(cid); if (a) a.push(i); else inatPorCliente.set(cid, [i]);
+      }
+
+      const PERS = ["semanal", "quinzenal", "mensal"];
+      const vazio = () => ({ semanal: 0, quinzenal: 0, mensal: 0, outra: 0, total: 0 });
+      const tabA = new Map<string, any>();   // todos os com estoque
+      const tabB = new Map<string, any>();   // com estoque e depois pedido de inativação
+      const detalhe: any[] = [];
+
+      for (const l of porPar.values()) {
+        const c: any = cadPorId.get(l.clienteId) || {};
+        const per = PERS.includes(String(c.periodicidade)) ? String(c.periodicidade) : "outra";
+        const add = (m: Map<string, any>) => {
+          const a = m.get(l.vendedor) || { vendedor: l.vendedor, ...vazio() };
+          a[per]++; a.total++; m.set(l.vendedor, a);
+        };
+        add(tabA);
+        const pedidos = (inatPorCliente.get(l.clienteId) || []).filter((i: any) => String(i.dia) >= l.primeiro);
+        if (pedidos.length) add(tabB);
+        detalhe.push({
+          clienteId: l.clienteId, cliente: c.nome || "(sem cadastro)", cidade: c.city || "",
+          periodicidade: per, vendedorReport: l.vendedor,
+          reportsEstoque: l.reports, primeiroReport: l.primeiro, ultimoReport: l.ultimo,
+          pedidoInativacao: pedidos.length ? pedidos[0].dia : null,
+          statusPedido: pedidos.length ? pedidos[0].status : null,
+          motivoPedido: pedidos.length ? pedidos[0].motivo : null,
+          clienteAtivoHoje: c.is_active === true,
+          inativadoEm: c.inativado || null,
+        });
+      }
+
+      const ordena = (m: Map<string, any>) => Array.from(m.values()).sort((a, b) => b.total - a.total || String(a.vendedor).localeCompare(String(b.vendedor), "pt-BR"));
+      const soma = (arr: any[]) => arr.reduce((s, x) => {
+        for (const k of ["semanal", "quinzenal", "mensal", "outra", "total"]) s[k] += x[k];
+        return s;
+      }, vazio());
+
+      const A = ordena(tabA), B = ordena(tabB);
+      const dias = reports.map((r: any) => String(r.dia)).sort();
+
+      res.json({
+        ok: true,
+        periodo: { primeiroReport: dias[0] || null, ultimoReport: dias[dias.length - 1] || null },
+        comEstoque: {
+          linhas: A, total: soma(A),
+          clientesDistintos: new Set(Array.from(porPar.values()).map((l) => l.clienteId)).size,
+          reports: reports.length,
+        },
+        comEstoqueEDepoisInativacao: {
+          linhas: B, total: soma(B),
+          clientesDistintos: new Set(detalhe.filter((d) => d.pedidoInativacao).map((d) => d.clienteId)).size,
+        },
+        conferencia: {
+          porSalesCards: porCard[0] || null,
+          pedidosInativacaoNoTotal: inativacoes.length,
+          observacao: "Vendedor = quem registrou o report. Cliente reportado por dois vendedores conta em cada linha, por isso a soma das linhas pode passar do total de clientes distintos.",
+        },
+        detalhe: detalhe.sort((a, b) => String(a.vendedorReport).localeCompare(String(b.vendedorReport), "pt-BR") || String(a.cliente).localeCompare(String(b.cliente), "pt-BR")),
+      });
+    } catch (e: any) {
+      console.error("[estoque-levantamento]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
 }
