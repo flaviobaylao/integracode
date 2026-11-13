@@ -685,11 +685,15 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                               <span className="font-medium text-gray-900">{h.label || h.field}</span>
                               <span className="text-xs text-gray-500">{fmtAudit(h.created_at)}</span>
                             </div>
+                            {(h.field === 'inativacao' || h.field === 'motivo') ? (
+                              <div className={`mt-1 whitespace-pre-wrap break-words ${h.field === 'inativacao' ? 'rounded-md bg-amber-50 border border-amber-200 px-2 py-1 text-amber-900' : 'text-gray-700'}`}>📝 {h.new_value ?? '—'}</div>
+                            ) : (
                             <div className="mt-1 text-gray-700">
                               <span className="line-through text-gray-400">{h.old_value ?? '—'}</span>
                               <span className="mx-2">→</span>
                               <span className="font-medium text-green-700">{h.new_value ?? '—'}</span>
                             </div>
+                            )}
                             <div className="mt-1 text-xs text-gray-500">por {h.changed_by_name || 'Sistema'}</div>
                           </div>
                         ))}
