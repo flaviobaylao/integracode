@@ -30,12 +30,6 @@ import { useAuth } from "@/hooks/useAuth";
 const MESES_ABREV = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 const rotMes = (m: string) => `${MESES_ABREV[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
 const brl = (v: number) => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
-const curto = (v: number) => {
-  const a = Math.abs(v || 0);
-  if (a >= 1e6) return `${(v / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
-  if (a >= 1e3) return `${(v / 1e3).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
-  return (v || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
-};
 const dataBR = (d?: string | null) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : "—");
 const norm = (s: string) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 /** 'YYYY-MM' do mês anterior. */
@@ -356,15 +350,51 @@ export default function DossieVendedor() {
   const origemInicio = umSo?.inicioAjustado ? "ajustada manualmente" : umSo?.primeiroPedido ? "1º pedido digitado" : "cadastro do usuário";
 
   // ── números do recorte de mês, para os cartões do topo ────────────────────
-  const fatPeriodo = mesSel ? (consolidado.carteiraMes[mesSel] || 0) : consolidado.fatCarteira;
-  const fatVar = mesSel && temAnterior ? variacao(fatPeriodo, consolidado.carteiraMes[mesAnt] || 0) : null;
-  const vendasPeriodo = mesSel ? (consolidado.vendasMes[mesSel] || 0) : consolidado.vendasAno;
-  const vendasVar = mesSel && temAnterior ? variacao(vendasPeriodo, consolidado.vendasMes[mesAnt] || 0) : null;
-  const pedidosPeriodo = mesSel ? (consolidado.pedidosMes[mesSel] || 0) : consolidado.pedidosAno;
-  const compraramPeriodo = mesSel ? base.filter((c) => noMes(c, mesSel) > 0).length : consolidado.compraramAno;
-  const compraramVar = mesSel && temAnterior
-    ? variacao(compraramPeriodo, base.filter((c) => noMes(c, mesAnt) > 0).length) : null;
   const rotPeriodo = mesSel ? rotMes(mesSel) : String(ano);
+
+  // ── OS 3 ÚLTIMOS MESES ────────────────────────────────────────────────────
+  // Os cartões do topo passaram a ser de atividade da carteira (Flavio,
+  // 13/11/2026): quem comprou e quem NÃO comprou nos últimos 3 meses.
+  //
+  // A janela termina no mês escolhido no filtro; sem filtro, no último mês
+  // carregado do ano. Assim o seletor de mês continua mandando no topo, e num
+  // ano fechado a conta é a daquele ano, não a de hoje. Meses fora do ano
+  // carregado não entram — janeiro, por exemplo, só tem ele mesmo — e os meses
+  // contados aparecem escritos no cartão, para ninguém supor três.
+  const janela3 = useMemo(() => {
+    const fim = mesSel || meses[meses.length - 1];
+    if (!fim) return [] as string[];
+    const out = [fim];
+    let m = fim;
+    for (let i = 0; i < 2; i++) { m = mesAntes(m); if (meses.includes(m)) out.push(m); }
+    return out;
+  }, [mesSel, meses]);
+  /** Os 3 meses imediatamente anteriores à janela, para a seta de variação. */
+  const janela3Antes = useMemo(() => {
+    if (!janela3.length) return [] as string[];
+    const out: string[] = [];
+    let m = janela3[janela3.length - 1];
+    for (let i = 0; i < 3; i++) { m = mesAntes(m); if (meses.includes(m)) out.push(m); }
+    return out;
+  }, [janela3, meses]);
+  const comprouEm = (c: any, ms: string[]) => ms.some((m) => noMes(c, m) > 0);
+
+  // ATIVOS COM COMPRA = cliente ATIVO do recorte com faturamento em algum dos 3
+  // meses. ATIVOS SEM COMPRA é o resto da carteira ativa — por subtração, e não
+  // por uma segunda contagem: `clientesAno` só traz quem comprou no ano, então
+  // quem está parado há mais tempo simplesmente não existe nessa lista e seria
+  // invisível numa contagem direta.
+  const ativosComCompra3m = useMemo(
+    () => base.filter((c) => c.ativo && comprouEm(c, janela3)).length,
+    [base, janela3],
+  );
+  const ativosSemCompra3m = Math.max(0, consolidado.ativos - ativosComCompra3m);
+  const comCompra3mAntes = useMemo(
+    () => (janela3Antes.length ? base.filter((c) => c.ativo && comprouEm(c, janela3Antes)).length : null),
+    [base, janela3Antes],
+  );
+  const var3m = comCompra3mAntes === null ? null : variacao(ativosComCompra3m, comCompra3mAntes);
+  const rotJanela = janela3.map((m) => rotMes(m)).join(", ");
 
   return (
     <div className="space-y-4">
@@ -494,27 +524,31 @@ export default function DossieVendedor() {
               )}
               {modo === "toda" && <CardDescription>{vendedores.length} vendedores com carteira, pedidos ou leads, mais {semVendedor.length} clientes sem vendedor.</CardDescription>}
             </CardHeader>
-            <CardContent className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-              <Kpi titulo="Carteira hoje" valor={String(consolidado.carteira)}
-                sub={`${consolidado.ativos} ativos · ${compraramPeriodo} compraram${mesSel ? ` em ${rotPeriodo}` : ` em ${ano}`}`}
-                variacaoPct={compraramVar} />
-              <Kpi titulo={`Faturamento da carteira em ${rotPeriodo}`} valor={brl(fatPeriodo)} cor="text-blue-700" variacaoPct={fatVar} />
-              {modo !== "sem" && <Kpi titulo={`Vendas digitadas em ${rotPeriodo}`} valor={brl(vendasPeriodo)} sub={`${pedidosPeriodo} pedidos`} cor="text-emerald-700" variacaoPct={vendasVar} />}
-              {modo !== "sem" && <Kpi titulo="Clientes herdados" valor={String(consolidado.herdados)} sub={`${consolidado.herdadosAtivos} ativos · ${consolidado.herdadosCompraram} compraram · ${curto(consolidado.herdadosFat)}`} />}
+            {/* SEIS CARTÕES (Flavio, 13/11/2026). Saíram carteira, faturamento,
+                vendas digitadas e inativados: o topo passou a responder "a
+                carteira está sendo atendida?" em vez de "quanto entrou". */}
+            <CardContent className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+              <Kpi titulo="Ativos com compra (3 meses)" valor={String(ativosComCompra3m)}
+                sub={rotJanela || "sem meses carregados"} cor="text-emerald-700" variacaoPct={var3m} />
+              <Kpi titulo="Ativos sem compra (3 meses)" valor={String(ativosSemCompra3m)}
+                sub={`de ${consolidado.ativos} ativos na carteira`} cor="text-red-700" />
+              {modo !== "sem" && <Kpi titulo="Rezoneados para a carteira" valor={String(consolidado.herdados)}
+                sub={`herdados · ${consolidado.herdadosAtivos} ativos`} />}
               {modo !== "sem" && <Kpi titulo="Clientes conquistados" valor={String(consolidado.conquistados.length)}
-                sub={`${consolidado.conquistados.filter((c: any) => c.ativo).length} ativos · ${brl(consolidado.conquistados.reduce((s: number, c: any) => s + c.valorVida, 0))} vendidos`} />}
-              <Kpi titulo="Inativados" valor={String(modo === "sem" ? consolidado.inativosCarteira : consolidado.inativadosPorEle.length)}
-                sub={modo === "sem" ? "inativos na lista" : `por ele (auditoria) · ${consolidado.inativosCarteira} inativos na carteira`} cor="text-red-700" />
-              {modo !== "sem" && <Kpi titulo="Leads cadastrados por ele" valor={String(consolidado.leadsCad)}
-                sub={`${consolidado.leadsConv} convertidos · ${consolidado.leadsAnd} em andamento · ${consolidado.leadsDesc} descartados`} />}
+                sub={`${consolidado.conquistados.filter((c: any) => c.ativo).length} ativos`} />}
+              {modo !== "sem" && <Kpi titulo="Leads cadastrados" valor={String(consolidado.leadsCad)}
+                sub={`${consolidado.leadsAnd} em andamento · ${consolidado.leadsDesc} descartados`} />}
+              {modo !== "sem" && <Kpi titulo="Leads convertidos" valor={String(consolidado.leadsConv)}
+                sub={consolidado.leadsCad > 0 ? `${Math.round(consolidado.leadsConv / consolidado.leadsCad * 100)}% dos cadastrados` : "nenhum lead cadastrado"}
+                cor="text-emerald-700" />}
             </CardContent>
-            {mesSel && (
-              <div className="px-6 pb-4 -mt-1 text-xs text-muted-foreground">
-                Faturamento, vendas digitadas e “compraram” são de <b>{rotPeriodo}</b>
-                {temAnterior ? <> — a seta compara com {rotMes(mesAnt)}.</> : <> — {rotMes(mesSel)} é o primeiro mês do ano carregado, não há com o que comparar.</>}
-                {" "}Carteira, herdados, conquistados e leads são do cadastro de hoje / do ano inteiro.
-              </div>
-            )}
+            <div className="px-6 pb-4 -mt-1 text-xs text-muted-foreground">
+              “Com compra” conta o cliente <b>ativo</b> que faturou em {janela3.length === 1 ? "" : "algum d"}
+              {janela3.length ? <b>{rotJanela}</b> : "—"}; “sem compra” é o resto da carteira ativa.
+              {janela3.length > 0 && janela3.length < 3 && <> Só {janela3.length} mês(es) porque o ano carregado começa aí.</>}
+              {var3m !== null && <> A seta compara com os 3 meses anteriores ({janela3Antes.map((m) => rotMes(m)).reverse().join(", ")}).</>}
+              {" "}Rezoneados, conquistados e leads são do cadastro de hoje / do ano inteiro.
+            </div>
           </Card>
 
           {/* Os dois gráficos que moravam na aba "Gráficos" (Flavio, 13/11/2026):
