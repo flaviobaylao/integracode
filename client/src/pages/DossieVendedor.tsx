@@ -794,29 +794,44 @@ function Grupo({ titulo, dica, lista, selIds, alterna, marcarTodos }: {
 }
 
 function SemVendedorTabela({ lista, ano }: { lista: any[]; ano: number }) {
+  // COLUNAS CENTRALIZADAS (Flavio, 13/11/2026), com duas exceções que são de
+  // leitura, não de gosto: o MOTIVO é frase corrida — centrado, cada linha
+  // começa num ponto diferente e a coluna deixa de ser varrível; e o VALOR fica
+  // à direita, que é como número se compara (a mesma regra que ele já pediu nas
+  // exportações: texto centralizado, dinheiro à direita).
+  const c = "px-2 text-center";
   return (
     <table className="w-full text-sm">
-      <thead className="sticky top-0 bg-white"><tr className="text-left text-muted-foreground border-b">
-        <th className="py-1">Cliente</th><th>Cidade</th><th>Situação</th>
-        <th className="min-w-[260px]">Motivo da inativação</th>
-        <th>Entrada</th><th className="text-right">Em {ano}</th></tr></thead>
+      <thead className="sticky top-0 bg-white"><tr className="text-muted-foreground border-b">
+        <th className={`py-1 ${c}`}>Cliente</th>
+        <th className={c}>Último vendedor</th>
+        <th className={c}>Cidade</th>
+        <th className={c}>Situação</th>
+        <th className="px-2 text-left min-w-[260px]">Motivo da inativação</th>
+        <th className={c}>Entrada</th>
+        <th className="px-2 text-right">Em {ano}</th></tr></thead>
       <tbody>
-        {lista.map((c) => (
-          <tr key={c.id} className="border-b last:border-0">
-            <td className="py-1">{c.nome}</td><td>{c.cidade}</td>
-            <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>
-              {c.ativo ? "Ativo" : "Inativo"}
-              {!c.ativo && c.inativado && <div className="text-xs text-muted-foreground">{dataBR(c.inativado)}</div>}
+        {lista.map((x) => (
+          <tr key={x.id} className="border-b last:border-0">
+            <td className={`py-1 ${c}`}>{x.nome}</td>
+            {/* Sem linha no histórico não quer dizer "nunca teve vendedor": quer
+                dizer que a troca não foi registrada (auditoria desde set/2026).
+                Dizer isso evita que a coluna vazia vire conclusão errada. */}
+            <td className={c}>
+              {x.ultimoVendedor || <span className="text-amber-700 text-xs">não registrado</span>}
             </td>
-            {/* Motivo vazio não é "sem motivo": é motivo que ninguém registrou.
-                Dizer isso por extenso evita que a coluna em branco passe por
-                "inativação sem razão". */}
-            <td className="text-xs">
-              {c.ativo ? <span className="text-slate-300">—</span>
-                : c.motivo ? c.motivo
+            <td className={c}>{x.cidade}</td>
+            <td className={`${c} ${x.ativo ? "text-emerald-700" : "text-red-700"}`}>
+              {x.ativo ? "Ativo" : "Inativo"}
+              {!x.ativo && x.inativado && <div className="text-xs text-muted-foreground">{dataBR(x.inativado)}</div>}
+            </td>
+            <td className="px-2 text-left text-xs">
+              {x.ativo ? <span className="text-slate-300">—</span>
+                : x.motivo ? x.motivo
                 : <span className="text-amber-700">não registrado</span>}
             </td>
-            <td>{dataBR(c.conquista)}</td><td className="text-right">{brl(c.fatAno)}</td>
+            <td className={c}>{dataBR(x.conquista)}</td>
+            <td className="px-2 text-right">{brl(x.fatAno)}</td>
           </tr>
         ))}
       </tbody>
