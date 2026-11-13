@@ -153,6 +153,45 @@ export function registerDossieVendedor(app: Express) {
           WHERE field = 'isActive' AND lower(COALESCE(new_value,'')) NOT IN ('sim','true','t','1')`);
       } catch { inatRows = []; }
 
+      // ── ÚLTIMO VENDEDOR REGISTRADO de cada cliente ───────────────────────
+      // Para a coluna "Último vendedor" da relação de clientes sem vendedor e
+      // inativados (Flavio, 13/11/2026): a pergunta ali é "quem perdeu este
+      // cliente", e o cadastro não responde — quando o cliente sai da carteira,
+      // `customers.seller_id` fica vazio e não sobra rastro nele.
+      //
+      // O rastro está no histórico: `customer_change_history` grava cada troca
+      // MANUAL de vendedor (field='sellerId'), com o rótulo do usuário em
+      // new_value. A linha mais recente de cada cliente é o último vendedor que
+      // alguém definiu. DISTINCT ON + ORDER BY created_at DESC pega essa linha.
+      //
+      // COBERTURA: a auditoria começou em set/2026, e só registra troca manual.
+      // Cliente que perdeu a carteira antes disso, ou por sincronização, não tem
+      // linha nenhuma — e aí a tela diz "não registrado" em vez de inventar um
+      // nome. O rótulo é resolvido para o usuário quando bate com um cadastro;
+      // quando não bate (vendedor que saiu, nome digitado diferente), vale o
+      // texto gravado na época, que ainda é a melhor informação que existe.
+      const ultimoVendedor = new Map<string, string>();
+      try {
+        const hist = await q(`
+          SELECT DISTINCT ON (customer_id) customer_id, new_value
+          FROM customer_change_history
+          WHERE field = 'sellerId' AND NULLIF(TRIM(COALESCE(new_value,'')),'') IS NOT NULL
+          ORDER BY customer_id, created_at DESC`);
+        const porRotulo = new Map<string, string>();
+        for (const u of users) {
+          const nome = nomeUser.get(u.id) || "";
+          for (const k of [nome, u.email, u.id]) {
+            const chave = String(k || "").trim().toLowerCase();
+            if (chave && !porRotulo.has(chave)) porRotulo.set(chave, nome);
+          }
+        }
+        for (const r of hist) {
+          const bruto = String(r.new_value || "").trim();
+          if (!bruto) continue;
+          ultimoVendedor.set(String(r.customer_id), porRotulo.get(bruto.toLowerCase()) || nomeUser.get(resolve(bruto) || "") || bruto);
+        }
+      } catch (e: any) { console.warn("[dossie-vendedores] historico de vendedor indisponivel:", e?.message || e); }
+
       // ── leads ─────────────────────────────────────────────────────────────
       const leadRows = await q(`SELECT created_by, assigned_to, status::text AS status FROM leads`);
 
@@ -186,6 +225,7 @@ export function registerDossieVendedor(app: Express) {
           id: c.id, nome: String(c.nome || "(sem nome)"), doc: c.doc || null, cidade: c.city || "",
           segmento: c.segmento, ativo: c.is_active === true, conquista, cadastro: c.criado, inativado: c.inativado,
           motivo: c.motivo || null,
+          ultimoVendedor: ultimoVendedor.get(String(c.id)) || null,
           vendasVida: v?.titulos || 0, valorVida: v?.valor || 0, primeiraVenda: v?.primeira || null,
           fatAno: fat ? Number(fat.total) || 0 : 0, vendedorId: vid,
         };
