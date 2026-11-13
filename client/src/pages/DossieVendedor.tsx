@@ -517,11 +517,17 @@ export default function DossieVendedor() {
           </Card>
 
           {/* Os dois gráficos que moravam na aba "Gráficos" (Flavio, 13/11/2026):
-              comparação entre os anos e evolução por vendedor. Abrem no ano que
-              o dossiê está mostrando; dentro deles o período é livre, que é o
-              ponto — o dossiê olha um ano, estes existem para comparar anos.
-              `key={ano}` faz o período reiniciar quando o ano do dossiê muda. */}
-          <GraficosCarteira key={ano} periodoInicial={{ inicio: `${ano}-01`, fim: ano === anoAtual ? mesCorrente : `${ano}-12` }} />
+              comparação entre os anos e evolução por vendedor.
+              O período abre em JANEIRO DO ANO ANTERIOR ao do dossiê e vai até o
+              fim do ano dele — de propósito. Aberto só no ano do dossiê, o
+              primeiro gráfico tem um ano só para desenhar e cai no modo "mês a
+              mês"; é justamente a comparação ENTRE OS ANOS que se quis trazer
+              para cá, e ela precisa de dois anos no eixo. Dentro do card o
+              período continua livre. `key={ano}` reinicia quando o ano muda. */}
+          <GraficosCarteira
+            key={ano}
+            periodoInicial={{ inicio: `${ano - 1}-01`, fim: ano === anoAtual ? mesCorrente : `${ano}-12` }}
+          />
 
           <div className="space-y-4">
             {modo === "toda" ? (
