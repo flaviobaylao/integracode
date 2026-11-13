@@ -21,15 +21,18 @@ import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 // no ano que o dossiê está mostrando, em vez de num padrão que não conversa
 // com o resto da tela.
 //  1) Barras: faturamento mês a mês comparando os anos (ou o total de cada ano).
-//  2) Linhas: uma linha por vendedor. O seletor troca a base entre a carteira
-//     inteira, o faturamento só dos clientes novos do período e a quantidade de
-//     clientes novos. O mês em curso entra tracejado (está pela metade).
+//  2) Linhas: NOVOS CLIENTES por vendedor — quantos entraram na carteira em
+//     cada mês. O tooltip abre a relação: quem entrou e o que comprou no
+//     período. O mês em curso entra tracejado (está pela metade).
 // Tudo sai de /api/reports/carteira-graficos, agregado no servidor.
 
+type Novo = { nome: string; valor: number };
 type Vend = {
   vendedor: string; total: number;
   fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>;
   novosTotal: number; novosValorTotal: number;
+  /** mês de conquista -> quem entrou, com o que comprou no período. */
+  novosLista?: Record<string, Novo[]>;
 };
 type Resp = {
   ok: boolean;
@@ -64,19 +67,19 @@ function somaMes(m: string, delta: number): string {
   return `${y}-${String(mm).padStart(2, "0")}`;
 }
 
-type Base = "carteira" | "novosValor" | "novosQtd";
-const BASES: Array<{ k: Base; rot: string }> = [
-  { k: "carteira", rot: "Carteira inteira (R$)" },
-  { k: "novosValor", rot: "Clientes novos do período (R$)" },
-  { k: "novosQtd", rot: "Quantidade de clientes novos" },
-];
+// 13/11/2026 — o seletor de base saiu (Flavio): o gráfico de baixo é SÓ "Novos
+// clientes", a quantidade que cada vendedor trouxe em cada mês. As outras duas
+// bases diziam a mesma história em unidades diferentes e obrigavam a escolher
+// antes de olhar; o que faltava não era opção, era detalhe — e esse agora vem
+// no tooltip: quantos entraram, QUEM entrou e o que compraram no período.
+const MAX_TOOLTIP = 12;
 
 export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: { inicio: string; fim: string } } = {}) {
   const hoje = mesHoje();
   const [inicio, setInicio] = useState(periodoInicial?.inicio || `${Number(hoje.slice(0, 4)) - 1}-01`);
   const [fim, setFim] = useState(periodoInicial?.fim || hoje);
   const [visao, setVisao] = useState<"mensal" | "anual">("mensal");
-  const [base, setBase] = useState<Base>("carteira");
+
   const [selVend, setSelVend] = useState<string[] | null>(null); // null = padrão (top 8)
 
   const { data, isLoading, error } = useQuery<Resp>({
@@ -119,15 +122,16 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
 
   // ── Gráfico 2: linhas por vendedor ────────────────────────────────────────
   const vendedores = data?.vendedores || [];
-  const valorDe = (v: Vend, m: string) =>
-    base === "carteira" ? v.fat[m] || 0 : base === "novosValor" ? v.novosValor[m] || 0 : v.novosQtd[m] || 0;
-  const totalDe = (v: Vend) => (base === "carteira" ? v.total : base === "novosValor" ? v.novosValorTotal : v.novosTotal);
+  const valorDe = (v: Vend, m: string) => v.novosQtd[m] || 0;
+  const totalDe = (v: Vend) => v.novosTotal;
+  /** Quem entrou na carteira de `v` no mês `m`, maior comprador primeiro. */
+  const novosDe = (v: Vend, m: string): Novo[] => (v.novosLista && v.novosLista[m]) || [];
 
-  const opcoesVend = useMemo(() => vendedores.filter((v) => totalDe(v) > 0).map((v) => v.vendedor), [vendedores, base]);
+  const opcoesVend = useMemo(() => vendedores.filter((v) => totalDe(v) > 0).map((v) => v.vendedor), [vendedores]);
   const padraoVend = useMemo(
     () => vendedores.filter((v) => v.vendedor !== "Sem vendedor" && totalDe(v) > 0)
       .sort((a, b) => totalDe(b) - totalDe(a)).slice(0, 8).map((v) => v.vendedor),
-    [vendedores, base],
+    [vendedores],
   );
   const ativos = (selVend && selVend.length ? selVend : padraoVend).filter((n) => opcoesVend.includes(n));
   const corDe = (n: string) => CORES[Math.max(0, vendedores.findIndex((v) => v.vendedor === n)) % CORES.length];
@@ -155,27 +159,56 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
       }
       return row;
     });
-  }, [vendedores, ativos.join("|"), visao, base, meses, anos, temParcial, mesCorrente]);
+  }, [vendedores, ativos.join("|"), visao, meses, anos, temParcial, mesCorrente]);
 
-  const ehQtd = base === "novosQtd";
-  const fmtEixo = (v: number) => (ehQtd ? String(v) : curto(v));
-  const fmtValor = (v: number) => (ehQtd ? `${v} cliente${v === 1 ? "" : "s"}` : brl(v));
+  const fmtEixo = (v: number) => String(v);
 
+  // O tooltip responde as tres coisas de uma vez (Flavio, 13/11/2026): QUANTOS
+  // entraram, QUEM entrou e QUANTO compraram no periodo. Num mes cheio a lista
+  // e' cortada no 12o nome — maior comprador primeiro — e o resto vira uma
+  // linha de resumo, para o balao nao cobrir o grafico inteiro.
   const TooltipLinhas = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
+    // 'label' traz o rotulo do eixo (Mai/26, 2026...); o mes real vem do indice.
+    const idx = pontos.findIndex((p: any) => p.rotulo === label);
+    const mesReal = visao === "mensal" && idx >= 0 ? meses[idx] : null;
     const visto = new Set<string>();
     const itens = payload
       .map((p: any) => ({ nome: String(p.dataKey).replace(/__p$/, ""), valor: p.value, cor: p.stroke }))
       .filter((p: any) => p.valor !== null && p.valor !== undefined && !visto.has(p.nome) && visto.add(p.nome))
       .sort((a: any, b: any) => b.valor - a.valor);
+    if (!itens.length) return null;
     return (
-      <div className="rounded-md border bg-white px-3 py-2 text-xs shadow">
+      <div className="rounded-md border bg-white px-3 py-2 text-xs shadow max-w-[420px] max-h-[60vh] overflow-auto">
         <div className="font-semibold mb-1">{label}</div>
-        {itens.map((p: any) => (
-          <div key={p.nome} className="flex justify-between gap-4">
-            <span style={{ color: p.cor }}>{p.nome}</span><span>{fmtValor(p.valor)}</span>
-          </div>
-        ))}
+        {itens.map((p: any) => {
+          const v = vendedores.find((x) => x.vendedor === p.nome);
+          // Na visao ANUAL o ponto soma 12 meses: a relacao sai da uniao deles.
+          const lista: Novo[] = !v ? []
+            : mesReal ? novosDe(v, mesReal)
+            : meses.filter((m) => m.startsWith(String(label).replace("*", "")))
+                   .flatMap((m) => novosDe(v, m)).sort((a, b) => b.valor - a.valor);
+          const somaLista = lista.reduce((s, x) => s + x.valor, 0);
+          return (
+            <div key={p.nome} className="mb-1.5 last:mb-0">
+              <div className="flex justify-between gap-4 font-medium">
+                <span style={{ color: p.cor }}>{p.nome}</span>
+                <span>{p.valor} cliente{p.valor === 1 ? "" : "s"}{somaLista > 0 ? ` · ${brl(somaLista)}` : ""}</span>
+              </div>
+              {lista.slice(0, MAX_TOOLTIP).map((c, i) => (
+                <div key={`${c.nome}-${i}`} className="flex justify-between gap-4 text-[11px] text-muted-foreground pl-2">
+                  <span className="truncate">{c.nome}</span>
+                  <span className="shrink-0">{c.valor > 0 ? brl(c.valor) : "sem compra"}</span>
+                </div>
+              ))}
+              {lista.length > MAX_TOOLTIP && (
+                <div className="text-[11px] text-muted-foreground pl-2 italic">
+                  e mais {lista.length - MAX_TOOLTIP} cliente(s)
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -275,30 +308,21 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <CardTitle>Evolução por vendedor</CardTitle>
+                  <CardTitle>Novos clientes por vendedor</CardTitle>
                   <CardDescription>
-                    {base === "carteira" && "Faturamento mês a mês da carteira atual de cada vendedor."}
-                    {base === "novosValor" && "Faturamento só dos clientes que entraram na carteira dentro do período."}
-                    {base === "novosQtd" && "Quantos clientes novos cada vendedor trouxe por mês (data de conquista: cadastro ou 1ª compra)."}
+                    Quantos clientes novos cada vendedor trouxe por mês (data de conquista: cadastro ou 1ª compra).
+                    Passe o cursor para ver quem entrou e o que cada um comprou no período.
                     {temParcial && visao === "mensal" && " O trecho até o mês em curso é tracejado."}
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
-                  <div className="flex rounded-md border overflow-hidden" data-testid="graf-base">
-                    {BASES.map((b) => (
-                      <button key={b.k} type="button" onClick={() => setBase(b.k)} data-testid={`graf-base-${b.k}`}
-                        className={`px-3 py-1.5 text-sm ${base === b.k ? "bg-emerald-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}>
-                        {b.rot}
-                      </button>
-                    ))}
-                  </div>
                   <MultiSelect label="Vendedores" options={opcoesVend} selected={ativos} onChange={(v) => setSelVend(v)} testId="graf-vendedores" />
                 </div>
               </div>
             </CardHeader>
             <CardContent>
               {ativos.length === 0 ? (
-                <div className="text-sm text-muted-foreground py-10 text-center">Nenhum vendedor com dados nesta base e período.</div>
+                <div className="text-sm text-muted-foreground py-10 text-center">Nenhum vendedor com cliente novo neste período.</div>
               ) : (
                 <ResponsiveContainer width="100%" height={380}>
                   <LineChart data={pontos} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}>
