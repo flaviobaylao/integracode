@@ -126,7 +126,12 @@ export function registerDossieVendedor(app: Express) {
         SELECT id, COALESCE(NULLIF(fantasy_name,''), name) AS nome, name AS razao,
                NULLIF(regexp_replace(COALESCE(NULLIF(cnpj,''),NULLIF(cpf,''),''),'[^0-9]','','g'),'') AS doc,
                seller_id, is_active, city, COALESCE(NULLIF(TRIM(segmento_principal),''),'(Sem segmento)') AS segmento,
-               created_at::date::text AS criado, inactivated_at::date::text AS inativado
+               created_at::date::text AS criado, inactivated_at::date::text AS inativado,
+               -- Motivo da inativacao: a mesma coluna que a Gestao de Clientes
+               -- mostra. A trilha de inativacao (server/inativacao-trilha.ts)
+               -- preenche ate o acervo antigo, entao vazio aqui quer dizer que
+               -- ninguem registrou — e e' isso que a tela deve dizer.
+               NULLIF(TRIM(COALESCE(status_reason,'')),'') AS motivo
         FROM customers
         WHERE COALESCE(is_supplier,false) = false AND COALESCE(is_lead,false) = false`);
 
@@ -180,6 +185,7 @@ export function registerDossieVendedor(app: Express) {
         const item = {
           id: c.id, nome: String(c.nome || "(sem nome)"), doc: c.doc || null, cidade: c.city || "",
           segmento: c.segmento, ativo: c.is_active === true, conquista, cadastro: c.criado, inativado: c.inativado,
+          motivo: c.motivo || null,
           vendasVida: v?.titulos || 0, valorVida: v?.valor || 0, primeiraVenda: v?.primeira || null,
           fatAno: fat ? Number(fat.total) || 0 : 0, vendedorId: vid,
         };
