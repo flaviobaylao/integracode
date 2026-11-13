@@ -25,6 +25,7 @@ import { tendenciaDaSerie } from "@/lib/tendencia";
 import RedeClientes from "@/pages/RedeClientes";
 import AgendaRota from "@/pages/AgendaRota";
 import GraficosCarteira from "@/pages/GraficosCarteira";
+import DossieVendedor from "@/pages/DossieVendedor";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
 // Classe e ordinal: rampa de UM tom (azul), escuro (A) -> claro (D).
@@ -297,7 +298,7 @@ export default function GestaoCarteiras() {
   const [visiveis, setVisiveis] = useState(50);
   // Aba da tela: a carteira (faturamento, classe, situacao) ou a agenda de
   // atendimentos do mes. Sao dois assuntos com recortes de tempo diferentes.
-  const [aba, setAba] = useState<"carteira" | "graficos" | "rota" | "rede">("carteira");
+  const [aba, setAba] = useState<"carteira" | "graficos" | "dossie" | "rota" | "rede">("carteira");
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/reports/gestao-carteiras", inicio, fim],
@@ -1085,6 +1086,7 @@ export default function GestaoCarteiras() {
         {([
           { k: "carteira", rotulo: "Carteira", ativa: "border-blue-600 text-blue-700 bg-blue-50", parada: "text-blue-700/60 hover:text-blue-700 hover:bg-blue-50/50" },
           { k: "graficos", rotulo: "Gráficos", ativa: "border-violet-600 text-violet-700 bg-violet-50", parada: "text-violet-700/60 hover:text-violet-700 hover:bg-violet-50/50" },
+          { k: "dossie", rotulo: "Dossiê do vendedor", ativa: "border-rose-600 text-rose-700 bg-rose-50", parada: "text-rose-700/60 hover:text-rose-700 hover:bg-rose-50/50" },
           { k: "rota", rotulo: "Agenda de Rota", ativa: "border-amber-500 text-amber-700 bg-amber-50", parada: "text-amber-700/60 hover:text-amber-700 hover:bg-amber-50/50" },
           { k: "rede", rotulo: "Rede de Cliente", ativa: "border-emerald-600 text-emerald-700 bg-emerald-50", parada: "text-emerald-700/60 hover:text-emerald-700 hover:bg-emerald-50/50" },
         ] as const).map((t) => (
@@ -1102,7 +1104,7 @@ export default function GestaoCarteiras() {
         ))}
       </div>
 
-      {aba === "rede" ? <RedeClientes /> : aba === "rota" ? <AgendaRota /> : aba === "graficos" ? <GraficosCarteira /> : (
+      {aba === "rede" ? <RedeClientes /> : aba === "rota" ? <AgendaRota /> : aba === "graficos" ? <GraficosCarteira /> : aba === "dossie" ? <DossieVendedor /> : (
       <>
       {/* Filtros — uma linha acima dos gráficos */}
       <Card>
