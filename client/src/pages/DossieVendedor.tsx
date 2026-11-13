@@ -5,11 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  ComposedChart, Bar, Line, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend,
-} from "recharts";
 import { ArrowDown, ArrowUp, ChevronDown, Download, Info, Search, Users } from "lucide-react";
 import { exportToExcel } from "@/lib/tableTools";
+import GraficosCarteira from "@/pages/GraficosCarteira";
 import { useAuth } from "@/hooks/useAuth";
 
 // Aba "Dossiê do vendedor" da Gestão de Carteiras.
@@ -76,6 +74,26 @@ const grupoDe = (v: any): Grupo3 => {
 const ROTULO_GRUPO: Record<Grupo3, string> = {
   externo: "Vendedor externo", interno: "Telemarketing (interno)", outro: "Outro acesso com carteira",
 };
+
+/**
+ * Quem aparece no RESUMO POR VENDEDOR (Flavio, 13/11/2026): "somente vendedores
+ * com qualquer tipo de valor, exceto Honest colaborador, admin e sistema".
+ *
+ * Dos 27 usuários da base, a maioria não é vendedor: administradores, o usuário
+ * SISTEMA, a conta de colaboradores e a de fornecedores. Eles têm carteira por
+ * acidente de cadastro e enchiam um quadro que existe para comparar quem vende.
+ * Ficam de fora por PAPEL (admin/administrative) e por uma lista curta de contas
+ * de serviço — o papel sozinho não resolve, porque "Honest Colaboradores" está
+ * cadastrado como vendedor. Além disso é preciso ter valor: faturamento na
+ * carteira ou venda digitada no ano. O quadro diz na descrição quem saiu, para
+ * ninguém procurar um nome e achar que o número sumiu.
+ */
+const CONTAS_DE_SERVICO = /^(sistema|honest\s+(colaborador|admin|fornecedor))/i;
+const ehContaDeServico = (v: any) =>
+  ["admin", "administrative"].includes(String(v?.papel || "")) || CONTAS_DE_SERVICO.test(String(v?.nome || "").trim());
+const temValor = (v: any) =>
+  (Number(v?.carteira?.fatAno) || 0) > 0 ||
+  Object.values((v?.vendasMes || {}) as Record<string, number>).some((x) => Number(x) > 0);
 
 /**
  * A setinha de subiu/caiu de um mês para o anterior.
@@ -192,6 +210,11 @@ export default function DossieVendedor() {
     return vendedores.filter((v) => selIds.includes(v.id));
   }, [restrito, vendedores, modo, selIds]);
   const umSo = modo === "sel" && selecionados.length === 1 ? selecionados[0] : null;
+  /** Quem entra no quadro "Resumo por vendedor" — ver ehContaDeServico/temValor. */
+  const resumoVendedores = useMemo(
+    () => vendedores.filter((v) => !ehContaDeServico(v) && temValor(v)),
+    [vendedores],
+  );
 
   const alterna = (id: string) => {
     setEscopo("sel");
@@ -222,15 +245,6 @@ export default function DossieVendedor() {
     for (const c of data?.clientesAno || []) if (!c.vendedorId && (modo === "toda" || modo === "sem"))
       for (const [m, val] of Object.entries(c.porMes || {})) fatSemMes[m] = (fatSemMes[m] || 0) + Number(val);
     for (const [m, val] of Object.entries(fatSemMes)) carteiraMes[m] = (modo === "sem" ? 0 : carteiraMes[m] || 0) + val;
-    const segMap = new Map<string, { clientes: number; ativos: number; valor: number }>();
-    for (const v of vs) for (const s of v.segmentos || []) {
-      const a = segMap.get(s.segmento) || { clientes: 0, ativos: 0, valor: 0 };
-      a.clientes += s.clientes; a.ativos += s.ativos; a.valor += s.valor; segMap.set(s.segmento, a);
-    }
-    for (const c of semNoCons) {
-      const a = segMap.get(c.segmento) || { clientes: 0, ativos: 0, valor: 0 };
-      a.clientes++; if (c.ativo) a.ativos++; a.valor += c.fatAno; segMap.set(c.segmento, a);
-    }
     const semAtivos = semNoCons.filter((c) => c.ativo).length;
     return {
       carteira: soma((v) => v.carteira.total) + semNoCons.length,
@@ -246,16 +260,8 @@ export default function DossieVendedor() {
       leadsDesc: soma((v) => v.leads.cadastrados.descartados), leadsAnd: soma((v) => v.leads.cadastrados.emAndamento),
       vendasAno: Object.values(vendasMes).reduce((s, x) => s + x, 0), pedidosAno: Object.values(pedidosMes).reduce((s, x) => s + x, 0),
       vendasMes, pedidosMes, carteiraMes,
-      segmentos: Array.from(segMap.entries()).map(([segmento, s]) => ({ segmento, ...s })).sort((a, b) => b.valor - a.valor || b.clientes - a.clientes),
     };
   }, [modo, selecionados, semVendedor, data]);
-
-  const serie = meses.map((m) => ({
-    mes: rotMes(m) + (m === mesCorrente ? "*" : ""),
-    vendas: consolidado.vendasMes[m] || 0,
-    carteira: consolidado.carteiraMes[m] || 0,
-    pedidos: consolidado.pedidosMes[m] || 0,
-  }));
 
   // ── o mês escolhido e o anterior ──────────────────────────────────────────
   const mesAnt = mesSel ? mesAntes(mesSel) : "";
@@ -510,60 +516,23 @@ export default function DossieVendedor() {
             )}
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Evolução em {ano}: vendas e carteira</CardTitle>
-              <CardDescription>
-                Barras = vendas que {umSo ? "ele digitou" : "foram digitadas"} no mês. Linha = faturamento dos clientes da carteira no mês.
-                {meses.includes(mesCorrente) && " *Mês em curso, parcial."}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={320}>
-                <ComposedChart data={serie} margin={{ top: 12, right: 16, left: 8, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes" />
-                  <YAxis tickFormatter={curto} width={70} />
-                  <Tooltip formatter={(v: any, n: any) => (n === "Pedidos" ? v : brl(Number(v)))} />
-                  <Legend />
-                  {modo !== "sem" && <Bar dataKey="vendas" name="Vendas digitadas" fill="#2a78d6" isAnimationActive={false} />}
-                  <Line type="linear" dataKey="carteira" name="Faturamento da carteira" stroke="#eb6834" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+          {/* Os dois gráficos que moravam na aba "Gráficos" (Flavio, 13/11/2026):
+              comparação entre os anos e evolução por vendedor. Abrem no ano que
+              o dossiê está mostrando; dentro deles o período é livre, que é o
+              ponto — o dossiê olha um ano, estes existem para comparar anos.
+              `key={ano}` faz o período reiniciar quando o ano do dossiê muda. */}
+          <GraficosCarteira key={ano} periodoInicial={{ inicio: `${ano}-01`, fim: ano === anoAtual ? mesCorrente : `${ano}-12` }} />
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Perfil da carteira por segmento</CardTitle>
-                <CardDescription>Clientes da carteira hoje e o faturamento deles em {ano}.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={Math.max(180, Math.min(12, consolidado.segmentos.length) * 30 + 30)}>
-                  <BarChart data={consolidado.segmentos.slice(0, 12)} layout="vertical" margin={{ left: 8, right: 24 }}>
-                    <XAxis type="number" tickFormatter={curto} />
-                    <YAxis type="category" dataKey="segmento" width={170} tick={{ fontSize: 12 }} />
-                    <Tooltip formatter={(v: any) => brl(Number(v))} />
-                    <Bar dataKey="valor" name={`Faturamento ${ano}`} fill="#2a78d6" isAnimationActive={false} />
-                  </BarChart>
-                </ResponsiveContainer>
-                <table className="w-full text-sm mt-2">
-                  <thead><tr className="text-left text-muted-foreground border-b"><th className="py-1">Segmento</th><th className="text-right">Clientes</th><th className="text-right">Ativos</th><th className="text-right">Faturamento {ano}</th></tr></thead>
-                  <tbody>
-                    {consolidado.segmentos.map((s) => (
-                      <tr key={s.segmento} className="border-b last:border-0"><td className="py-1">{s.segmento}</td><td className="text-right">{s.clientes}</td><td className="text-right">{s.ativos}</td><td className="text-right">{brl(s.valor)}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-
+          <div className="space-y-4">
             {modo === "toda" ? (
               <Card>
                 <CardHeader>
                   <CardTitle>Resumo por vendedor</CardTitle>
-                  <CardDescription>Clique em um nome para abrir o dossiê dele.</CardDescription>
+                  <CardDescription>
+                    {resumoVendedores.length} com faturamento ou venda digitada em {ano}. Clique em um nome para abrir o dossiê dele.
+                    {vendedores.length - resumoVendedores.length > 0 &&
+                      ` Fora do quadro: ${vendedores.length - resumoVendedores.length} contas sem valor no ano ou de serviço (administração, sistema, colaboradores).`}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -572,7 +541,7 @@ export default function DossieVendedor() {
                       <th className="text-right">Conquistados</th><th className="text-right">Inativou</th><th className="text-right">Leads</th>
                       <th className="text-right">Vendas {ano}</th><th className="text-right">Carteira {ano}</th></tr></thead>
                     <tbody>
-                      {vendedores.map((v) => (
+                      {resumoVendedores.map((v) => (
                         <tr key={v.id} className="border-b last:border-0 hover:bg-slate-50 cursor-pointer"
                           onClick={() => { setEscopo("sel"); setSelIds([v.id]); setLimite(100); }}>
                           <td className="py-1 text-blue-700">{v.nome}{v.ativoUsuario ? "" : <span className="text-xs text-muted-foreground"> (inativo)</span>}</td>
@@ -618,7 +587,7 @@ export default function DossieVendedor() {
             ) : modo === "sem" ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Relação dos clientes sem vendedor</CardTitle>
+                  <CardTitle>Relação dos clientes sem vendedor e inativados</CardTitle>
                   <CardDescription>{semVendedor.length} clientes · {semVendedor.filter((c) => c.ativo).length} ativos · {brl(semVendedor.reduce((s, c) => s + c.fatAno, 0))} em {ano}</CardDescription>
                 </CardHeader>
                 <CardContent className="overflow-auto max-h-[420px]">
@@ -670,7 +639,7 @@ export default function DossieVendedor() {
           {modo === "toda" && (
             <Card>
               <CardHeader>
-                <CardTitle>Relação dos clientes sem vendedor</CardTitle>
+                <CardTitle>Relação dos clientes sem vendedor e inativados</CardTitle>
                 <CardDescription>{semVendedor.length} clientes · {semVendedor.filter((c) => c.ativo).length} ativos · {brl(semVendedor.reduce((s, c) => s + c.fatAno, 0))} em {ano}</CardDescription>
               </CardHeader>
               <CardContent className="overflow-auto max-h-[420px]"><SemVendedorTabela lista={semVendedor} ano={ano} /></CardContent>
@@ -822,12 +791,25 @@ function SemVendedorTabela({ lista, ano }: { lista: any[]; ano: number }) {
   return (
     <table className="w-full text-sm">
       <thead className="sticky top-0 bg-white"><tr className="text-left text-muted-foreground border-b">
-        <th className="py-1">Cliente</th><th>Cidade</th><th>Segmento</th><th>Situação</th><th>Entrada</th><th className="text-right">Em {ano}</th></tr></thead>
+        <th className="py-1">Cliente</th><th>Cidade</th><th>Situação</th>
+        <th className="min-w-[260px]">Motivo da inativação</th>
+        <th>Entrada</th><th className="text-right">Em {ano}</th></tr></thead>
       <tbody>
         {lista.map((c) => (
           <tr key={c.id} className="border-b last:border-0">
-            <td className="py-1">{c.nome}</td><td>{c.cidade}</td><td className="text-xs">{c.segmento}</td>
-            <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>{c.ativo ? "Ativo" : "Inativo"}</td>
+            <td className="py-1">{c.nome}</td><td>{c.cidade}</td>
+            <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>
+              {c.ativo ? "Ativo" : "Inativo"}
+              {!c.ativo && c.inativado && <div className="text-xs text-muted-foreground">{dataBR(c.inativado)}</div>}
+            </td>
+            {/* Motivo vazio não é "sem motivo": é motivo que ninguém registrou.
+                Dizer isso por extenso evita que a coluna em branco passe por
+                "inativação sem razão". */}
+            <td className="text-xs">
+              {c.ativo ? <span className="text-slate-300">—</span>
+                : c.motivo ? c.motivo
+                : <span className="text-amber-700">não registrado</span>}
+            </td>
             <td>{dataBR(c.conquista)}</td><td className="text-right">{brl(c.fatAno)}</td>
           </tr>
         ))}

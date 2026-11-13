@@ -9,7 +9,17 @@ import {
 import { Download } from "lucide-react";
 import { exportToExcel, MultiSelect } from "@/lib/tableTools";
 
-// Aba "Gráficos" da Gestão de Carteiras.
+// Os dois gráficos da Gestão de Carteiras. Moravam numa aba "Gráficos" própria,
+// que saiu em 13/11/2026 (Flavio): os dois passaram a viver dentro do DOSSIÊ DO
+// VENDEDOR, no lugar da antiga "Evolução em 2026: vendas e carteira". O dossiê
+// já é a tela de olhar vendedor; ter metade da evolução numa aba e metade em
+// outra obrigava a comparar de cabeça.
+//
+// O componente continua inteiro e com os próprios controles de período, porque
+// o período dele é outro: o dossiê trabalha um ano por vez e estes gráficos
+// existem justamente para comparar anos. `periodoInicial` faz o embutido abrir
+// no ano que o dossiê está mostrando, em vez de num padrão que não conversa
+// com o resto da tela.
 //  1) Barras: faturamento mês a mês comparando os anos (ou o total de cada ano).
 //  2) Linhas: uma linha por vendedor. O seletor troca a base entre a carteira
 //     inteira, o faturamento só dos clientes novos do período e a quantidade de
@@ -61,10 +71,10 @@ const BASES: Array<{ k: Base; rot: string }> = [
   { k: "novosQtd", rot: "Quantidade de clientes novos" },
 ];
 
-export default function GraficosCarteira() {
+export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: { inicio: string; fim: string } } = {}) {
   const hoje = mesHoje();
-  const [inicio, setInicio] = useState(`${Number(hoje.slice(0, 4)) - 1}-01`);
-  const [fim, setFim] = useState(hoje);
+  const [inicio, setInicio] = useState(periodoInicial?.inicio || `${Number(hoje.slice(0, 4)) - 1}-01`);
+  const [fim, setFim] = useState(periodoInicial?.fim || hoje);
   const [visao, setVisao] = useState<"mensal" | "anual">("mensal");
   const [base, setBase] = useState<Base>("carteira");
   const [selVend, setSelVend] = useState<string[] | null>(null); // null = padrão (top 8)
