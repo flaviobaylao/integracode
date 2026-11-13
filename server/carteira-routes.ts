@@ -909,6 +909,76 @@ export function registerCarteira(app: Express) {
 
 
   // ---------------------------------------------------------------------------
+  // GET /api/reports/carteira-graficos?inicio=2025-01&fim=2026-11
+  // Aba "Gráficos" da Gestão de Carteiras. Agrega NO SERVIDOR (sem o teto de
+  // 2.000 clientes da lista) o faturamento mês a mês por vendedor e os clientes
+  // novos do período. Cliente novo = `conquista` (a menor entre cadastro e 1ª
+  // venda de todos os tempos) dentro do período — a mesma régua da coluna
+  // "Data de conquista". Mesmo escopo da aba Carteira: vendedor/telemarketing
+  // só enxergam a própria carteira.
+  // ---------------------------------------------------------------------------
+  app.get("/api/reports/carteira-graficos", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const hoje = mesAtual();
+      const inicio = normMes(req.query.inicio, "2025-01");
+      const fimBruto = normMes(req.query.fim, hoje);
+      const fim = fimBruto > hoje ? hoje : fimBruto;
+      const usuario: any = (req as any).currentUser || (req as any).user || null;
+      const restrito = ["vendedor", "telemarketing"].includes(String(usuario?.role || ""));
+      const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
+      const idsCarteira: string[] = [];
+      if (restrito) {
+        const add = (x: any) => { const v = limpaId(x); if (v && !idsCarteira.includes(v)) idsCarteira.push(v); };
+        add(usuario?.id);
+        const codigos: any[] = [];
+        if (usuario?.omieVendorCode) codigos.push(usuario.omieVendorCode);
+        const mapaCodigos = usuario?.omieVendorCodes;
+        if (mapaCodigos && typeof mapaCodigos === "object") {
+          for (const v of Object.values(mapaCodigos)) if (v) codigos.push(v);
+        }
+        for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
+        if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
+      }
+      const { clientes, meses, serieRec } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
+
+      type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number };
+      const porVend = new Map<string, Acc>();
+      const novosTotalMes: Record<string, number> = {};
+      for (const c of clientes) {
+        const v = String(c.vendedor || "Sem vendedor");
+        let a = porVend.get(v);
+        if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0 }; porVend.set(v, a); }
+        const pm: Record<string, number> = c.porMes || {};
+        for (const m of meses) {
+          const val = Number(pm[m]) || 0;
+          if (val) { a.fat[m] = (a.fat[m] || 0) + val; a.total += val; }
+        }
+        const mc = String(c.conquista || "").slice(0, 7);
+        if (mc && mc >= inicio && mc <= fim) {
+          a.novosQtd[mc] = (a.novosQtd[mc] || 0) + 1;
+          a.novosTotal++;
+          novosTotalMes[mc] = (novosTotalMes[mc] || 0) + 1;
+          for (const m of meses) {
+            const val = Number(pm[m]) || 0;
+            if (val) { a.novosValor[m] = (a.novosValor[m] || 0) + val; a.novosValorTotal += val; }
+          }
+        }
+      }
+      const recPorMes = new Map(serieRec.map((r: any) => [String(r.mes), Number(r.valor) || 0]));
+      res.json({
+        ok: true,
+        periodo: { inicio, fim, meses, mesCorrente: hoje },
+        escopo: { restrito },
+        total: meses.map((m) => ({ mes: m, valor: recPorMes.get(m) || 0, novos: novosTotalMes[m] || 0 })),
+        vendedores: Array.from(porVend.values()).sort((x, y) => y.total - x.total),
+      });
+    } catch (e: any) {
+      console.error("[carteira-graficos]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
   // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08
   // ---------------------------------------------------------------------------
   app.get("/api/reports/gestao-carteiras", authenticateUser, async (req: Request, res: Response) => {
