@@ -352,7 +352,13 @@ export default function MinhaAgenda() {
         <div className="flex-1" />
         <div className="relative">
           <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
-          <Input id="agenda-busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pesquisar" className="pl-8 w-[150px] md:w-[220px] h-9" />
+          <Input id="agenda-busca" value={busca} onChange={(e) => setBusca(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setBusca(""); }} placeholder="Pesquisar" className="pl-8 pr-8 w-[150px] md:w-[220px] h-9" />
+          {busca && (
+            <button type="button" className="absolute right-1.5 top-1.5 h-6 w-6 rounded-full flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Limpar pesquisa" title="Limpar" onClick={() => { setBusca(""); document.getElementById("agenda-busca")?.focus(); }} data-testid="agenda-busca-limpar">
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
         <div className="flex rounded-md border overflow-hidden" role="group" aria-label="Mostrar">
           {([["agenda", "Agenda"], ["clientes", "Clientes"]] as const).map(([m, l]) => (
