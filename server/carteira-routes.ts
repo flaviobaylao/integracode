@@ -944,13 +944,18 @@ export function registerCarteira(app: Express) {
       }
       const { clientes, meses, serieRec } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
 
-      type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number };
+      // `novosLista`: QUEM são os clientes novos de cada mês de conquista, com o
+      // que cada um comprou no período. Serve ao tooltip do gráfico "Novos
+      // clientes" (Flavio, 13/11/2026): um ponto no gráfico que diz "5 clientes"
+      // e não diz QUAIS obriga a sair da tela para descobrir.
+      type Novo = { nome: string; valor: number };
+      type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number; novosLista: Record<string, Novo[]> };
       const porVend = new Map<string, Acc>();
       const novosTotalMes: Record<string, number> = {};
       for (const c of clientes) {
         const v = String(c.vendedor || "Sem vendedor");
         let a = porVend.get(v);
-        if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0 }; porVend.set(v, a); }
+        if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0, novosLista: {} }; porVend.set(v, a); }
         const pm: Record<string, number> = c.porMes || {};
         for (const m of meses) {
           const val = Number(pm[m]) || 0;
@@ -961,10 +966,12 @@ export function registerCarteira(app: Express) {
           a.novosQtd[mc] = (a.novosQtd[mc] || 0) + 1;
           a.novosTotal++;
           novosTotalMes[mc] = (novosTotalMes[mc] || 0) + 1;
+          let noPeriodo = 0;
           for (const m of meses) {
             const val = Number(pm[m]) || 0;
-            if (val) { a.novosValor[m] = (a.novosValor[m] || 0) + val; a.novosValorTotal += val; }
+            if (val) { a.novosValor[m] = (a.novosValor[m] || 0) + val; a.novosValorTotal += val; noPeriodo += val; }
           }
+          (a.novosLista[mc] = a.novosLista[mc] || []).push({ nome: String(c.nome || "(sem nome)"), valor: Math.round(noPeriodo * 100) / 100 });
         }
       }
       const recPorMes = new Map(serieRec.map((r: any) => [String(r.mes), Number(r.valor) || 0]));
@@ -973,7 +980,13 @@ export function registerCarteira(app: Express) {
         periodo: { inicio, fim, meses, mesCorrente: hoje },
         escopo: { restrito },
         total: meses.map((m) => ({ mes: m, valor: recPorMes.get(m) || 0, novos: novosTotalMes[m] || 0 })),
-        vendedores: Array.from(porVend.values()).sort((x, y) => y.total - x.total),
+        vendedores: Array.from(porVend.values()).map((a) => {
+          // Maior comprador primeiro: num mês com 40 entradas o tooltip mostra
+          // as primeiras e resume o resto, e as primeiras têm que ser as que
+          // importam.
+          for (const k of Object.keys(a.novosLista)) a.novosLista[k].sort((x, y) => y.valor - x.valor);
+          return a;
+        }).sort((x, y) => y.total - x.total),
       });
     } catch (e: any) {
       console.error("[carteira-graficos]", e);
