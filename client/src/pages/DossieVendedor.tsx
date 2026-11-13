@@ -307,7 +307,6 @@ export default function DossieVendedor() {
     const chave = (c: any): any => {
       if (ord.col === "cliente") return txt(c.nome);
       if (ord.col === "vendedor") return txt(c.vendedor);
-      if (ord.col === "segmento") return txt(c.segmento);
       if (ord.col === "rede") return txt(c.rede);
       if (ord.col === "total") return Number(c.total) || 0;
       if (ord.col === "var") {
@@ -324,7 +323,7 @@ export default function DossieVendedor() {
   }, [base, redeSel, busca, mesSel, mesAnt, temAnterior, ord]);
 
   const ordenar = (col: string) =>
-    setOrd((o) => (o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "cliente" || col === "vendedor" || col === "segmento" || col === "rede" ? "asc" : "desc" }));
+    setOrd((o) => (o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "cliente" || col === "vendedor" || col === "rede" ? "asc" : "desc" }));
 
   const totalMes = (m: string) => clientesTabela.reduce((s, c) => s + noMes(c, m), 0);
   const totalGeral = clientesTabela.reduce((s, c) => s + (Number(c.total) || 0), 0);
@@ -694,7 +693,6 @@ export default function DossieVendedor() {
                     <Th cod="cliente" atual={ord} onOrdenar={ordenar} className="py-2 px-3 min-w-[220px]">Cliente</Th>
                     {modo !== "sel" || !umSo ? <Th cod="vendedor" atual={ord} onOrdenar={ordenar}>Vendedor</Th> : null}
                     {redes.length > 0 && <Th cod="rede" atual={ord} onOrdenar={ordenar}>Rede</Th>}
-                    <Th cod="segmento" atual={ord} onOrdenar={ordenar}>Segmento</Th>
                     {meses.map((m) => (
                       <Th key={m} cod={m} atual={ord} onOrdenar={ordenar}
                         className={`text-right whitespace-nowrap ${m === mesSel ? "bg-amber-50 text-amber-900 font-semibold" : ""}`}>
@@ -712,7 +710,6 @@ export default function DossieVendedor() {
                         <div className="text-xs text-muted-foreground">{c.cidade}</div></td>
                       {modo !== "sel" || !umSo ? <td className="px-2 whitespace-nowrap">{c.vendedor}</td> : null}
                       {redes.length > 0 && <td className="px-2 text-xs whitespace-nowrap">{c.rede || <span className="text-slate-300">—</span>}</td>}
-                      <td className="px-2 text-xs">{c.segmento}</td>
                       {meses.map((m, i) => {
                         const v = noMes(c, m);
                         const ant = i > 0 ? noMes(c, meses[i - 1]) : null;
@@ -736,7 +733,6 @@ export default function DossieVendedor() {
                     <td className="py-2 px-3">Total ({clientesTabela.length})</td>
                     {modo !== "sel" || !umSo ? <td></td> : null}
                     {redes.length > 0 && <td></td>}
-                    <td></td>
                     {meses.map((m, i) => {
                       const v = totalMes(m);
                       const ant = i > 0 ? totalMes(meses[i - 1]) : null;
