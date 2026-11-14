@@ -90,7 +90,23 @@ function somaMes(m: string, delta: number): string {
 // Quantos nomes o tooltip lista antes de resumir o resto.
 const MAX_TOOLTIP = 12;
 
-export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: { inicio: string; fim: string } } = {}) {
+// 14/11/2026 — FILTRO-MÃE (Flavio). Quando este componente vive dentro de uma
+// tela que já tem um seletor de vendedor no topo (o Dossiê), quem manda é o de
+// cima: `vendedoresFiltro` traz os nomes escolhidos lá e TUDO aqui passa a
+// falar só deles — as barras de faturamento, as linhas, a tabela e o Excel. O
+// seletor próprio de vendedores some, porque dois filtros de vendedor na mesma
+// tela, um dentro do outro, é uma contradição esperando para acontecer. Com
+// "Toda a Honest" lá em cima a prop vem null e ele volta a aparecer.
+//
+// O casamento é por NOME: os dois endpoints montam o nome do mesmo jeito
+// (first_name + last_name, do mesmo cadastro de usuários), e comparo sem caixa
+// nem espaço nas pontas. "Sem vendedor" é um nome como outro qualquer — é assim
+// que a opção "Sem vendedor" do filtro de cima chega aqui.
+export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
+  periodoInicial?: { inicio: string; fim: string };
+  /** Nomes vindos do filtro do topo da tela. null/undefined = sem recorte. */
+  vendedoresFiltro?: string[] | null;
+} = {}) {
   const hoje = mesHoje();
   const [inicio, setInicio] = useState(periodoInicial?.inicio || `${Number(hoje.slice(0, 4)) - 1}-01`);
   const [fim, setFim] = useState(periodoInicial?.fim || hoje);
@@ -126,16 +142,36 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
   const temParcial = meses.length > 0 && meses[meses.length - 1] === mesCorrente;
   const anos = useMemo(() => Array.from(new Set(meses.map((m) => m.slice(0, 4)))), [meses]);
 
+  // ── recorte do filtro-mãe ─────────────────────────────────────────────────
+  const chaveNome = (s: any) => String(s || "").trim().toLowerCase();
+  const recortado = Array.isArray(vendedoresFiltro);
+  const chaveFiltro = (vendedoresFiltro || []).map(chaveNome).sort().join("|");
+  const nomesFiltro = useMemo(() => new Set(chaveFiltro ? chaveFiltro.split("|") : []), [chaveFiltro]);
+  const doFiltro = (nome: any) => nomesFiltro.has(chaveNome(nome));
+
   // ── Gráfico 1: barras ─────────────────────────────────────────────────────
-  // Mês -> faturamento. O período filtrado escreve por último: onde as duas
-  // faixas se cruzam, vale o número do filtro (são iguais, mas a precedência
-  // evita contar o mesmo mês duas vezes na soma por ano).
+  // Mês -> faturamento. Sem recorte, vem pronto do servidor (`total`, a mesma
+  // régua da aba Carteira). Com recorte, é a SOMA DAS CARTEIRAS dos vendedores
+  // escolhidos — `fat` por vendedor, que é o único corte por vendedor que o
+  // endpoint entrega. Cada fonte monta o próprio mapa antes de juntar: somar as
+  // duas direto contaria em dobro os meses onde as faixas se cruzam.
+  const serieDe = (d?: Resp) => {
+    const m = new Map<string, number>();
+    if (!d) return m;
+    if (!recortado) { for (const t of d.total || []) m.set(t.mes, t.valor); return m; }
+    for (const mes of d.periodo?.meses || []) m.set(mes, 0);
+    for (const v of d.vendedores || []) {
+      if (!doFiltro(v.vendedor)) continue;
+      for (const [mes, val] of Object.entries(v.fat || {})) m.set(mes, (m.get(mes) || 0) + (Number(val) || 0));
+    }
+    return m;
+  };
   const fatPorMes = useMemo(() => {
     const m = new Map<string, number>();
-    if (comparar) for (const t of dataPrev?.total || []) m.set(t.mes, t.valor);
-    for (const t of data?.total || []) m.set(t.mes, t.valor);
+    if (comparar) serieDe(dataPrev).forEach((v, k) => m.set(k, v));
+    serieDe(data).forEach((v, k) => m.set(k, v));
     return m;
-  }, [data, dataPrev, comparar]);
+  }, [data, dataPrev, comparar, recortado, chaveFiltro]);
 
   // Meses em jogo no comparativo: os do filtro + os mesmos 12 meses atrás.
   const mesesComp = useMemo(
@@ -184,23 +220,32 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
     return meses.map((m) => ({ rotulo: rotMes(m) + (m === mesCorrente ? "*" : ""), valor: fatPorMes.get(m) || 0 }));
   }, [visao, comparar, comparando, anos, anosComp, meses, mesesComp, rotulosMes, fatPorMes, temParcial, mesCorrente]);
   const barrasPorAno = visao === "mensal" && comparando;
-  const totalPeriodo = (data?.total || []).reduce((s, t) => s + t.valor, 0);
+  // Só os meses do filtro: com o comparativo ligado o mapa também guarda o ano
+  // anterior, que não entra neste total.
+  const totalPeriodo = meses.reduce((s, m) => s + (fatPorMes.get(m) || 0), 0);
 
   // ── Gráfico 2: linhas por vendedor ────────────────────────────────────────
-  const vendedores = data?.vendedores || [];
+  const vendedoresTodos = data?.vendedores || [];
+  const vendedores = recortado ? vendedoresTodos.filter((v) => doFiltro(v.vendedor)) : vendedoresTodos;
   const valorDe = (v: Vend, m: string) => v.novosQtd[m] || 0;
   const totalDe = (v: Vend) => v.novosTotal;
   /** Quem entrou na carteira de `v` no mês `m`, maior comprador primeiro. */
   const novosDe = (v: Vend, m: string): Novo[] => (v.novosLista && v.novosLista[m]) || [];
 
   const opcoesVend = useMemo(() => vendedores.filter((v) => totalDe(v) > 0).map((v) => v.vendedor), [vendedores]);
+  // Com recorte do filtro-mãe entram todos os escolhidos (inclusive "Sem
+  // vendedor", que ali é uma escolha explícita); sem recorte, o top 8.
   const padraoVend = useMemo(
-    () => vendedores.filter((v) => v.vendedor !== "Sem vendedor" && totalDe(v) > 0)
-      .sort((a, b) => totalDe(b) - totalDe(a)).slice(0, 8).map((v) => v.vendedor),
-    [vendedores],
+    () => recortado
+      ? vendedores.filter((v) => totalDe(v) > 0).map((v) => v.vendedor)
+      : vendedores.filter((v) => v.vendedor !== "Sem vendedor" && totalDe(v) > 0)
+        .sort((a, b) => totalDe(b) - totalDe(a)).slice(0, 8).map((v) => v.vendedor),
+    [vendedores, recortado],
   );
   const ativos = (selVend && selVend.length ? selVend : padraoVend).filter((n) => opcoesVend.includes(n));
-  const corDe = (n: string) => CORES[Math.max(0, vendedores.findIndex((v) => v.vendedor === n)) % CORES.length];
+  // Cor pela posição na lista COMPLETA: assim o vendedor não troca de cor
+  // quando o filtro do topo muda o tamanho da lista.
+  const corDe = (n: string) => CORES[Math.max(0, vendedoresTodos.findIndex((v) => v.vendedor === n)) % CORES.length];
 
   const pontos = useMemo(() => {
     const vs = vendedores.filter((v) => ativos.includes(v.vendedor));
@@ -301,6 +346,13 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
 
   const atalho = (ini: string, f: string) => { setInicio(ini); setFim(f); };
 
+  // Como o recorte se apresenta na tela e, quando ninguém casou, o aviso: nome
+  // que o filtro de cima mandou e não existe aqui é defeito, não lista vazia.
+  const rotuloRecorte = vendedores.length === 1 ? vendedores[0].vendedor
+    : vendedores.length ? `${vendedores.length} vendedores`
+    : "nenhum vendedor";
+  const recorteVazio = recortado && vendedores.length === 0;
+
   return (
     <div className="space-y-4">
       <Card>
@@ -352,14 +404,26 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
             <CardHeader>
               <CardTitle>Evolução das vendas {visao === "anual" ? "por ano" : barrasPorAno ? "— comparação entre os anos" : "mês a mês"}</CardTitle>
               <CardDescription>
-                Faturamento de {rotMes(inicio)} a {rotMes(fim)}: <b>{brl(totalPeriodo)}</b>. Mesma régua da aba Carteira.
-                {barrasPorAno && " Comparativo ligado: cada mês aparece ao lado do mesmo mês do ano anterior."}
-                {comparar && visao === "anual" && " Comparativo ligado: o ano anterior entra com os mesmos meses, para a comparação ser de igual para igual."}
-                {comparar && !comparando && visao === "mensal" && " Sem faturamento no ano anterior para comparar — mostrando só o período."}
-                {temParcial && " *Mês em curso, ainda parcial."}
+                Faturamento de {rotMes(inicio)} a {rotMes(fim)}: <b>{brl(totalPeriodo)}</b>.{" "}
+                {/* Sem ninguém no recorte não há o que explicar sobre a régua
+                    nem sobre o comparativo: a mensagem está no lugar do gráfico. */}
+                {!recorteVazio && (recortado
+                  ? `Recorte do filtro do topo (${rotuloRecorte}): soma das carteiras ${vendedores.length === 1 ? "dele" : "deles"}.`
+                  : "Mesma régua da aba Carteira.")}
+                {!recorteVazio && barrasPorAno && " Comparativo ligado: cada mês aparece ao lado do mesmo mês do ano anterior."}
+                {!recorteVazio && comparar && visao === "anual" && " Comparativo ligado: o ano anterior entra com os mesmos meses, para a comparação ser de igual para igual."}
+                {!recorteVazio && comparar && !comparando && visao === "mensal" && " Sem faturamento no ano anterior para comparar — mostrando só o período."}
+                {!recorteVazio && temParcial && " *Mês em curso, ainda parcial."}
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {recorteVazio ? (
+                <div className="text-sm text-muted-foreground py-16 text-center">
+                  {nomesFiltro.size === 0
+                    ? "Marque ao menos um vendedor no filtro do topo."
+                    : "Nenhum dos vendedores do filtro do topo tem faturamento neste período."}
+                </div>
+              ) : (
               <ResponsiveContainer width="100%" height={340}>
                 {/* barGap=2: o par do comparativo encosta, mas não se funde. */}
                 <BarChart data={barras} margin={{ top: 24, right: 16, left: 8, bottom: 0 }} barGap={2}>
@@ -381,6 +445,7 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
                   )}
                 </BarChart>
               </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
@@ -396,7 +461,15 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
-                  <MultiSelect label="Vendedores" options={opcoesVend} selected={ativos} onChange={(v) => setSelVend(v)} testId="graf-vendedores" />
+                  {/* Dois filtros de vendedor na mesma tela se contradizem: com
+                      o filtro do topo recortando, este sai e vira legenda. */}
+                  {recortado ? (
+                    <span className="text-xs text-muted-foreground border rounded-md px-3 py-2 bg-slate-50" data-testid="graf-vend-mae">
+                      Vendedores: <b>{rotuloRecorte}</b> — definidos no filtro do topo
+                    </span>
+                  ) : (
+                    <MultiSelect label="Vendedores" options={opcoesVend} selected={ativos} onChange={(v) => setSelVend(v)} testId="graf-vendedores" />
+                  )}
                 </div>
               </div>
             </CardHeader>
@@ -442,8 +515,11 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
                   </tbody>
                 </table>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Totais de {rotMes(inicio)} a {rotMes(fim)}. Clientes novos no período, todas as carteiras:{" "}
-                  <b>{(data.total || []).reduce((s, t) => s + t.novos, 0)}</b>.
+                  Totais de {rotMes(inicio)} a {rotMes(fim)}. Clientes novos no período,{" "}
+                  {recortado ? "nas carteiras do filtro" : "todas as carteiras"}:{" "}
+                  <b>{recortado
+                    ? vendedores.reduce((s, v) => s + (v.novosTotal || 0), 0)
+                    : (data.total || []).reduce((s, t) => s + t.novos, 0)}</b>.
                 </p>
               </div>
             </CardContent>

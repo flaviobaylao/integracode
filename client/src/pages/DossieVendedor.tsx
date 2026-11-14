@@ -343,6 +343,19 @@ export default function DossieVendedor() {
     qc.invalidateQueries({ queryKey: ["/api/reports/dossie-vendedores"] });
   };
 
+  // ── o filtro do topo é o filtro-mãe (Flavio, 14/11/2026) ──────────────────
+  // Tudo abaixo do box já obedecia a ele, menos os gráficos, que tinham vida
+  // própria: escolher "Gilmar M" em cima e continuar vendo as barras de toda a
+  // Honest embaixo fazia a tela contar duas histórias ao mesmo tempo. Agora o
+  // recorte desce por `vendedoresFiltro`: em "Toda a Honest" ele vai null e os
+  // gráficos recuperam o seletor próprio de vendedores; com vendedor marcado,
+  // esse seletor some e eles falam só de quem está marcado aqui.
+  const vendedoresFiltro = useMemo<string[] | null>(() => {
+    if (modo === "toda") return null;
+    if (modo === "sem") return ["Sem vendedor"];   // é o nome que a API usa
+    return selecionados.map((v) => String(v.nome || "")).filter(Boolean);
+  }, [modo, selecionados]);
+
   const titulo = modo === "toda" ? "Toda a Honest"
     : modo === "sem" ? "Clientes sem vendedor"
     : umSo ? umSo.nome
@@ -563,6 +576,7 @@ export default function DossieVendedor() {
           <GraficosCarteira
             key={ano}
             periodoInicial={{ inicio: `${ano - 1}-01`, fim: ano === anoAtual ? mesCorrente : `${ano}-12` }}
+            vendedoresFiltro={vendedoresFiltro}
           />
 
           <div className="space-y-4">
