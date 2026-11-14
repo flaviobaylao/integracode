@@ -243,6 +243,9 @@ export function registerDossieVendedor(app: Express) {
           motivo: c.motivo || null,
           ultimoVendedor: ultimoVendedor.get(String(c.id)) || null,
           vendasVida: v?.titulos || 0, valorVida: v?.valor || 0, primeiraVenda: v?.primeira || null,
+          // Mesma fonte da "Última compra" da tabela principal, para as duas
+          // telas não darem datas diferentes para o mesmo cliente.
+          ultimaCompra: fat ? (fat.ultimaVendaData || null) : null,
           fatAno: fat ? Number(fat.total) || 0 : 0, vendedorId: vid,
         };
         custById.set(String(c.id), item);
@@ -306,7 +309,8 @@ export function registerDossieVendedor(app: Express) {
                       fatAno: herdados.reduce((s, c) => s + c.fatAno, 0) },
           // Sem `segmento`: saiu da tela (Flavio, 14/11/2026) e não tinha outro leitor.
           conquistados: conquistados.map((c) => ({ id: c.id, nome: c.nome, cidade: c.cidade, ativo: c.ativo,
-                      conquista: c.conquista, vendasVida: c.vendasVida, valorVida: c.valorVida, fatAno: c.fatAno })),
+                      conquista: c.conquista, vendasVida: c.vendasVida, valorVida: c.valorVida,
+                      ultimaCompra: c.ultimaCompra || null, fatAno: c.fatAno })),
           inativadosPorEle: { total: inativadosPorEle.length,
                       lista: inativadosPorEle.map((r) => ({ data: r.data, cliente: custById.get(String(r.customer_id))?.nome || r.customer_id,
                                                            daCarteira: idsCarteira.has(String(r.customer_id)) }))
