@@ -5,6 +5,7 @@ import SalesGoalsDashboard from "@/components/SalesGoalsDashboard";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
 import CampanhaOutubro from "@/components/CampanhaOutubro";
 import ClientesBlindados from "@/components/ClientesBlindados";
+import TrocaDescontosTab from "@/components/TrocaDescontosTab";
 import type { User as SchemaUser } from "@shared/schema";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
@@ -42,6 +43,9 @@ export default function SalesGoalsPage() {
         <Tabs defaultValue="metas">
           <TabsList className="mb-4">
             <TabsTrigger value="metas" data-testid="tab-metas">Metas de Faturamento</TabsTrigger>
+            {canManageGoals && (
+              <TabsTrigger value="trocas" data-testid="tab-descontos-troca">Descontos por troca</TabsTrigger>
+            )}
             <TabsTrigger value="campanha" data-testid="tab-campanha">Campanha</TabsTrigger>
             {canManageGoals && (
               <TabsTrigger value="blindados" data-testid="tab-blindados">Clientes blindados</TabsTrigger>
@@ -59,6 +63,13 @@ export default function SalesGoalsPage() {
               </Card>
             )}
           </TabsContent>
+
+          {/* (14/nov/2026) Era sub-aba dentro de "Metas de Faturamento"; agora é aba principal. */}
+          {canManageGoals && (
+            <TabsContent value="trocas">
+              <TrocaDescontosTab user={userForComponents} />
+            </TabsContent>
+          )}
 
           <TabsContent value="campanha">
             <Card>
