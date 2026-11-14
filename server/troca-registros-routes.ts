@@ -95,6 +95,10 @@ export function ensureTrocaSchema(): Promise<void> {
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_por varchar",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_cancelado_por_nome varchar",
         "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS admin_obs text",
+        // 05/11/2026: troca compensada por DESCONTO EM BOLETO (marcada pelo vendedor no card).
+        // Por ora é só um SELO ("Troca - Desconto em Boleto") no pipeline: o financeiro aplica o
+        // desconto manualmente. Nenhuma alteração automática em título, boleto ou crédito.
+        "ALTER TABLE troca_registros ADD COLUMN IF NOT EXISTS desconto_boleto boolean NOT NULL DEFAULT false",
         // Histórico de mudança de carteira (rezoneamento): gravado por gatilho em customers.seller_id.
         "CREATE TABLE IF NOT EXISTS customer_seller_changes (id bigserial PRIMARY KEY, customer_id varchar NOT NULL, old_seller_id varchar, new_seller_id varchar, changed_at timestamptz NOT NULL DEFAULT now())",
         "CREATE INDEX IF NOT EXISTS idx_customer_seller_changes ON customer_seller_changes (customer_id, changed_at)",
@@ -600,6 +604,8 @@ export async function recorrenciaPorCards(cardIds: string[]): Promise<Map<string
         acao: reg.acao_cliente || null,
         registroId: reg.id,
         customerId: reg.customer_id,
+        // Selo "Troca - Desconto em Boleto" (05/11/2026).
+        descontoBoleto: reg.desconto_boleto === true,
       });
     }
   } catch (e: any) {
@@ -724,6 +730,8 @@ export function registerTrocaRegistrosRoutes(app: Express) {
 
       const user = req.currentUser;
       const acaoCliente = String(req.body?.acaoCliente || "").trim().slice(0, 200) || null;
+      // Troca compensada por desconto em boleto (05/11/2026) — só marca o selo; nada financeiro.
+      const descontoBoleto = req.body?.descontoBoleto === true;
       const calc = await calcularTroca(card, motivo, user?.id ? String(user.id) : null);
       const categoria = motivo === "vencido" ? "comercial" : "qualidade";
       const ym = ymBrasil();
@@ -747,6 +755,7 @@ export function registerTrocaRegistrosRoutes(app: Express) {
             nf_seller_name = ${calc.nfSellerName}, comissao_pct = ${calc.pct},
             desconto = ${calc.desconto}, observacao = ${card.notes || null}, nf_do_vendedor = ${calc.nfDoVendedor},
             acao_cliente = COALESCE(${acaoCliente}, acao_cliente),
+            desconto_boleto = ${descontoBoleto},
             regra_versao = 2, created_by = COALESCE(created_by, ${user?.id || null}), updated_at = now()
           WHERE id = ${recenteId}`);
       } else {
@@ -754,10 +763,10 @@ export function registerTrocaRegistrosRoutes(app: Express) {
           INSERT INTO troca_registros
             (sales_card_id, customer_id, customer_name, card_seller_id, motivo, categoria, temperatura_c,
              valor_troca, itens, nf_id, nf_numero, nf_data, nf_seller_id, nf_seller_name,
-             comissao_pct, desconto, ym, observacao, created_by, nf_do_vendedor, regra_versao, acao_cliente)
+             comissao_pct, desconto, ym, observacao, created_by, nf_do_vendedor, regra_versao, acao_cliente, desconto_boleto)
           VALUES (${id}, ${card.customer_id}, ${card.customer_name}, ${card.seller_id}, ${motivo}, ${categoria}, ${temperatura},
              ${calc.valorTroca}, ${JSON.stringify(calc.itens)}::jsonb, ${calc.nfId}, ${calc.nfNumero}, ${calc.nfData},
-             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null}, ${calc.nfDoVendedor}, 2, ${acaoCliente})`);
+             ${calc.nfSellerId}, ${calc.nfSellerName}, ${calc.pct}, ${calc.desconto}, ${ym}, ${card.notes || null}, ${user?.id || null}, ${calc.nfDoVendedor}, 2, ${acaoCliente}, ${descontoBoleto})`);
       }
 
       // Recorrência: a partir da 2ª troca do mesmo motivo na janela, chamado ao gestor comercial
@@ -789,10 +798,10 @@ export function registerTrocaRegistrosRoutes(app: Express) {
       // Auditoria junto das fotos da troca.
       try {
         await db.execute(sql`INSERT INTO order_pipeline_audit (id, sales_card_id, outcome, error, created_at)
-          VALUES (gen_random_uuid(), ${id}, 'troca_motivo', ${`${MOTIVO_LABEL[motivo]}${temperatura != null ? ` ${temperatura}°C` : ""} | desconto R$ ${calc.desconto.toFixed(2)}`}, now())`);
+          VALUES (gen_random_uuid(), ${id}, 'troca_motivo', ${`${MOTIVO_LABEL[motivo]}${temperatura != null ? ` ${temperatura}°C` : ""} | desconto R$ ${calc.desconto.toFixed(2)}${descontoBoleto ? " | compensação: desconto em boleto" : ""}`}, now())`);
       } catch { /* auditoria nao bloqueia */ }
 
-      return res.json({ ok: true, motivo, categoria, ...calc, anterior, recorrencia });
+      return res.json({ ok: true, motivo, categoria, descontoBoleto, ...calc, anterior, recorrencia });
     } catch (e: any) {
       console.error("[TROCA] motivo:", e?.message || e);
       return res.status(500).json({ message: "Falha ao registrar o motivo da troca" });
