@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DOSSIÊ POR VENDEDOR — aba "Dossiê do vendedor" da Gestão de Carteiras.
 //
-// GET  /api/reports/dossie-vendedores?ano=2026
+// GET  /api/reports/dossie-vendedores?inicio=2025-11&fim=2026-11   (ano= ainda aceito)
 // POST /api/reports/dossie-vendedores/inicio  { userId, data: 'YYYY-MM-DD' | null }  (admin)
 //
 // Um JSON com TODOS os vendedores de uma vez: a tela escolhe entre "Toda a
@@ -42,10 +42,26 @@ export function registerDossieVendedor(app: Express) {
     try {
       const hoje = mesAtualBR();
       const anoAtual = Number(hoje.slice(0, 4));
+
+      // 14/11/2026 (Flavio) — O DOSSIÊ DEIXA DE SER ANUAL. O filtro da tela
+      // virou "De (mês) → Até (mês)" e pode atravessar anos (nov/25 a nov/26,
+      // por exemplo), então a janela não sai mais de um `ano`: vem em `inicio`
+      // e `fim`. O parâmetro `ano=` continua aceito — é o que a versão antiga
+      // mandava, e um cache de página velha não pode derrubar a tela.
+      const normMes = (v: any, padrao: string) => {
+        const s = String(v ?? "").slice(0, 7);
+        return /^\d{4}-(0[1-9]|1[0-2])$/.test(s) ? s : padrao;
+      };
       let ano = Number(String(req.query.ano || anoAtual).slice(0, 4));
       if (!Number.isFinite(ano) || ano < 2020 || ano > anoAtual) ano = anoAtual;
-      const inicioAno = `${ano}-01`;
-      const fimAno = ano === anoAtual ? hoje : `${ano}-12`;
+      let inicioAno = normMes(req.query.inicio, `${ano}-01`);
+      let fimAno = normMes(req.query.fim, ano === anoAtual ? hoje : `${ano}-12`);
+      // Janela sempre válida: nada antes de 2025 (a base não existe), nada
+      // depois do mês corrente, e fim nunca antes do início.
+      if (inicioAno < "2025-01") inicioAno = "2025-01";
+      if (fimAno > hoje) fimAno = hoje;
+      if (fimAno < inicioAno) fimAno = inicioAno;
+      ano = Number(fimAno.slice(0, 4));
 
       const usuario: any = (req as any).currentUser || (req as any).user || null;
       const restrito = ["vendedor", "telemarketing"].includes(String(usuario?.role || ""));
@@ -293,7 +309,12 @@ export function registerDossieVendedor(app: Express) {
       }).filter((v) => v.carteira.total > 0 || Object.keys(v.vendasMes).length > 0 || v.leads.cadastrados.total > 0)
         .sort((a, b) => b.carteira.fatAno - a.carteira.fatAno);
 
-      // Lista anual: todo cliente que comprou no ano, com o mês a mês.
+      // Lista do período: todo cliente que comprou nele, com o mês a mês.
+      // `ultimaCompra`/`ultimaCompraValor` são da VIDA do cliente, não do
+      // recorte (Flavio, 14/11/2026): a pergunta na linha é "quando ele comprou
+      // pela última vez", e essa resposta não pode mudar porque o filtro de mês
+      // mudou. `ultimoMesNoPeriodo` é o outro dado, o do recorte, para quando a
+      // diferença entre os dois importar.
       const clientesAno = fatCli.filter((c: any) => (Number(c.total) || 0) > 0).map((c: any) => {
         const cad = c.customerId ? custById.get(String(c.customerId)) : null;
         return {
@@ -301,12 +322,15 @@ export function registerDossieVendedor(app: Express) {
           ativo: c.ativo === true, vendedorId: cad ? cad.vendedorId : null, vendedor: c.vendedor || "Sem vendedor",
           rede: c.customerId ? (redePorCliente.get(String(c.customerId)) || "") : "",
           porMes: c.porMes || {}, total: Number(c.total) || 0,
+          ultimaCompra: c.ultimaVendaData || null,
+          ultimaCompraValor: Number(c.ultimaVendaValor) || 0,
+          ultimoMesNoPeriodo: c.ultimaCompra || null,
         };
       });
 
       const meuId = restrito ? String(usuario?.id || "") : null;
       res.json({
-        ok: true, ano, meses, mesCorrente: hoje, restrito,
+        ok: true, ano, periodo: { inicio: inicioAno, fim: fimAno }, meses, mesCorrente: hoje, restrito,
         vendedores: meuId ? vendedores.filter((v) => v.id === meuId) : vendedores,
         semVendedor: meuId ? [] : semVendedor.sort((a, b) => b.fatAno - a.fatAno || Number(b.ativo) - Number(a.ativo)),
         clientesAno: meuId ? clientesAno.filter((c: any) => c.vendedorId === meuId) : clientesAno,

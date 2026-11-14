@@ -594,7 +594,7 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
       //     ficam de fora. Aqui a janela e a VIDA TODA do cliente, nao o periodo da
       //     tela — a pergunta e "quanto ele costuma comprar por pedido", que nao pode
       //     depender do recorte escolhido no filtro de mes.
-      const fatPorDoc = new Map<string, { ultima: string | null; media3: number; eventos: number }>();
+      const fatPorDoc = new Map<string, { ultima: string | null; valorUltima: number; media3: number; eventos: number }>();
       try {
         const fatRows = await q(`
           WITH rec AS (
@@ -616,12 +616,16 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
           )
           SELECT doc,
                  MAX(dt) FILTER (WHERE rn = 1)::date::text AS ultima,
+                 -- rn=1 e' uma linha so' por doc: o MAX aqui nao escolhe nada,
+                 -- so' atravessa o GROUP BY. E o valor DAQUELE faturamento.
+                 ROUND(MAX(valor) FILTER (WHERE rn = 1), 2)::float AS valor_ultima,
                  ROUND(AVG(valor) FILTER (WHERE rn <= 3), 2)::float AS media3,
                  MAX(rn)::int AS eventos
           FROM ord GROUP BY doc`);
         for (const r of fatRows as any[]) {
           fatPorDoc.set(String(r.doc), {
             ultima: r.ultima ? String(r.ultima) : null,
+            valorUltima: Number(r.valor_ultima) || 0,
             media3: Number(r.media3) || 0,
             eventos: Number(r.eventos) || 0,
           });
@@ -782,6 +786,7 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
           // Ultima venda faturada de verdade e o valor medio dos 3 ultimos
           // faturamentos (vida toda do cliente, nao o periodo da tela).
           ultimaVendaData: ft?.ultima || null,
+          ultimaVendaValor: ft?.valorUltima || 0,
           mediaUlt3: ft?.media3 || 0,
           faturamentos: ft?.eventos || 0,
           debito: debitoCli,
