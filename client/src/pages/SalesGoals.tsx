@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SalesGoalsDashboard from "@/components/SalesGoalsDashboard";
 import SalesGoalsManagement from "@/components/SalesGoalsManagement";
 import CampanhaOutubro from "@/components/CampanhaOutubro";
+import ClientesBlindados from "@/components/ClientesBlindados";
 import type { User as SchemaUser } from "@shared/schema";
 import BackToDashboardButton from "@/components/BackToDashboardButton";
 
@@ -42,6 +43,9 @@ export default function SalesGoalsPage() {
           <TabsList className="mb-4">
             <TabsTrigger value="metas" data-testid="tab-metas">Metas de Faturamento</TabsTrigger>
             <TabsTrigger value="campanha" data-testid="tab-campanha">Campanha</TabsTrigger>
+            {canManageGoals && (
+              <TabsTrigger value="blindados" data-testid="tab-blindados">Clientes blindados</TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="metas">
@@ -63,6 +67,11 @@ export default function SalesGoalsPage() {
               </CardContent>
             </Card>
           </TabsContent>
+          {canManageGoals && (
+            <TabsContent value="blindados">
+              <ClientesBlindados />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

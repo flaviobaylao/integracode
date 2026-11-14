@@ -30,6 +30,7 @@ import { registerCarteiraReclassificacao } from "./carteira-reclassificacao-rout
 import { registerAgendaRota } from "./agenda-rota-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
 import { registerDossieVendedor } from "./dossie-vendedor-routes";
+import { registerClientesBlindados } from "./clientes-blindados-routes";
 
 const TZ = "America/Sao_Paulo";
 
@@ -855,6 +856,8 @@ export function registerCarteira(app: Express) {
   registerRedesClientes(app);
   // Aba "Dossiê do vendedor" (vida de cada vendedor + clientes mês a mês).
   registerDossieVendedor(app);
+  // Aba "Clientes blindados" de Metas de Vendas (cliente que só responde ao dono da carteira).
+  registerClientesBlindados(app);
 
   // ---------------------------------------------------------------------------
   // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
