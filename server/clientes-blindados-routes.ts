@@ -7,17 +7,24 @@
 // atender outros canais da Honest. O sinal é o cliente que COMPRA com o dono da
 // carteira mas NÃO RESPONDE a Honest pelos outros canais.
 //
-// Réguas (janela = últimos `dias`, padrão 60):
-//  • TENTATIVAS DA HONEST = dias em que alguém que NÃO é o dono da carteira mandou
-//    mensagem ao cliente pelo WhatsApp oficial (ChatCenter: chat_messages com
-//    sender_type 'agent', na conversa do telefone do cliente).
-//  • RESPOSTAS = dias em que o cliente escreveu no WhatsApp oficial
-//    + atendimentos registrados por outra pessoa (virtual_service_logs)
-//    + pedidos digitados por outra pessoa (billing_pipeline).
-//  • PEDIDOS DO DONO = pedidos no pipeline digitados pelo dono da carteira.
-//  • BLINDADO  = 3+ tentativas, nenhuma resposta e pelo menos 1 pedido do dono.
-//    ATENÇÃO   = 1 ou 2 tentativas, nenhuma resposta e pelo menos 1 pedido do dono.
-//    RESPONDE  = alguma resposta. SEM TENTATIVA = a Honest não tentou contato.
+// Réguas (janela = últimos `dias`, padrão 60) — revistas em 14/11/2026:
+//  • CONTATO = dia em que OUTRO VENDEDOR (interno ou externo, pessoa de verdade,
+//    ≠ dono da carteira) falou com o cliente: mensagem enviada por ele no
+//    WhatsApp oficial (chat_messages sender_type 'agent' com o id dele) ou
+//    atendimento registrado por ele (virtual_service_logs). Mensagens da IA
+//    (sender_type 'system', id 'agent:…') e as enviadas fora do app NÃO contam.
+//  • Cada contato tem um desfecho:
+//      COMPROU      = o vendedor que contatou digitou pedido do cliente em até 2 dias.
+//      ESQUIVA      = ninguém vendeu por esse contato, mas o DONO digitou pedido
+//                     de 0 a 3 dias depois (o "não preciso hoje" seguido de pedido
+//                     com o vendedor) — conta tenha o cliente respondido ou não.
+//      SEM RESPOSTA = o cliente não respondeu em até 2 dias.
+//      RESPONDEU    = respondeu, sem compra de ninguém nos dias seguintes (neutro).
+//  • BLINDADO  = 2+ esquivas, ou 3+ contatos sem resposta, com pedido do dono e
+//                nenhuma compra pelos outros vendedores.
+//    ATENÇÃO   = 1 esquiva, ou 1–2 contatos sem resposta, mesmo quadro.
+//    RESPONDE  = comprou com outro vendedor ou respondeu sem sinal de esquiva.
+//    SEM CONTATO = nenhum outro vendedor falou com o cliente no período.
 //  • Telefone casa por DDD + últimos 8 dígitos (ignora 55 e o 9º dígito).
 // É um indicador para investigar, não prova: a confirmação é o contato direto da
 // coordenação com o comprador.
@@ -50,7 +57,9 @@ export function registerClientesBlindados(app: Express) {
       let dias = Number(req.query.dias || 60);
       if (!Number.isFinite(dias) || dias < 7) dias = 60;
       if (dias > 365) dias = 365;
-      const MIN_TENT = 3;
+      const MIN_TENT = 3;      // contatos sem resposta para blindado
+      const MIN_ESQUIVA = 2;   // esquivas para blindado
+      const JANELA_ESQUIVA = 3; // dias após o contato em que o pedido do dono conta como esquiva
 
       // ── usuários: qualquer id de vendedor → id do usuário ────────────────
       const users = await q(`SELECT id, first_name, last_name, email, role::text AS role, is_active,
@@ -93,7 +102,9 @@ export function registerClientesBlindados(app: Express) {
       type Cli = {
         id: string; nome: string; cidade: string; telefone: string; contato: string;
         dono: string; chave: string | null;
-        tentDias: Set<string>; respDias: Set<string>; atendOutros: number; pedidosOutros: number; pedidosDono: number;
+        contatos: Map<string, Set<string>>; // dia -> vendedores (≠ dono) que contataram
+        respDias: Set<string>; pedDono: Set<string>; pedPor: Map<string, Set<string>>; // vendedor -> dias de pedido
+        pedidosDono: number;
       };
       const cli = new Map<string, Cli>();
       const porChave = new Map<string, Cli[]>();
@@ -104,7 +115,7 @@ export function registerClientesBlindados(app: Express) {
         const o: Cli = {
           id: c.id, nome: c.fantasy_name || c.name || c.id, cidade: c.city || "", telefone: c.phone || "",
           contato: c.contact || "", dono: dono!, chave,
-          tentDias: new Set(), respDias: new Set(), atendOutros: 0, pedidosOutros: 0, pedidosDono: 0,
+          contatos: new Map(), respDias: new Set(), pedDono: new Set(), pedPor: new Map(), pedidosDono: 0,
         };
         cli.set(c.id, o);
         if (chave) { const l = porChave.get(chave) || []; l.push(o); porChave.set(chave, l); }
@@ -127,57 +138,86 @@ export function registerClientesBlindados(app: Express) {
         if (!lista) continue;
         msgsCasadas++;
         for (const o of lista) {
-          if (r.tipo === "customer") o.respDias.add(r.dia);
-          else if (resolve(r.sender_id) !== o.dono) o.tentDias.add(r.dia);
+          if (r.tipo === "customer") { o.respDias.add(r.dia); continue; }
+          const quem = resolve(r.sender_id);
+          // Só pessoa vendedora (interna/externa) que não é o dono. IA e envios de fora do app ficam de fora.
+          if (!quem || quem === o.dono || !ehVendedor(quem)) continue;
+          const set = o.contatos.get(r.dia) || new Set<string>(); set.add(quem); o.contatos.set(r.dia, set);
         }
       }
 
       // ── atendimentos registrados por outra pessoa ────────────────────────
       const atend = await q(`
-        SELECT customer_id, attendant_id
+        SELECT customer_id, attendant_id,
+               ((attendance_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
         FROM virtual_service_logs
         WHERE COALESCE(entity_type, 'customer') = 'customer'
           AND attendance_date >= now() - interval '${dias} days'`);
       for (const r of atend) {
         const o = cli.get(r.customer_id); if (!o) continue;
-        if (resolve(r.attendant_id) !== o.dono) o.atendOutros++;
+        const quem = resolve(r.attendant_id);
+        if (!quem || quem === o.dono || !ehVendedor(quem)) continue;
+        // Atendimento registrado = o cliente atendeu: conta como contato e como resposta no dia.
+        const set = o.contatos.get(r.dia) || new Set<string>(); set.add(quem); o.contatos.set(r.dia, set);
+        o.respDias.add(r.dia);
       }
 
       // ── pedidos no pipeline: do dono x de outros ─────────────────────────
       const peds = await q(`
-        SELECT customer_id, seller_id
+        SELECT customer_id, seller_id,
+               ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date::text AS dia
         FROM billing_pipeline
         WHERE created_at >= now() - interval '${dias} days'
           AND COALESCE(stage::text, '') <> 'lixeira'`);
       for (const r of peds) {
         const o = cli.get(r.customer_id); if (!o) continue;
         const quem = resolve(r.seller_id);
-        if (quem && quem === o.dono) o.pedidosDono++;
-        else if (quem) o.pedidosOutros++;
+        if (!quem) continue;
+        if (quem === o.dono) { o.pedidosDono++; o.pedDono.add(r.dia); }
+        else { const set = o.pedPor.get(quem) || new Set<string>(); set.add(r.dia); o.pedPor.set(quem, set); }
       }
 
       // ── classificação ────────────────────────────────────────────────────
       const lista: any[] = [];
       const porVend = new Map<string, any>();
+      const somaDias = (d: string, n: number) => {
+        const t = new Date(d + "T12:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10);
+      };
+      const temEntre = (set: Set<string> | undefined, d: string, ate: number) => {
+        if (!set) return false;
+        for (let i = 0; i <= ate; i++) if (set.has(somaDias(d, i))) return true;
+        return false;
+      };
       for (const o of cli.values()) {
-        const tent = o.tentDias.size;
-        const resp = o.respDias.size + o.atendOutros + o.pedidosOutros;
+        let semResp = 0, esquivas = 0, compras = 0, respondeu = 0;
+        const diasEsquiva: string[] = [], diasSemResp: string[] = [];
+        for (const [dia, quem] of o.contatos) {
+          const comprouComQuemContatou = Array.from(quem).some((u) => temEntre(o.pedPor.get(u), dia, 2));
+          if (comprouComQuemContatou) { compras++; continue; }
+          if (temEntre(o.pedDono, dia, JANELA_ESQUIVA)) { esquivas++; diasEsquiva.push(dia); continue; }
+          if (temEntre(o.respDias, dia, 2)) { respondeu++; continue; }
+          semResp++; diasSemResp.push(dia);
+        }
+        const tent = o.contatos.size;
         let situacao: "blindado" | "atencao" | "responde" | "sem_tentativa";
-        if (resp > 0) situacao = "responde";
-        else if (tent === 0) situacao = "sem_tentativa";
-        else if (o.pedidosDono >= 1 && tent >= MIN_TENT) situacao = "blindado";
-        else if (o.pedidosDono >= 1) situacao = "atencao";
-        else situacao = "sem_tentativa"; // tentou, não respondeu e também não compra: não é sinal de blindagem
+        if (tent === 0) situacao = "sem_tentativa";
+        else if (compras > 0) situacao = "responde";
+        else if (o.pedidosDono === 0) situacao = respondeu > 0 ? "responde" : "sem_tentativa"; // não compra de ninguém: não é sinal de blindagem
+        else if (esquivas >= MIN_ESQUIVA || semResp >= MIN_TENT) situacao = "blindado";
+        else if (esquivas >= 1 || semResp >= 1) situacao = "atencao";
+        else situacao = "responde";
+        const resp = compras + respondeu + esquivas; // respostas (inclui as esquivas, em que ele respondeu e comprou com o dono)
 
         const v = porVend.get(o.dono) || {
           vendedorId: o.dono, vendedor: info.get(o.dono)?.nome || o.dono,
           tipo: info.get(o.dono)?.role === "telemarketing" ? "Interno" : "Externo",
-          clientes: 0, semTelefone: 0, comTentativa: 0, responderam: 0, blindados: 0, atencao: 0,
+          clientes: 0, semTelefone: 0, comTentativa: 0, responderam: 0, esquivas: 0, blindados: 0, atencao: 0,
         };
         v.clientes++;
         if (!o.chave) v.semTelefone++;
         if (tent > 0) v.comTentativa++;
         if (tent > 0 && resp > 0) v.responderam++;
+        v.esquivas += esquivas;
         if (situacao === "blindado") v.blindados++;
         if (situacao === "atencao") v.atencao++;
         porVend.set(o.dono, v);
@@ -186,7 +226,9 @@ export function registerClientesBlindados(app: Express) {
           lista.push({
             clienteId: o.id, cliente: o.nome, cidade: o.cidade, telefone: o.telefone, contato: o.contato,
             vendedorId: o.dono, vendedor: v.vendedor, situacao,
-            tentativas: tent, diasTentativa: Array.from(o.tentDias).sort().reverse().slice(0, 10),
+            tentativas: tent, esquivas, semResposta: semResp, compras,
+            diasEsquiva: diasEsquiva.sort().reverse().slice(0, 10),
+            diasTentativa: Array.from(o.contatos.keys()).sort().reverse().slice(0, 10),
             pedidosDono: o.pedidosDono,
           });
         }
@@ -196,15 +238,15 @@ export function registerClientesBlindados(app: Express) {
         taxaResposta: v.comTentativa ? Math.round((v.responderam / v.comTentativa) * 1000) / 10 : null,
         pctBlindados: v.comTentativa ? Math.round((v.blindados / v.comTentativa) * 1000) / 10 : null,
       })).sort((a, b) => (b.pctBlindados ?? -1) - (a.pctBlindados ?? -1) || b.blindados - a.blindados);
-      lista.sort((a, b) => (a.situacao === b.situacao ? b.tentativas - a.tentativas : a.situacao === "blindado" ? -1 : 1));
+      lista.sort((a, b) => (a.situacao === b.situacao ? (b.esquivas - a.esquivas) || (b.tentativas - a.tentativas) : a.situacao === "blindado" ? -1 : 1));
 
       const tot = vendedores.reduce((s, v) => ({
         clientes: s.clientes + v.clientes, comTentativa: s.comTentativa + v.comTentativa,
-        responderam: s.responderam + v.responderam, blindados: s.blindados + v.blindados, atencao: s.atencao + v.atencao,
-      }), { clientes: 0, comTentativa: 0, responderam: 0, blindados: 0, atencao: 0 });
+        responderam: s.responderam + v.responderam, esquivas: s.esquivas + v.esquivas, blindados: s.blindados + v.blindados, atencao: s.atencao + v.atencao,
+      }), { clientes: 0, comTentativa: 0, responderam: 0, esquivas: 0, blindados: 0, atencao: 0 });
 
       res.json({
-        ok: true, dias, minTentativas: MIN_TENT,
+        ok: true, dias, minTentativas: MIN_TENT, minEsquivas: MIN_ESQUIVA, janelaEsquiva: JANELA_ESQUIVA,
         totais: { ...tot, taxaResposta: tot.comTentativa ? Math.round((tot.responderam / tot.comTentativa) * 1000) / 10 : null },
         vendedores, clientes: lista,
         diag: { mensagensDia: msgs.length, mensagensCasadas: msgsCasadas, atendimentos: atend.length, pedidos: peds.length },

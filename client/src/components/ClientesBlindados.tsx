@@ -15,13 +15,14 @@ import { exportToExcel } from "@/lib/tableTools";
 
 type Vend = {
   vendedorId: string; vendedor: string; tipo: string; clientes: number; semTelefone: number;
-  comTentativa: number; responderam: number; blindados: number; atencao: number;
+  comTentativa: number; responderam: number; esquivas?: number; blindados: number; atencao: number;
   taxaResposta: number | null; pctBlindados: number | null;
 };
 type Cli = {
   clienteId: string; cliente: string; cidade: string; telefone: string; contato: string;
   vendedorId: string; vendedor: string; situacao: "blindado" | "atencao";
   tentativas: number; diasTentativa: string[]; pedidosDono: number;
+  esquivas?: number; semResposta?: number; diasEsquiva?: string[];
 };
 
 const pct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1).replace(".", ",")}%`);
@@ -58,8 +59,10 @@ export default function ClientesBlindados() {
       clientes.map((c) => ({
         Situação: c.situacao === "blindado" ? "Blindado" : "Atenção",
         Cliente: c.cliente, Cidade: c.cidade, Telefone: c.telefone, Contato: c.contato,
-        Vendedor: c.vendedor, "Tentativas da Honest (dias)": c.tentativas,
-        "Datas das tentativas": c.diasTentativa.map(dataBR).join(", "),
+        Vendedor: c.vendedor, "Contatos de outros vendedores (dias)": c.tentativas,
+        "Esquivas": c.esquivas ?? 0, "Sem resposta": c.semResposta ?? 0,
+        "Datas das esquivas": (c.diasEsquiva || []).map(dataBR).join(", "),
+        "Datas dos contatos": c.diasTentativa.map(dataBR).join(", "),
         "Pedidos do vendedor": c.pedidosDono,
       })),
       `clientes-blindados-${dias}d`,
@@ -91,10 +94,11 @@ export default function ClientesBlindados() {
                   <Button variant="outline" size="icon" data-testid="info-blindados"><Info className="h-4 w-4" /></Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[420px] text-sm space-y-2">
-                  <p><b>Tentativas da Honest:</b> dias em que alguém que não é o dono da carteira mandou mensagem ao cliente pelo WhatsApp oficial (Central de Atendimento).</p>
-                  <p><b>Resposta:</b> o cliente escreveu no WhatsApp oficial, foi atendido por outra pessoa (atendimento registrado) ou fez pedido com outra pessoa.</p>
-                  <p><b>Blindado:</b> {data?.minTentativas ?? 3} ou mais tentativas, nenhuma resposta e pelo menos 1 pedido digitado pelo dono da carteira no período. <b>Atenção:</b> 1 ou 2 tentativas, mesmo quadro.</p>
-                  <p><b>Taxa de resposta:</b> clientes que responderam ÷ clientes que a Honest tentou contatar.</p>
+                  <p><b>Contato:</b> dia em que outro vendedor (interno ou externo, ≠ dono da carteira) mandou mensagem pelo WhatsApp oficial ou registrou atendimento do cliente. Mensagens da IA não contam.</p>
+                  <p><b>Esquiva:</b> ninguém vendeu nesse contato, mas o dono da carteira digitou pedido do cliente de 0 a {data?.janelaEsquiva ?? 3} dias depois — o "não preciso hoje" seguido de pedido com o vendedor.</p>
+                  <p><b>Sem resposta:</b> o cliente não respondeu ao contato em até 2 dias.</p>
+                  <p><b>Blindado:</b> {data?.minEsquivas ?? 2} ou mais esquivas, ou {data?.minTentativas ?? 3} ou mais contatos sem resposta, com pedido do dono e nenhuma compra pelos outros vendedores. <b>Atenção:</b> 1 esquiva, ou 1–2 contatos sem resposta.</p>
+                  <p><b>Taxa de resposta:</b> clientes que responderam ÷ clientes contatados por outros vendedores.</p>
                   <p>O telefone do cliente é comparado pelo DDD e pelos últimos 8 dígitos. Cliente sem telefone no cadastro não entra na conta.</p>
                   <p className="text-muted-foreground">É um indicador para investigar, não uma prova. Confirme com o comprador antes de qualquer medida.</p>
                 </PopoverContent>
@@ -106,10 +110,11 @@ export default function ClientesBlindados() {
           {error && <div className="text-red-600 text-sm">Erro ao carregar: {(error as Error).message}</div>}
           {isLoading && <div className="text-muted-foreground text-sm">Calculando…</div>}
           {tot && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
               <Kpi label="Clientes na carteira" valor={tot.clientes} />
-              <Kpi label="Honest tentou contato" valor={tot.comTentativa} />
+              <Kpi label="Contatados por outros vendedores" valor={tot.comTentativa} />
               <Kpi label="Taxa de resposta" valor={pct(tot.taxaResposta)} />
+              <Kpi label="Esquivas" valor={tot.esquivas ?? 0} destaque="text-red-700" />
               <Kpi label="Blindados" valor={tot.blindados} destaque="text-red-700" />
               <Kpi label="Atenção" valor={tot.atencao} destaque="text-amber-700" />
             </div>
@@ -121,7 +126,7 @@ export default function ClientesBlindados() {
                   <tr className="text-left text-muted-foreground border-b">
                     <th className="py-2">Vendedor</th><th>Tipo</th>
                     <th className="text-right">Clientes</th><th className="text-right">Sem telefone</th>
-                    <th className="text-right">Honest tentou</th><th className="text-right">Responderam</th>
+                    <th className="text-right">Contatados</th><th className="text-right">Responderam</th><th className="text-right">Esquivas</th>
                     <th className="text-right">Taxa de resposta</th><th className="text-right">Blindados</th>
                     <th className="text-right">% blindados</th><th className="text-right">Atenção</th>
                   </tr>
@@ -133,7 +138,7 @@ export default function ClientesBlindados() {
                       onClick={() => setVendSel(vendSel === v.vendedorId ? "todos" : v.vendedorId)}>
                       <td className="py-1.5 text-blue-700">{v.vendedor}</td><td>{v.tipo}</td>
                       <td className="text-right">{v.clientes}</td><td className="text-right">{v.semTelefone}</td>
-                      <td className="text-right">{v.comTentativa}</td><td className="text-right">{v.responderam}</td>
+                      <td className="text-right">{v.comTentativa}</td><td className="text-right">{v.responderam}</td><td className="text-right">{v.esquivas ?? 0}</td>
                       <td className={`text-right ${corResp(v.taxaResposta)}`}>{pct(v.taxaResposta)}</td>
                       <td className="text-right">{v.blindados}</td>
                       <td className={`text-right ${corPct(v.pctBlindados)}`}>{pct(v.pctBlindados)}</td>
@@ -156,7 +161,7 @@ export default function ClientesBlindados() {
                 <CardTitle className="text-lg">
                   Clientes sinalizados{vendSel !== "todos" ? ` — ${vendedores.find((v) => v.vendedorId === vendSel)?.vendedor || ""}` : ""}
                 </CardTitle>
-                <CardDescription>{clientes.length} cliente(s). Datas = dias em que a Honest tentou contato sem resposta.</CardDescription>
+                <CardDescription>{clientes.length} cliente(s). Contatos = dias em que outro vendedor falou com o cliente; esquivas = contatos seguidos de pedido com o dono.</CardDescription>
               </div>
               <div className="flex gap-2">
                 {vendSel !== "todos" && <Button variant="outline" size="sm" onClick={() => setVendSel("todos")}>Ver todos</Button>}
@@ -174,7 +179,7 @@ export default function ClientesBlindados() {
                 <thead className="sticky top-0 bg-white">
                   <tr className="text-left text-muted-foreground border-b">
                     <th className="py-2">Situação</th><th>Cliente</th><th>Contato / telefone</th><th>Vendedor</th>
-                    <th className="text-right">Tentativas</th><th>Datas das tentativas</th><th className="text-right">Pedidos do vendedor</th>
+                    <th className="text-right">Contatos</th><th className="text-right">Esquivas</th><th className="text-right">Sem resposta</th><th>Datas das esquivas</th><th className="text-right">Pedidos do vendedor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -189,7 +194,9 @@ export default function ClientesBlindados() {
                       <td>{c.contato || "—"}<div className="text-xs text-muted-foreground">{c.telefone}</div></td>
                       <td>{c.vendedor}</td>
                       <td className="text-right">{c.tentativas}</td>
-                      <td className="text-xs">{c.diasTentativa.map(dataBR).join(", ")}</td>
+                      <td className="text-right font-semibold text-red-700">{c.esquivas ?? 0}</td>
+                      <td className="text-right">{c.semResposta ?? 0}</td>
+                      <td className="text-xs">{(c.diasEsquiva || []).map(dataBR).join(", ") || "—"}</td>
                       <td className="text-right">{c.pedidosDono}</td>
                     </tr>
                   ))}
