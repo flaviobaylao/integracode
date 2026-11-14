@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- QR Code da NFC-e e gravado em Pictures/integra-balcao para a impressora da LIO ler. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+
+    <!-- Sem isto (API 30+) o app nem enxerga o servico da Cielo e o deep link falha em silencio. -->
+    <queries>
+        <package android:name="com.ads.lio.uriappclient" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="false"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <meta-data android:name="cs_integration_type" android:value="uri" />
+
+        <activity
+            android:name=".PdvActivity"
+            android:exported="true"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:label="Ajustes"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
+        <!-- order://response TEM que ser identico ao urlCallback do deep link. -->
+        <activity
+            android:name=".ResponseActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:host="response" android:scheme="order" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
