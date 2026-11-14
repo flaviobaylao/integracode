@@ -2908,6 +2908,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 📝 MOTIVO só circula à parte (nunca é coluna do cadastro): remove do payload antes de gravar.
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
       const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
       if (!_pmRes.ok) return res.status(_pmRes.status || 403).json({ message: _pmRes.message });
@@ -3424,6 +3426,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/customers', authenticateUser, requirePermission("Clientes / Carteira", "criar"), async (req: any, res) => {
     try {
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, null); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🔍 LOG 1: Payload recebido do frontend
       console.log('📝 [CREATE CUSTOMER] Payload recebido:', {
         weekdays: req.body.weekdays,
@@ -3736,6 +3740,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _wantsActivate = req.body.isActive === true;
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
       const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
       if (!_pmRes.ok) return res.status(_pmRes.status || 403).json({ message: _pmRes.message });
@@ -4084,6 +4090,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!phone) {
         return res.status(400).json({ message: "Telefone é obrigatório" });
       }
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       
       const updateData: { phone: string; contact?: string } = { phone };
       if (contact !== undefined) {
@@ -7846,6 +7854,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
         const _reqPhone = String((req.body && req.body.customerPhone) || '').trim();
         const _custPh: any = await storage.getCustomer(cardBefore.customerId);
+        // 👤 RESPONSÁVEL pelo telefone informado no pedido → grava no cadastro (customers.contact).
+        try {
+          const { limparResponsavel } = await import('./responsavel-telefone');
+          const _reqResp = limparResponsavel(req.body && req.body.customerContact);
+          if (_reqResp && _custPh && _reqResp !== limparResponsavel(_custPh.contact)) {
+            await storage.updateCustomer(cardBefore.customerId, { contact: _reqResp } as any);
+            _custPh.contact = _reqResp;
+          }
+        } catch (_eResp) { /* não bloqueia a venda */ }
         const _cadPhone = String((_custPh && _custPh.phone) || '');
         const _effPhone = _reqPhone || _cadPhone;
         const _phDigits = _effPhone.replace(/[^0-9]/g, '');
@@ -23121,6 +23138,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: z.string().min(1, 'Nome é obrigatório'),
           email: z.string().email('Email inválido').optional().nullable(),
           phone: z.string().min(10, 'Telefone inválido'),
+          contact: z.string().optional().nullable(), // 👤 responsável pelo WhatsApp (nov/2026)
           address: z.string().min(1, 'Endereço é obrigatório'),
           cpfCnpj: z.string().optional().nullable(),
           customerType: z.enum(['pessoa_fisica', 'pessoa_juridica']).default('pessoa_fisica')
@@ -23399,13 +23417,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Atualizar todas as informações do cliente
         // isActive: quem acabou de fazer um pedido e cliente ativo. Sem isto o cadastro
         // reaberto pela compra continuaria invisivel nas telas que filtram por ativo.
+        // 👤 Responsável pelo WhatsApp: o informado no pedido; pessoa física sem informar = o próprio nome.
+        const _respHot = String((validatedData.customer as any).contact || '').trim() || (validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.name : '');
         await storage.updateCustomer(customerId, {
           isActive: true,
           name: validatedData.customer.name,
           email: validatedData.customer.email,
           phone: validatedData.customer.phone,
-          address: validatedData.customer.address
-        });
+          address: validatedData.customer.address,
+          ...(_respHot ? { contact: _respHot } : {}),
+        } as any);
         
       } else {
         // ✅ NOVO cliente do hotsite — padroes CONFIGURAVEIS na pagina Canais (04/ago/2026).
@@ -23424,6 +23445,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: validatedData.customer.name,
           email: validatedData.customer.email,
           phone: validatedData.customer.phone,
+          contact: String((validatedData.customer as any).contact || '').trim() || validatedData.customer.name,
           address: validatedData.customer.address,
           customerType: validatedData.customer.customerType,
           cpf: validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.cpfCnpj : null,
@@ -27104,6 +27126,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: 'Nome, tipo de cliente, telefone e endereço são obrigatórios'
         });
       }
+      // 👤 Responsável pelo telefone (nov/2026): o informado na conversão, senão o contato do lead.
+      const { limparResponsavel: __limpResp, MSG_RESPONSAVEL_OBRIGATORIO: __msgResp } = await import('./responsavel-telefone');
+      const __contato = __limpResp(req.body?.contact) || __limpResp((lead as any)?.contact);
+      if (!__contato) return res.status(400).json({ message: __msgResp, code: 'RESPONSAVEL_OBRIGATORIO' });
 
       // Normaliza documentos: só grava se tiver dígitos (evita colisão na unique de cpf/cnpj com valor vazio).
       const _cpf = (String(cpf ?? '').replace(/\D/g, '').length ? cpf : null);
@@ -27141,6 +27167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
         phone,
+        contact: __contato,
         email: email || null,
         address,
         city: city || null,
@@ -27163,6 +27190,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
         phone,
+        contact: __contato,
         email: email || null,
         address,
         city: city || null,
