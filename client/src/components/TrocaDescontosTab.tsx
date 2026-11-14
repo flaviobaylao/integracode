@@ -35,7 +35,7 @@ interface Registro {
   temperatura: number | null; valorTroca: number; nfNumero: string | null; nfData: string | null;
   vendedorId: string | null; vendedor: string | null; comissaoPct: number; desconto: number; data: string;
   faturado?: boolean; nfTroca?: string | null; vendedorRegra?: string | null;
-  cancelado?: boolean; canceladoPor?: string | null; adminObs?: string | null;
+  cancelado?: boolean; canceladoPor?: string | null; adminObs?: string | null; comissaoFonte?: string | null;
 }
 interface Resp {
   ym: string; registros: Registro[];
@@ -204,7 +204,7 @@ export default function TrocaDescontosTab({ user }: { user: User }) {
                     <TableCell>{r.nfNumero ? `NF ${r.nfNumero} · ${dataBR(r.nfData)}` : <span className="text-muted-foreground">sem NF</span>}</TableCell>
                     <TableCell>{r.vendedor || '—'}{r.vendedorRegra && <div className="text-[11px] text-muted-foreground">{r.vendedorRegra}</div>}</TableCell>
                     <TableCell className="text-right">{brl(r.valorTroca)}</TableCell>
-                    <TableCell className="text-right">{r.motivo === 'vencido' ? `${r.comissaoPct.toFixed(2).replace('.', ',')}%` : '—'}</TableCell>
+                    <TableCell className="text-right">{r.motivo === 'vencido' ? `${r.comissaoPct.toFixed(2).replace('.', ',')}%` : '—'}{r.motivo === 'vencido' && r.comissaoFonte && <div className="text-[11px] text-muted-foreground">{r.comissaoFonte}</div>}</TableCell>
                     <TableCell className={`text-right font-medium ${r.cancelado ? 'text-muted-foreground line-through' : r.faturado ? 'text-red-700' : 'text-muted-foreground'}`}>{r.desconto > 0 ? `− ${brl(r.desconto)}` : '—'}</TableCell>
                     <TableCell className="text-xs">{r.motivo !== 'vencido' ? '—' : r.cancelado ? <span className="text-gray-600 font-semibold">Desconto cancelado</span> : r.faturado ? <span className="text-green-700 font-semibold">Faturada{r.nfTroca ? ` · NF ${r.nfTroca}` : ''}</span> : <span className="text-amber-700">Aguardando faturamento</span>}</TableCell>
                     <TableCell className="text-xs max-w-[22rem]">

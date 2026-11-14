@@ -187,6 +187,50 @@ function abateComissaoNoFixo(cfg: Cfg, sellerType: string | null | undefined): b
   return String(sellerType || "") === "vendedor_pj";
 }
 
+/**
+ * % de comissão sobre venda do colaborador no mês, pela MESMA regra do Resumo Recebíveis
+ * (usado no desconto de troca por vencimento, 11/11/2026). Antes o desconto só conhecia
+ * 'fixo' e o histórico de metas — quem era 'escalonado' (ou 'faixa' sem histórico) saía 0%.
+ *   fixo        → comissao_pct
+ *   faixa       → alíquota da faixa pelo atingimento (faturamento ÷ meta do mês)
+ *   escalonado  → % da faixa de faturamento em que o mês cai
+ *   nenhum / entrega → 0 (não há comissão sobre venda)
+ * null = colaborador sem configuração de remuneração.
+ */
+export async function percentualComissaoDoMes(userId: string, ano: number, mes: number): Promise<{ pct: number; fonte: string } | null> {
+  const ym = `${ano}-${String(mes).padStart(2, "0")}`;
+  const { ini, fim } = limitesDoMes(ym);
+  try {
+    await ensureResumoRecebiveisSchema();
+    const r: any = await db.execute(sql`
+      SELECT comissao_tipo, comissao_pct, faixa_tipo, comissao_faixas, usa_comissao
+      FROM collab_remuneracao_config
+      WHERE user_id = ${userId} AND vigencia_data < ${fim}::date
+      ORDER BY vigencia_data DESC LIMIT 1`);
+    const c = r.rows?.[0];
+    if (!c) return null;
+    const tipo = String(c.comissao_tipo || "nenhum");
+    if (c.usa_comissao === false || tipo === "nenhum" || tipo === "entrega") return { pct: 0, fonte: "sem comissão sobre venda" };
+    if (tipo === "fixo") return { pct: n(c.comissao_pct), fonte: "comissão fixa" };
+    const f: any = await db.execute(sql.raw(sqlFaturamentoPorVendedor(ini, fim)));
+    const fat = n((f.rows || []).find((x: any) => String(x.vendedor_id) === String(userId))?.faturamento);
+    if (tipo === "escalonado") {
+      const faixas: FaixaValor[] = Array.isArray(c.comissao_faixas) ? c.comissao_faixas : [];
+      const cand = faixas.filter((x) => fat >= n(x.de)).sort((a, b) => n(b.de) - n(a.de));
+      const fx = cand.find((x) => x.ate === null || fat <= n(x.ate)) || cand[0] || faixas.slice().sort((a, b) => n(a.de) - n(b.de))[0];
+      return { pct: fx ? n(fx.pct) : 0, fonte: "escalonado pelo faturamento do mês" };
+    }
+    // faixa por atingimento da meta
+    const m: any = await db.execute(sql`SELECT revenue_goal FROM sales_goals WHERE seller_id = ${userId} AND month = ${mes} AND year = ${ano} AND is_active = true LIMIT 1`);
+    const meta = n(m.rows?.[0]?.revenue_goal);
+    const ating = meta > 0 ? (fat / meta) * 100 : 0;
+    return { pct: aliquotaDaFaixa(c.faixa_tipo || FAIXA_PADRAO, ating), fonte: `faixa por atingimento (${Math.round(ating)}% da meta)` };
+  } catch (e: any) {
+    console.error("[RESUMO-RECEB] percentual do mês:", e?.message || e);
+    return null;
+  }
+}
+
 let schemaReady: Promise<void> | null = null;
 export function ensureResumoRecebiveisSchema(): Promise<void> {
   if (!schemaReady) {
