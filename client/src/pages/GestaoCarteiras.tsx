@@ -87,7 +87,7 @@ type Cliente = {
   // Aba "Implantação e repescagem".
   implantador?: string; implantadorData?: string | null; implantadorPedido?: string | null;
   repescagens?: number; ultimaRepescagem?: string | null;
-  ultimaVendaData?: string | null; mediaUlt3?: number; faturamentos?: number;
+  ultimaVendaData?: string | null; ultimaVendaValor?: number; mediaUlt3?: number; faturamentos?: number;
 };
 
 /** dd/mm/aaaa a partir de "aaaa-mm-dd"; traço quando vazio. */
@@ -581,6 +581,8 @@ export default function GestaoCarteiras() {
       if (ordSitCol === "nome") return (c.nome || "").toLocaleLowerCase("pt-BR");
       if (ordSitCol === "vendedor") return (c.vendedor || "").toLocaleLowerCase("pt-BR");
       if (ordSitCol === "valor") return balde === "debito" ? c.debito || 0 : c.potencialMes || 0;
+      if (ordSitCol === "ultima") return c.ultimaVendaData || "0000-00-00";
+      if (ordSitCol === "ultimaValor") return c.ultimaVendaValor || 0;
       return c.mesesSemComprar >= 99 ? -1 : c.mesesSemComprar; // "parado há"
     };
     const arr = [...listaSituacao].sort((a2, b2) => {
@@ -1035,6 +1037,7 @@ export default function GestaoCarteiras() {
           "Repescagens (vezes)": c.repescagens || 0,
           "Última repescagem": c.ultimaRepescagem || "",
           "Última venda faturada": c.ultimaVendaData || "",
+          "Valor da última venda": Number((c.ultimaVendaValor || 0).toFixed(2)),
           "Média últ. 3 faturamentos": Number((c.mediaUlt3 || 0).toFixed(2)),
           "Qtd. faturamentos": c.faturamentos || 0,
         })),
@@ -1059,7 +1062,9 @@ export default function GestaoCarteiras() {
       "Potencial/mês": Number((c.potencialMes || 0).toFixed(2)),
       "Débito vencido": Number((c.debito || 0).toFixed(2)),
       "Parado há (meses)": c.mesesSemComprar >= 99 ? "" : c.mesesSemComprar,
-      "Última compra": c.ultimaCompra || "",
+      "Última compra": c.ultimaVendaData || "",
+      "Valor da última compra": Number((c.ultimaVendaValor || 0).toFixed(2)),
+      "Último mês com compra": c.ultimaCompra || "",
       "Meses com compra": c.mesesComCompra,
       "Faturamento no período": Number((c.total || 0).toFixed(2)),
     }));
@@ -1408,6 +1413,8 @@ export default function GestaoCarteiras() {
                             <TableHead className="w-8">#</TableHead>
                             {thSituacao("nome", "Cliente")}
                             {thSituacao("vendedor", "Vendedor", "w-32 whitespace-nowrap")}
+                            {thSituacao("ultima", "Última compra", "w-24 whitespace-nowrap")}
+                            {thSituacao("ultimaValor", "Valor da última", "text-right whitespace-nowrap", true)}
                             {thSituacao("valor", balde === "debito" ? "Vencido em aberto" : "Potencial/mês", "text-right whitespace-nowrap", true)}
                             {thSituacao("parado", "Parado há", "text-right w-20 whitespace-nowrap", true)}
                           </TableRow>
@@ -1441,6 +1448,15 @@ export default function GestaoCarteiras() {
                                   {c.vendedor}
                                 </span>
                               </TableCell>
+                              {/* Ultima compra: a data e o valor DAQUELE
+                                  faturamento. Numa lista de cliente parado e a
+                                  primeira pergunta — quando foi e de quanto. */}
+                              <TableCell className="text-sm whitespace-nowrap">
+                                {c.ultimaVendaData ? c.ultimaVendaData.split("-").reverse().join("/") : <span className="text-muted-foreground">—</span>}
+                              </TableCell>
+                              <TableCell className="text-sm text-right whitespace-nowrap">
+                                {c.ultimaVendaValor ? BRL(c.ultimaVendaValor) : <span className="text-muted-foreground">—</span>}
+                              </TableCell>
                               <TableCell className="text-right font-semibold whitespace-nowrap">
                                 {BRL(balde === "debito" ? c.debito : c.potencialMes)}
                               </TableCell>
@@ -1450,7 +1466,7 @@ export default function GestaoCarteiras() {
                             </TableRow>
                           ))}
                           {listaSituacao.length === 0 ? (
-                            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                            <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-6">
                               Nenhum cliente neste balde no recorte atual.
                             </TableCell></TableRow>
                           ) : null}
