@@ -5,6 +5,7 @@
 // (admin ve todos; vendedor ve apenas o seu). Consome GET /api/campanha/outubro.
 import { useState, useEffect } from "react";
 import { useQuery, apiRequest } from "@/lib/queryClient";
+import ComissaoClienteNovoCard from "@/components/ComissaoClienteNovoCard";
 import { Card, CardContent } from "@/components/ui/card";
 
 type Seller = {
@@ -24,6 +25,13 @@ export type Premissa = {
   pedidoMin?: number; pedidoMinLabel?: string;
   // Piso próprio do cliente PF (CPF); 0 = PF positiva com qualquer valor.
   pedidoMinPf?: number; pedidoMinPfLabel?: string;
+  // Momento (BRT) em que o flag foi ligado/desligado — "AAAA-MM-DD HH:MM".
+  ativadaEm?: string | null; desativadaEm?: string | null;
+};
+const quando = (t?: string | null) => {
+  if (!t) return "";
+  const [d, h] = String(t).split(" ");
+  return d.split("-").reverse().slice(0, 2).join("/") + (h ? " às " + h : "");
 };
 
 type Resp = {
@@ -134,6 +142,17 @@ function ultimoDia(ym: string): number {
   return new Date(Date.UTC(a, m, 0)).getUTCDate();
 }
 
+// Título de cada bloco do Planejamento. O label do catálogo é escrito para vir
+// depois do valor ("R$ 30 por novo cliente"); no topo do card vira um nome.
+function tituloPremissa(p: { chave: string; label: string; gatilho: number }): string {
+  if (p.chave === "novos") return "Novo cliente";
+  if (p.chave === "positivacao") return `Positivação de ${String(p.gatilho).replace(".", ",")}%`;
+  if (p.chave === "meta") return "Meta de faturamento";
+  if (p.chave === "comissao_novo") return `Comissão por novo cliente · ${p.gatilho} meses`;
+  const t = String(p.label || p.chave).replace(/^(por|de|da|do)\s+/i, "");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 export default function CampanhaOutubro() {
   const [ym, setYm] = useState(mesCorrente);
   const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<Resp>({
@@ -149,7 +168,10 @@ export default function CampanhaOutubro() {
   const t = data?.totais;
   const premissas: Premissa[] = Array.isArray(data?.premissas) ? data!.premissas : [];
   const acha = (c: string) => premissas.find((p) => p.chave === c);
-  const pNovos = acha("novos"), pPos = acha("positivacao"), pMeta = acha("meta");
+  const pNovos0 = acha("novos"), pPos = acha("positivacao"), pMeta = acha("meta");
+  // Desligado no meio do mês: as colunas de novos continuam, porque o que entrou
+  // até o momento do desligamento ainda é pago.
+  const pNovos = pNovos0 && (pNovos0.ativa || pNovos0.desativadaEm) ? { ...pNovos0, ativa: true } : pNovos0;
   const posMeta = pPos?.gatilho ?? 90;
   const metaPct = pMeta?.gatilho ?? 100;
   const multi = sellers.length > 1;
@@ -200,7 +222,7 @@ export default function CampanhaOutubro() {
                 ? <>Bonificação por {premissas.filter((p) => p.ativa)
                     // O rótulo do novo cliente já começa com "por" ("por novo
                     // cliente"); emendado na frase virava "por por".
-                    .map((p) => p.chave === "novos" ? "novos clientes" : p.label.replace(/^por\s+/i, ""))
+                    .map((p) => p.chave === "novos" ? "novos clientes" : p.chave === "comissao_novo" ? `${String(p.valor).replace(".", ",")}% de comissão por cliente novo` : p.label.replace(/^por\s+/i, ""))
                     .join(", ").replace(/, ([^,]*)$/, " e $1")} — por vendedor.</>
                 : <>Nenhuma premissa ligada neste mês — a campanha não paga nada.</>}
             </p>
@@ -233,14 +255,17 @@ export default function CampanhaOutubro() {
             {admin ? "ligue, desligue e edite o que vale neste mês" : "as formas de ganhar no mês"}
           </span>
         </div>
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-4">
           {premissas.map((p) => (
             <div key={p.chave}
               className={`rounded-xl border p-4 ${p.ativa ? "border-gray-200 bg-white" : "border-dashed border-gray-300 bg-gray-50"}`}
               data-testid={`premissa-${p.chave}`}>
+              {/* Título da premissa no topo, em destaque (pedido do Flavio, 14/nov/2026):
+                  antes o nome vinha embaixo do valor e se perdia no card. */}
               <div className="flex items-start justify-between gap-2">
-                <div className={`text-xl font-extrabold tracking-tight ${p.ativa ? "text-gray-800" : "text-gray-400 line-through"}`}>
-                  {p.modo === "percentual" ? `${String(p.valor).replace(".", ",")}%` : brl(p.valor)}
+                <div className={`text-[15px] font-extrabold uppercase leading-tight tracking-wide ${p.ativa ? "text-emerald-800" : "text-gray-400"}`}
+                  data-testid={`premissa-titulo-${p.chave}`}>
+                  {tituloPremissa(p)}
                 </div>
                 {admin && (
                   <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-gray-500">
@@ -251,17 +276,25 @@ export default function CampanhaOutubro() {
                   </label>
                 )}
               </div>
-              <div className={`text-sm font-semibold ${p.ativa ? "text-gray-700" : "text-gray-400"}`}>
-                {p.chave === "positivacao" ? `positivação de ${p.gatilho}%` : p.label}
+              <div className={`mt-1 text-2xl font-extrabold tracking-tight ${p.ativa ? "text-gray-800" : "text-gray-400 line-through"}`}>
+                {p.modo === "percentual" ? `${String(p.valor).replace(".", ",")}%` : brl(p.valor)}
               </div>
-              <div className="text-xs text-gray-500">
-                {p.modo === "percentual" ? <>sobre o {p.base}.</> : p.descricao}
+              {p.ativa && p.ativadaEm && (
+                <div className="text-[11px] font-semibold text-emerald-700">valendo desde {quando(p.ativadaEm)}</div>
+              )}
+              {!p.ativa && p.desativadaEm && (
+                <div className="text-[11px] font-semibold text-amber-700">
+                  desligado em {quando(p.desativadaEm)}{p.chave === "novos" ? " — vale para quem comprou até aí" : ""}
+                </div>
+              )}
+              <div className="mt-1 text-xs text-gray-500">
+                {p.chave === "comissao_novo" ? p.descricao : p.modo === "percentual" ? <>sobre o {p.base}.</> : p.descricao}
               </div>
 
               {admin && (
                 <div className="mt-3 grid grid-cols-2 gap-2 border-t border-dashed border-gray-200 pt-3">
-                  <label className="text-[11px] text-gray-500">
-                    Prêmio
+                  <label className={`text-[11px] text-gray-500 ${p.chave === "comissao_novo" ? "col-span-2" : ""}`}>
+                    {p.chave === "comissao_novo" ? "Comissão (%)" : "Prêmio"}
                     <input type="text" inputMode="decimal" defaultValue={String(p.valor).replace(".", ",")}
                       key={`v-${p.chave}-${p.valor}`}
                       onBlur={(e) => {
@@ -271,7 +304,7 @@ export default function CampanhaOutubro() {
                       className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
                       data-testid={`premissa-valor-${p.chave}`} />
                   </label>
-                  <label className="text-[11px] text-gray-500">
+                  {p.chave !== "comissao_novo" && <label className="text-[11px] text-gray-500">
                     Em
                     <select value={p.modo} onChange={(e) => salvarPremissa(p, { modo: e.target.value as any })}
                       className="mt-0.5 w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-800"
@@ -279,7 +312,7 @@ export default function CampanhaOutubro() {
                       <option value="valor">R$ (valor real)</option>
                       <option value="percentual">% (percentual)</option>
                     </select>
-                  </label>
+                  </label>}
                   <label className="col-span-2 text-[11px] text-gray-500">
                     {p.gatilhoLabel} ({p.gatilhoSufixo})
                     <input type="text" inputMode="decimal" defaultValue={String(p.gatilho).replace(".", ",")}
@@ -323,11 +356,15 @@ export default function CampanhaOutubro() {
                     </span>
                   )}
                   <p className="col-span-2 text-[10px] leading-relaxed text-gray-400">
-                    Em <b>%</b>, o prêmio é calculado sobre o {p.base}. Vale só para{" "}
-                    <b>{nomeDoMes(ym)}</b> — os outros meses ficam como estão.
+                    {p.chave === "comissao_novo"
+                      ? <>Vale para cliente novo cuja 1ª compra cair enquanto este flag estiver ligado em <b>{nomeDoMes(ym)}</b>. Se o vendedor sair da Honest no prazo, o cliente volta para 8%.</>
+                      : <>Em <b>%</b>, o prêmio é calculado sobre o {p.base}. Vale só para{" "}
+                        <b>{nomeDoMes(ym)}</b> — os outros meses ficam como estão.</>}
                   </p>
                 </div>
               )}
+
+              {p.chave === "comissao_novo" && <ComissaoClienteNovoCard ym={ym} />}
 
               {p.chave === "novos" && p.ativa && (
                 <div className="mt-3 border-t border-dashed border-gray-200 pt-3">

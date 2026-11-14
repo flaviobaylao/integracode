@@ -24,6 +24,20 @@ import { db } from './db';
 import { sql } from 'drizzle-orm';
 
 const TEMPLATE = 'confirmar_whatsapp';
+// 👤 nov/2026: versão que fala com o RESPONSÁVEL cadastrado ao lado do telefone (customers.contact).
+// Texto sugerido p/ aprovação: "Olá, {{1}}! Este é o WhatsApp de pedidos de {{2}}?" (mesmos botões).
+// Enquanto não estiver importado/aprovado, segue o template antigo (só a empresa).
+const TEMPLATE_RESP = 'confirmar_whatsapp_responsavel';
+async function templateResponsavelPronto(): Promise<boolean> {
+  try { const r: any = await db.execute(sql`SELECT umbler_id FROM whatsapp_templates WHERE label = ${TEMPLATE_RESP} LIMIT 1`); return !!r.rows?.[0]?.umbler_id; } catch { return false; }
+}
+/** Template + parâmetros: com responsável (quando há nome e o template novo está aprovado) ou o antigo. */
+async function templateEParams(empresa: string, responsavel: string): Promise<{ templateLabel: string; params: string[] }> {
+  const { primeiroNome } = await import('./responsavel-telefone');
+  const pn = primeiroNome(responsavel);
+  if (pn && await templateResponsavelPronto()) return { templateLabel: TEMPLATE_RESP, params: [pn, empresa || 'sua empresa'] };
+  return { templateLabel: TEMPLATE, params: [empresa || 'sua empresa'] };
+}
 const USE_CASE = 'confirmacao';
 const TZ = 'America/Sao_Paulo';
 const dig = (s: any) => String(s || '').replace(/\D/g, '');
@@ -64,9 +78,9 @@ async function ensureSchema() {
 
 // Clientes ativos (compraram nos últimos 180 d), celular válido, sem confirmação válida
 // e sem disparo desta campanha nos últimos 30 d.
-async function selecionar(limit: number): Promise<Array<{ id: string; nome: string; tel: string }>> {
+async function selecionar(limit: number): Promise<Array<{ id: string; nome: string; tel: string; resp: string }>> {
   const r: any = await db.execute(sql`
-    SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.phone
+    SELECT c.id, COALESCE(NULLIF(c.fantasy_name,''), c.name) AS nome, c.phone, c.contact
     FROM customers c
     WHERE COALESCE(c.is_active, true) = true
       AND COALESCE(c.situacao, '') NOT ILIKE 'inativo'
@@ -79,10 +93,10 @@ async function selecionar(limit: number): Promise<Array<{ id: string; nome: stri
                         AND d.created_at > now() - interval '30 days')
     ORDER BY (SELECT max(f2.emission_date) FROM fiscal_invoices f2 WHERE f2.customer_id = c.id) DESC
     LIMIT ${limit}`);
-  const out: Array<{ id: string; nome: string; tel: string }> = [];
+  const out: Array<{ id: string; nome: string; tel: string; resp: string }> = [];
   for (const x of (r.rows || []) as any[]) {
     const tel = celular(x.phone);
-    if (tel) out.push({ id: String(x.id), nome: String(x.nome || '').trim(), tel });
+    if (tel) out.push({ id: String(x.id), nome: String(x.nome || '').trim(), tel, resp: String(x.contact || '').trim() });
   }
   return out;
 }
@@ -99,12 +113,13 @@ export async function confirmacaoTick(opts: { force?: boolean; dry?: boolean; li
   if (!t.rows?.[0]?.umbler_id) return { ran: false, reason: `template ${TEMPLATE} ainda nao importado/aprovado` };
   const lote = Math.max(1, Math.min(1000, opts.limit || parseInt(await getSetting('confirmacao_tel_lote', '200'), 10) || 200));
   const alvos = await selecionar(lote);
-  if (opts.dry) return { ran: true, dry: true, alvos: alvos.length, amostra: alvos.slice(0, 20) };
+  if (opts.dry) return { ran: true, dry: true, alvos: alvos.length, templateResponsavelAprovado: await templateResponsavelPronto(), comResponsavel: alvos.filter((a) => a.resp).length, amostra: alvos.slice(0, 20) };
   const { enqueueOfficialDispatch } = await import('./official-dispatch');
   const res: Record<string, number> = {};
   for (const a of alvos) {
     try {
-      const r = await enqueueOfficialDispatch({ customerId: a.id, customerPhone: a.tel, templateLabel: TEMPLATE, params: [titulo(a.nome) || 'sua empresa'], useCase: USE_CASE, campaign: 'confirmacao:' + hojeBR() + ':' + a.id, category: 'MARKETING' });
+      const tp = await templateEParams(titulo(a.nome), a.resp);
+      const r = await enqueueOfficialDispatch({ customerId: a.id, customerPhone: a.tel, templateLabel: tp.templateLabel, params: tp.params, useCase: USE_CASE, campaign: 'confirmacao:' + hojeBR() + ':' + a.id, category: 'MARKETING' });
       res[r] = (res[r] || 0) + 1;
     } catch (e: any) { res['erro'] = (res['erro'] || 0) + 1; }
   }
@@ -161,8 +176,9 @@ export async function respostaDaConfirmacao(phone: string, texto: string): Promi
           // Confirmação para o número novo (template; se não der, link).
           try {
             const { enqueueOfficialDispatch } = await import('./official-dispatch');
-            const nome: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name,''), name) AS n FROM customers WHERE id = ${cid}`);
-            await enqueueOfficialDispatch({ customerId: cid, customerPhone: novo, templateLabel: TEMPLATE, params: [titulo(String(nome.rows?.[0]?.n || '')) || 'sua empresa'], useCase: USE_CASE, campaign: 'confirmacao:novo:' + cid + ':' + novo, category: 'MARKETING' });
+            const nome: any = await db.execute(sql`SELECT COALESCE(NULLIF(fantasy_name,''), name) AS n, contact FROM customers WHERE id = ${cid}`);
+            const tp = await templateEParams(titulo(String(nome.rows?.[0]?.n || '')), String(nome.rows?.[0]?.contact || ''));
+            await enqueueOfficialDispatch({ customerId: cid, customerPhone: novo, templateLabel: tp.templateLabel, params: tp.params, useCase: USE_CASE, campaign: 'confirmacao:novo:' + cid + ':' + novo, category: 'MARKETING' });
           } catch {}
         } catch (e: any) { console.error('[CONFIRMACAO-TEL] trocar', e?.message || e); }
         return `Anotado! Atualizei o cadastro para (${novo.slice(2, 4)}) ${novo.slice(4, 9)}-${novo.slice(9)} e mandei a confirmação lá. Obrigado! 🧡`;

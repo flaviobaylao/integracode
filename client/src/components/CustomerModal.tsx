@@ -22,6 +22,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock, XCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -196,6 +197,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       companyName: '',
       fantasyName: '',
       phone: '',
+      contact: '',
       email: '',
       particularidades: '',
       address: '',
@@ -257,6 +259,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         companyName: (customer as any).companyName || '',
         fantasyName: (customer as any).fantasyName || '',
         phone: formatPhone(customer.phone || ''),
+        contact: (customer as any).contact || '',
         email: customer.email || '',
         particularidades: (customer as any).particularidades || '',
         address: customer.address || '',
@@ -302,6 +305,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         companyName: '',
         fantasyName: '',
         phone: '',
+        contact: '',
         email: '',
         particularidades: '',
         address: '',
@@ -341,6 +345,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         form.setValue('customerType', _t);
         if (initialData.name) form.setValue('name', initialData.name);
         if (initialData.phone) form.setValue('phone', initialData.phone);
+        if (initialData.contact) form.setValue('contact' as any, initialData.contact);
         if (initialData.sellerId) form.setValue('sellerId', initialData.sellerId);
         if (initialData.address) form.setValue('address', initialData.address);
         if (initialData.latitude != null && initialData.latitude !== '') form.setValue('latitude', String(initialData.latitude));
@@ -620,6 +625,16 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   }, [customer]);
 
   const onSubmit = async (data: InsertCustomer) => {
+    // 👤 RESPONSÁVEL pelo telefone: obrigatório (nov/2026). Vai para customers.contact.
+    {
+      const resp = String((data as any).contact || '').replace(/\s+/g, ' ').trim();
+      if (resp.length < 2 || !/[A-Za-zÀ-ÿ]/.test(resp)) {
+        form.setError('contact' as any, { type: 'manual', message: 'Informe o nome do responsável pelo telefone' });
+        toast({ title: 'Responsável obrigatório', description: 'Informe o nome do responsável pelo telefone (ao lado do telefone).', variant: 'destructive' });
+        return;
+      }
+      (data as any).contact = resp;
+    }
     // Cronograma de parcelas: normaliza ("28 / 35" -> "28/35") e deriva o nº de parcelas
     {
       const n = String((data as any).installmentSchedule || '').split(/[^0-9]+/).filter(Boolean).map((x: string) => parseInt(x, 10)).filter((x: number) => x > 0 && x <= 3650);
@@ -1023,30 +1038,54 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                     </>
                   )}
 
-                  <FormField
-                    control={form.control}
-                    name="phone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center space-x-1">
-                          <Phone className="h-4 w-4" />
-                          <span>Telefone do Comprador *</span>
-                        </FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            placeholder="(11) 99999-9999"
-                            maxLength={15}
-                            onChange={(e) => {
-                              const formatted = formatPhone(e.target.value);
-                              field.onChange(formatted);
-                            }}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <FormField
+                      control={form.control}
+                      name="phone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="flex items-center space-x-1">
+                            <Phone className="h-4 w-4" />
+                            <span>Telefone do Comprador *</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="(11) 99999-9999"
+                              maxLength={15}
+                              onChange={(e) => {
+                                const formatted = formatPhone(e.target.value);
+                                field.onChange(formatted);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={'contact' as any}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="flex items-center space-x-1">
+                            <UserIcon className="h-4 w-4" />
+                            <span>Responsável (comprador) *</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input {...field} value={(field.value as any) || ''} placeholder="Nome de quem atende neste telefone" maxLength={120} data-testid="input-customer-contact" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                  <div className="-mt-2">
+                    <ContactPickerButton onPick={({ nome, telefone }) => {
+                      if (telefone) form.setValue('phone', formatPhone(telefone), { shouldDirty: true });
+                      if (nome) form.setValue('contact' as any, nome, { shouldDirty: true });
+                    }} />
+                  </div>
 
                   <FormField
                     control={form.control}

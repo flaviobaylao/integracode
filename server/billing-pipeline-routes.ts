@@ -30,7 +30,23 @@ import {
 // da nota (evita nota rejeitada órfã e deixa o card acionável após corrigir o cadastro).
 async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; message?: string }> {
   try {
-    const customer = item.customerId ? await storage.getCustomer(item.customerId) : null;
+    let customer: any = item.customerId ? await storage.getCustomer(item.customerId) : null;
+    // CLIENTE ORFAO (06/out/2026): o card apontava para um customer_id que nao
+    // existe mais (cadastro duplicado apagado/mesclado) e a validacao lia UF
+    // vazia — "Cadastro incompleto" com o cadastro certo. Quando o id nao
+    // resolve mas o CPF/CNPJ do card bate com um cadastro, religa o card a ele.
+    if (!customer && item.customerDocument) {
+      const doc = String(item.customerDocument).replace(/\D/g, '');
+      const porDoc = doc.length >= 11 ? await storage.getCustomerByDocument(doc) : undefined;
+      if (porDoc) {
+        customer = porDoc;
+        if (item.id && porDoc.id !== item.customerId) {
+          await storage.updateBillingPipelineItem(item.id, { customerId: porDoc.id } as any);
+          item.customerId = porDoc.id;
+          console.log(`🔗 [FATURAMENTO] card ${item.orderNumber || item.id}: cliente ${item.customerId} nao existia — religado por documento ao cadastro ${porDoc.id} (${porDoc.name})`);
+        }
+      }
+    }
     const destUf = resolveDestinationUf({ state: (customer as any)?.state, cep: (customer as any)?.zipCode });
     if (!destUf) {
       const nome = item.customerName || (customer as any)?.name || 'cliente';
@@ -209,7 +225,10 @@ const NCM_INVALIDOS = new Set(['20098900', '22029000', '00000000']);
 function ncmDoProduto(raw: unknown): string {
   const d = String(raw ?? '').replace(/\D/g, '');
   if (!d) return NCM_SUCO_MISTO;
-  const v = d.padStart(8, '0').slice(0, 8);
+  // Mesma regra do normalizeNcm (sefaz-service): NCM incompleto completa a
+  // DIREITA, porque o codigo e hierarquico. Antes completava a esquerda e
+  // "3923.90" virava 00392390, que nao existe -> NF rejeitada pela SEFAZ.
+  const v = (d.length === 7 ? d.padStart(8, '0') : d.padEnd(8, '0')).slice(0, 8);
   return NCM_INVALIDOS.has(v) ? NCM_SUCO_MISTO : v;
 }
 
@@ -2150,13 +2169,19 @@ export function registerBillingPipelineRoutes(app: Express) {
         }
       } catch (e: any) { console.warn('[BILLING-PIPELINE] enriquecimento de fotos da troca (segue):', e?.message); }
       // Recorrência das trocas (selo no card), só para trocas ainda não entregues.
+      // Selo "Troca - Desconto em Boleto" (05/11/2026): vale em TODAS as etapas — o financeiro
+      // precisa enxergá-lo depois do faturamento para aplicar o desconto manualmente.
       try {
-        const trocas = (items as any[]).filter(i => i.salesCardId && String(i.operationType || '').toLowerCase() === 'troca'
-          && !['entregue', 'lixeira'].includes(String(i.stage || '')));
+        const trocas = (items as any[]).filter(i => i.salesCardId && String(i.operationType || '').toLowerCase() === 'troca');
         if (trocas.length) {
           const { recorrenciaPorCards } = await import('./troca-registros-routes.js');
           const m = await recorrenciaPorCards(trocas.map((i: any) => String(i.salesCardId)));
-          for (const it of trocas) { const r = m.get(String(it.salesCardId)); if (r) (it as any).trocaRecorrencia = r; }
+          for (const it of trocas) {
+            const r = m.get(String(it.salesCardId));
+            if (!r) continue;
+            if (r.descontoBoleto) (it as any).trocaDescontoBoleto = true;
+            if (!['entregue', 'lixeira'].includes(String(it.stage || ''))) (it as any).trocaRecorrencia = r;
+          }
         }
       } catch (e: any) { console.warn('[BILLING-PIPELINE] recorrencia troca (segue):', e?.message); }
       res.json(items);

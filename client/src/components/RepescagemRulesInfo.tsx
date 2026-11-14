@@ -45,6 +45,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
                 <li>Clientes <b>ativos</b> (inativos não entram).</li>
                 <li>Carteiras de <b>vendedor externo</b> e de <b>telemarketing</b> (Letícia/Robson). Carteiras de canal/sistema (Honest 1/2/3, HOTSITE, INSTAGRAM) e sem dono ficam de fora.</li>
                 <li>Clientes vinculados a uma <b>rede de clientes</b> não entram.</li>
+                <li><b>Quarentena:</b> cliente com início de atendimento em data futura (selo <b>"Atend. a partir de…"</b>) não entra até essa data. Depois dela, só cai se perder uma visita a partir da data prevista.</li>
               </ul>
             </div>
             <div>
@@ -77,7 +78,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Atribuição da venda e fechamento de rota</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Quem implanta o pedido fica com a venda; o card do outro fica <b>inativo/desabilitado</b>.</li>
-                <li>No fechamento, <b>só o vendedor de cadastro (dono) justifica</b> repescagem não atendida; o atendente habilitado não. Card inativo (já vendido/atendido) fica isento.</li>
+                <li>Report/justificativa de repescagem <b>só é obrigatório quando há captura</b>: no fechamento entra apenas o cliente que o vendedor <b>capturou</b> e não atendeu. Repescagem sem captura (só na lista ou na rota) não exige justificativa de ninguém. Card inativo (já vendido/atendido) fica isento.</li>
               </ul>
             </div>
             <div>

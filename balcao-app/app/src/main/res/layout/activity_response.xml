@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:padding="16.0dp" android:layout_width="match_parent" android:layout_height="match_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <TextView android:textSize="18.0sp" android:textStyle="bold" android:paddingBottom="12.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Retorno da maquininha" />
+    <ScrollView android:layout_width="match_parent" android:layout_height="0.0dp" android:layout_weight="1.0">
+        <TextView android:id="@+id/resultado" android:background="#fff2f2f2" android:padding="12.0dp" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Aguardando…" android:textIsSelectable="true" />
+    </ScrollView>
+    <Button android:id="@+id/btnImprimirRetorno" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12.0dp" android:text="Imprimir comprovante" />
+    <Button android:id="@+id/btnReenviar" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12.0dp" android:text="Reenviar ao INTEGRA" />
+    <Button android:id="@+id/btnFechar" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Fechar" />
+</LinearLayout>

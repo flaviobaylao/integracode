@@ -18,6 +18,8 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
   const [searchQuery, setSearchQuery] = useState("");
   const [isCreatingMode, setIsCreatingMode] = useState(false);
   const [customerName, setCustomerName] = useState("");
+  // 👤 Responsável pelo telefone (customers.contact) — obrigatório (nov/2026).
+  const [customerContact, setCustomerContact] = useState("");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -58,7 +60,7 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
 
   // Mutation to create new customer
   const createCustomerMutation = useMutation({
-    mutationFn: async (customerData: { name: string; phone: string }) => {
+    mutationFn: async (customerData: { name: string; phone: string; contact: string }) => {
       const response = await apiRequest("POST", "/api/customers", customerData);
       return response as Customer;
     },
@@ -112,9 +114,14 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
       return;
     }
 
+    if (customerContact.trim().length < 2) {
+      toast({ title: "Erro", description: "Informe o nome do responsável por este telefone", variant: "destructive" });
+      return;
+    }
     createCustomerMutation.mutate({
       name: customerName.trim(),
       phone: detectedPhone!,
+      contact: customerContact.trim(),
     });
   };
 
@@ -226,6 +233,21 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
                     onChange={(e) => setCustomerName(e.target.value)}
                     data-testid="input-customer-name"
                     autoFocus
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="customer-contact" className="text-sm font-medium text-gray-700">
+                    Responsável por este telefone *
+                  </label>
+                  <Input
+                    id="customer-contact"
+                    type="text"
+                    placeholder="Nome de quem atende neste número"
+                    value={customerContact}
+                    onChange={(e) => setCustomerContact(e.target.value)}
+                    maxLength={120}
+                    data-testid="input-customer-contact"
                   />
                 </div>
 

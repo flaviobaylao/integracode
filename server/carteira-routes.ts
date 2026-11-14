@@ -29,6 +29,8 @@ import { authenticateUser } from "./authMiddleware";
 import { registerCarteiraReclassificacao } from "./carteira-reclassificacao-routes";
 import { registerAgendaRota } from "./agenda-rota-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
+import { registerDossieVendedor } from "./dossie-vendedor-routes";
+import { registerClientesBlindados } from "./clientes-blindados-routes";
 
 const TZ = "America/Sao_Paulo";
 
@@ -593,7 +595,7 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
       //     ficam de fora. Aqui a janela e a VIDA TODA do cliente, nao o periodo da
       //     tela — a pergunta e "quanto ele costuma comprar por pedido", que nao pode
       //     depender do recorte escolhido no filtro de mes.
-      const fatPorDoc = new Map<string, { ultima: string | null; media3: number; eventos: number }>();
+      const fatPorDoc = new Map<string, { ultima: string | null; valorUltima: number; media3: number; eventos: number }>();
       try {
         const fatRows = await q(`
           WITH rec AS (
@@ -615,12 +617,16 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
           )
           SELECT doc,
                  MAX(dt) FILTER (WHERE rn = 1)::date::text AS ultima,
+                 -- rn=1 e' uma linha so' por doc: o MAX aqui nao escolhe nada,
+                 -- so' atravessa o GROUP BY. E o valor DAQUELE faturamento.
+                 ROUND(MAX(valor) FILTER (WHERE rn = 1), 2)::float AS valor_ultima,
                  ROUND(AVG(valor) FILTER (WHERE rn <= 3), 2)::float AS media3,
                  MAX(rn)::int AS eventos
           FROM ord GROUP BY doc`);
         for (const r of fatRows as any[]) {
           fatPorDoc.set(String(r.doc), {
             ultima: r.ultima ? String(r.ultima) : null,
+            valorUltima: Number(r.valor_ultima) || 0,
             media3: Number(r.media3) || 0,
             eventos: Number(r.eventos) || 0,
           });
@@ -781,6 +787,7 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
           // Ultima venda faturada de verdade e o valor medio dos 3 ultimos
           // faturamentos (vida toda do cliente, nao o periodo da tela).
           ultimaVendaData: ft?.ultima || null,
+          ultimaVendaValor: ft?.valorUltima || 0,
           mediaUlt3: ft?.media3 || 0,
           faturamentos: ft?.eventos || 0,
           debito: debitoCli,
@@ -847,6 +854,10 @@ export function registerCarteira(app: Express) {
   registerAgendaRota(app);
   // Aba "Rede de Cliente" (grupos de filiais / mesma gestao, consolidados).
   registerRedesClientes(app);
+  // Aba "Dossiê do vendedor" (vida de cada vendedor + clientes mês a mês).
+  registerDossieVendedor(app);
+  // Aba "Clientes blindados" de Metas de Vendas (cliente que só responde ao dono da carteira).
+  registerClientesBlindados(app);
 
   // ---------------------------------------------------------------------------
   // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
@@ -907,6 +918,89 @@ export function registerCarteira(app: Express) {
     }
   });
 
+
+  // ---------------------------------------------------------------------------
+  // GET /api/reports/carteira-graficos?inicio=2025-01&fim=2026-11
+  // Aba "Gráficos" da Gestão de Carteiras. Agrega NO SERVIDOR (sem o teto de
+  // 2.000 clientes da lista) o faturamento mês a mês por vendedor e os clientes
+  // novos do período. Cliente novo = `conquista` (a menor entre cadastro e 1ª
+  // venda de todos os tempos) dentro do período — a mesma régua da coluna
+  // "Data de conquista". Mesmo escopo da aba Carteira: vendedor/telemarketing
+  // só enxergam a própria carteira.
+  // ---------------------------------------------------------------------------
+  app.get("/api/reports/carteira-graficos", authenticateUser, async (req: Request, res: Response) => {
+    try {
+      const hoje = mesAtual();
+      const inicio = normMes(req.query.inicio, "2025-01");
+      const fimBruto = normMes(req.query.fim, hoje);
+      const fim = fimBruto > hoje ? hoje : fimBruto;
+      const usuario: any = (req as any).currentUser || (req as any).user || null;
+      const restrito = ["vendedor", "telemarketing"].includes(String(usuario?.role || ""));
+      const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
+      const idsCarteira: string[] = [];
+      if (restrito) {
+        const add = (x: any) => { const v = limpaId(x); if (v && !idsCarteira.includes(v)) idsCarteira.push(v); };
+        add(usuario?.id);
+        const codigos: any[] = [];
+        if (usuario?.omieVendorCode) codigos.push(usuario.omieVendorCode);
+        const mapaCodigos = usuario?.omieVendorCodes;
+        if (mapaCodigos && typeof mapaCodigos === "object") {
+          for (const v of Object.values(mapaCodigos)) if (v) codigos.push(v);
+        }
+        for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
+        if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
+      }
+      const { clientes, meses, serieRec } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
+
+      // `novosLista`: QUEM são os clientes novos de cada mês de conquista, com o
+      // que cada um comprou no período. Serve ao tooltip do gráfico "Novos
+      // clientes" (Flavio, 13/11/2026): um ponto no gráfico que diz "5 clientes"
+      // e não diz QUAIS obriga a sair da tela para descobrir.
+      type Novo = { nome: string; valor: number };
+      type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number; novosLista: Record<string, Novo[]> };
+      const porVend = new Map<string, Acc>();
+      const novosTotalMes: Record<string, number> = {};
+      for (const c of clientes) {
+        const v = String(c.vendedor || "Sem vendedor");
+        let a = porVend.get(v);
+        if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0, novosLista: {} }; porVend.set(v, a); }
+        const pm: Record<string, number> = c.porMes || {};
+        for (const m of meses) {
+          const val = Number(pm[m]) || 0;
+          if (val) { a.fat[m] = (a.fat[m] || 0) + val; a.total += val; }
+        }
+        const mc = String(c.conquista || "").slice(0, 7);
+        if (mc && mc >= inicio && mc <= fim) {
+          a.novosQtd[mc] = (a.novosQtd[mc] || 0) + 1;
+          a.novosTotal++;
+          novosTotalMes[mc] = (novosTotalMes[mc] || 0) + 1;
+          let noPeriodo = 0;
+          for (const m of meses) {
+            const val = Number(pm[m]) || 0;
+            if (val) { a.novosValor[m] = (a.novosValor[m] || 0) + val; a.novosValorTotal += val; noPeriodo += val; }
+          }
+          (a.novosLista[mc] = a.novosLista[mc] || []).push({ nome: String(c.nome || "(sem nome)"), valor: Math.round(noPeriodo * 100) / 100 });
+        }
+      }
+      const recPorMes = new Map(serieRec.map((r: any) => [String(r.mes), Number(r.valor) || 0]));
+      res.json({
+        ok: true,
+        periodo: { inicio, fim, meses, mesCorrente: hoje },
+        escopo: { restrito },
+        total: meses.map((m) => ({ mes: m, valor: recPorMes.get(m) || 0, novos: novosTotalMes[m] || 0 })),
+        vendedores: Array.from(porVend.values()).map((a) => {
+          // Maior comprador primeiro: num mês com 40 entradas o tooltip mostra
+          // as primeiras e resume o resto, e as primeiras têm que ser as que
+          // importam.
+          for (const k of Object.keys(a.novosLista)) a.novosLista[k].sort((x, y) => y.valor - x.valor);
+          return a;
+        }).sort((x, y) => y.total - x.total),
+      });
+    } catch (e: any) {
+      console.error("[carteira-graficos]", e);
+      res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // GET /api/reports/gestao-carteiras?inicio=2025-01&fim=2026-08

@@ -223,6 +223,17 @@ function brTodayStr(): string {
 // ÚLTIMA visita registrada (passada) é "vermelha" (agendada não efetuada
 // e SEM pedido na data).
 type SkipCiclo = { customerId: string; anchor: string };
+// Data (YYYY-MM-DD) de início do fornecimento/atendimento do cliente (quarentena), ou null.
+function dataInicioAtendimento(v: any): string | null {
+  if (!v) return null;
+  try {
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+    const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v));
+    if (m) return m[1];
+    const d = new Date(String(v));
+    return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  } catch { return null; }
+}
 // Pular ciclo automatico por venda fora do dia de rota: desligado (ver gatilho abaixo).
 const AUTO_PULAR_CICLO = false;
 async function computeRedCandidates(opts: { startDate: string; endDate: string }, skipOut?: SkipCiclo[]): Promise<any[]> {
@@ -578,7 +589,12 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     // customers.isActive e active_customers). E2-C: is_active e a unica regra de ativo.
     if ((c as any).isActive === false
       || String((c as any).situacao || '').toLowerCase() === 'inativo') continue;
-    const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr).sort();
+    // 🔒 QUARENTENA (nov/2026, decisão do Flavio): cliente com início de fornecimento/atendimento
+    // FUTURO (service_start_date > hoje — selo "Atend. a partir de DD/MM/AAAA") NÃO cai em
+    // repescagem. Depois da data, só cai por visita perdida A PARTIR dela (as anteriores não contam).
+    const inicioAtend = dataInicioAtendimento((c as any).serviceStartDate);
+    if (inicioAtend && inicioAtend > todayStr) continue;
+    const scheduled = Array.from(scheduledByCustomer.get(c.id) || []).filter(d => d < todayStr && (!inicioAtend || d >= inicioAtend)).sort();
     if (scheduled.length === 0) continue;
     const lastDate = scheduled[scheduled.length - 1];
 
@@ -608,6 +624,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     const cycles = computeCycles(dows, c.periodicity || 'semanal', saleDates, todayStr, n, (c as any).semanaAtendimento);
     const ev = evaluateRepescagem(cycles, c.periodicity || 'semanal', todayStr);
     if (!ev.falls || !ev.lastRedAnchor) continue;
+    if (inicioAtend && ev.lastRedAnchor < inicioAtend) continue; // visita perdida antes do início do atendimento
 
     // REFINO (proxima data de visita): para QUINZENAL e MENSAL, se ainda ha uma visita agendada
     // NESTA semana (de hoje ate domingo) o cliente esta na SEMANA DA PROXIMA VISITA -> NAO cai em
@@ -2116,7 +2133,9 @@ export function registerRepescagemRoutes(app: Express, opts: {
 
   // Travar / destravar UMA linha (qualquer usuário). A trava vale só para o dia vigente.
   // Quem trava vira "dono" da trava; só ele ou um admin conseguem destravar.
-  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole(ALLOWED_ROLES), async (req: any, res) => {
+  // Vendedores externos também capturam clientes da repescagem na Rota do Dia (nov/2026, pedido
+  // do Flavio) — mesmas regras do telemarketing: limite de 5, registro obrigatório e pendência.
+  app.post('/api/repescagem/assignments/:id/lock', authenticateUser, requireRole([...ALLOWED_ROLES, 'vendedor']), async (req: any, res) => {
     try {
       const { id } = req.params;
       const actor = (req as any).currentUser;
@@ -3593,7 +3612,19 @@ export async function ensureRepescagemCapturasTable(): Promise<void> {
                           WHERE rc.customer_id = ra.customer_id AND rc.attendant_id = ra.locked_by AND rc.capture_date = ra.locked_date::date)
        ORDER BY ra.customer_id, ra.locked_by, ra.updated_at DESC NULLS LAST`);
   } catch (e) { console.warn('[REP-CAPTURA] backfill:', (e as any)?.message); }
+  // Itens do Inbox de captura criados antes da réplica (nov/2026) passam a apontar para quem
+  // capturou — assim a réplica do admin chega nas Pendências do Inbox da Rota do Dia dele.
+  try {
+    await db.execute(sql`
+      UPDATE change_requests SET seller_id = details->>'atendenteId'
+       WHERE entity_type = 'repescagem' AND details->>'reportKind' = ${REP_CAPTURA_KIND}
+         AND seller_id IS NULL AND COALESCE(details->>'atendenteId', '') <> ''`);
+  } catch (e) { console.warn('[REP-CAPTURA] seller_id inbox:', (e as any)?.message); }
   _capturasTableOk = true;
+  // Corrige capturas marcadas como "venda" em que o pedido foi implantado por OUTRA pessoa.
+  void corrigirVendasDeOutro();
+  // Limpa na subida os cards de captura que ficaram duplicados com o report normal.
+  void unificarCardsCapturaDuplicados().then((k) => { if (k) console.log(`🔗 [REP-CAPTURA] ${k} card(s) de captura unificados com o report do atendimento.`); });
 }
 
 const rowsOfAny = (r: any): any[] => (r && r.rows ? r.rows : (Array.isArray(r) ? r : []));
@@ -3607,9 +3638,10 @@ const DESFECHO_LABEL: Record<string, string> = {
   atendida: 'Atendido sem venda',
   liberada: 'Liberado sem atendimento (justificado)',
   pendente: 'Capturado sem registro — pendência',
+  venda_outro: 'Venda implantada por outro vendedor',
   justificada: 'Pendência justificada',
 };
-const DESFECHO_EMOJI: Record<string, string> = { venda: '💰', atendida: '📝', liberada: '🔓', pendente: '⚠️', justificada: '✍️' };
+const DESFECHO_EMOJI: Record<string, string> = { venda_outro: '🔁', venda: '💰', atendida: '📝', liberada: '🔓', pendente: '⚠️', justificada: '✍️' };
 
 async function nomeUsuarioRep(id: string | null | undefined): Promise<string | null> {
   const k = String(id || '');
@@ -3634,6 +3666,19 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
     if (!c || !DESFECHO_LABEL[c.status]) return;
     const { ensureTables } = await import('./change-requests-routes');
     await ensureTables();
+    // 🔗 UM CARD SÓ (nov/2026): atendimento/venda que já gerou o report normal do atendimento
+    // (Não-venda, atendimento virtual…) não abre um 2º card — o report normal já mostra o selo
+    // "Repescagem · Cliente de X · atendido por Y" e recebe os dados da captura.
+    if (c.status === 'atendida' || c.status === 'venda') {
+      const rel = await reportNormalDaCaptura(c.id);
+      if (rel) {
+        await db.execute(sql`
+          UPDATE change_requests
+             SET details = COALESCE(details, '{}'::jsonb) || ${JSON.stringify({ capturaRepescagem: { capturaId: c.id, desfecho: c.status, capturadoEm: c.cap_at || null, desfechoEm: c.desf_at || null } })}::jsonb
+           WHERE id = ${rel}`);
+        return;
+      }
+    }
     const entityId = `repescagem-captura-${c.id}-${c.status}`;
     const ja = rowsOfAny(await db.execute(sql`SELECT id FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${entityId} LIMIT 1`));
     if (ja.length) return;
@@ -3645,6 +3690,7 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
     const texto = String(c.texto || '').trim();
     let resumo = '';
     if (c.status === 'venda') resumo = `${nome} (carteira ${carteira}) foi atendido na repescagem por ${atendente} com venda de ${brl(c.valor)}${c.quem_vendeu ? ` — pedido de ${c.quem_vendeu}` : ''}.`;
+    else if (c.status === 'venda_outro') resumo = `${atendente} capturou ${nome} (carteira ${carteira}), mas o pedido de ${brl(c.valor)} foi implantado por ${c.quem_vendeu || 'outro vendedor'} — a venda é de quem implantou. A captura foi encerrada.`;
     else if (c.status === 'atendida') resumo = `${nome} (carteira ${carteira}) foi atendido na repescagem por ${atendente}, sem venda.${quemRegistrou ? ` Registro feito por ${quemRegistrou}.` : ''}`;
     else if (c.status === 'liberada') resumo = `${atendente} capturou ${nome} (carteira ${carteira}) e liberou sem atendimento.`;
     else if (c.status === 'pendente') resumo = `${atendente} capturou ${nome} (carteira ${carteira}) em ${fmtBR(String(c.cap_dt).slice(0, 10))} e chegou às 18h sem registro de atendimento, sem venda e sem liberar. Ficou com pendência: não captura outro cliente até registrar o atendimento ou justificar.`;
@@ -3664,10 +3710,85 @@ async function inboxDesfechoCaptura(capturaId: string): Promise<void> {
         (entity_type, entity_id, customer_id, entity_name, seller_id, seller_name,
          types, details, status, kind, requested_by, requested_by_name, messages)
       VALUES
-        ('repescagem', ${entityId}, NULL, ${nomeCard}, NULL, ${atendente},
+        ('repescagem', ${entityId}, NULL, ${nomeCard}, ${c.attendant_id || null}, ${atendente},
          ${JSON.stringify([])}::jsonb, ${JSON.stringify(details)}::jsonb, 'pending', 'report', NULL, 'Sistema',
          ${JSON.stringify([msg])}::jsonb)`);
   } catch (e) { console.warn('[REP-CAPTURA] inbox:', (e as any)?.message); }
+}
+
+// Captura fechada como "venda" cujo pedido NÃO foi implantado por quem capturou → 'venda_outro'
+// (e o card do Inbox passa a dizer quem implantou). Roda na subida do servidor.
+async function corrigirVendasDeOutro(): Promise<void> {
+  try {
+    const rows = rowsOfAny(await db.execute(sql`
+      SELECT rc.id FROM repescagem_capturas rc
+       WHERE rc.status = 'venda' AND rc.created_at >= now() - interval '30 days'
+         AND NOT EXISTS (
+           SELECT 1 FROM billing_pipeline bp
+            WHERE bp.customer_id::text = rc.customer_id AND COALESCE(bp.operation_type, 'venda') = 'venda'
+              AND bp.created_at >= rc.captured_at
+              AND (bp.seller_id = rc.attendant_id OR EXISTS (SELECT 1 FROM users u WHERE u.id = rc.attendant_id
+                    AND u.omie_vendor_code IS NOT NULL AND bp.seller_id IN (u.omie_vendor_code, 'omie-vendor-' || u.omie_vendor_code))))`));
+    for (const r of rows) {
+      await db.execute(sql`UPDATE repescagem_capturas SET status = 'venda_outro', updated_at = now() WHERE id = ${r.id} AND status = 'venda'`);
+      // Card antigo (desfecho "venda") sai e entra o card correto.
+      await db.execute(sql`DELETE FROM change_requests WHERE entity_type = 'repescagem' AND entity_id = ${'repescagem-captura-' + r.id + '-venda'}
+                             AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(messages, '[]'::jsonb)) m WHERE m->>'kind' IN ('reply', 'resend'))`);
+      await inboxDesfechoCaptura(r.id);
+    }
+    if (rows.length) console.log(`🔁 [REP-CAPTURA] ${rows.length} captura(s) corrigidas para "venda de outro vendedor".`);
+  } catch (e) { console.warn('[REP-CAPTURA] corrigir vendas:', (e as any)?.message); }
+}
+
+// Report NORMAL (kind='report', entity_type='customer') do mesmo cliente feito por quem capturou
+// depois da captura — é o card que fica no Inbox no lugar do card de captura.
+async function reportNormalDaCaptura(capturaId: string): Promise<string | null> {
+  try {
+    const r = rowsOfAny(await db.execute(sql`
+      SELECT cr.id FROM change_requests cr, repescagem_capturas rc
+       WHERE rc.id = ${capturaId}
+         AND cr.kind = 'report' AND cr.entity_type = 'customer'
+         AND (cr.entity_id = rc.customer_id OR cr.customer_id = rc.customer_id)
+         AND (cr.seller_id = rc.attendant_id OR cr.requested_by = rc.attendant_id)
+         AND cr.created_at >= (rc.captured_at AT TIME ZONE 'UTC') - interval '5 minutes'
+         AND cr.status <> 'cancelled'
+       ORDER BY cr.created_at ASC LIMIT 1`));
+    return r[0]?.id ? String(r[0].id) : null;
+  } catch { return null; }
+}
+
+// Remove o card de captura (atendido/venda) que ficou DUPLICADO com o report normal do mesmo
+// atendimento — a captura passa para o report normal. Só remove card sem conversa do admin.
+async function unificarCardsCapturaDuplicados(): Promise<number> {
+  let n = 0;
+  try {
+    const dups = rowsOfAny(await db.execute(sql`
+      SELECT cr.id, cr.details->>'desfecho' AS desfecho,
+             split_part(replace(cr.entity_id, 'repescagem-captura-', ''), '-' || (cr.details->>'desfecho'), 1) AS captura_id
+        FROM change_requests cr
+       WHERE cr.entity_type = 'repescagem' AND cr.details->>'reportKind' = ${REP_CAPTURA_KIND}
+         AND cr.details->>'desfecho' IN ('atendida', 'venda')
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(cr.messages, '[]'::jsonb)) m
+                          WHERE m->>'kind' IN ('reply', 'resend') )
+         AND cr.created_at >= now() - interval '30 days'`));
+    for (const d of dups) {
+      const capId = String(d.captura_id || '');
+      if (!capId) continue;
+      const rel = await reportNormalDaCaptura(capId);
+      if (!rel) continue;
+      const cap = rowsOfAny(await db.execute(sql`
+        SELECT to_char(captured_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS cap_at,
+               to_char(desfecho_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS desf_at
+          FROM repescagem_capturas WHERE id = ${capId}`))[0] || {};
+      await db.execute(sql`
+        UPDATE change_requests
+           SET details = COALESCE(details, '{}'::jsonb) || ${JSON.stringify({ capturaRepescagem: { capturaId: capId, desfecho: d.desfecho, capturadoEm: cap.cap_at || null, desfechoEm: cap.desf_at || null } })}::jsonb
+         WHERE id = ${rel}`);
+      await db.execute(sql`DELETE FROM change_requests WHERE id = ${d.id}`);
+      n++;
+    }
+  } catch (e) { console.warn('[REP-CAPTURA] unificar:', (e as any)?.message); }
+  return n;
 }
 
 // Fecha as capturas abertas/pendentes que já tiveram venda ou registro de atendimento
@@ -3683,12 +3804,17 @@ export async function resolverCapturasRepescagem(f?: { customerId?: string; atte
   let n = 0;
   for (const c of abertas) {
     try {
+      // Venda depois da captura, separando a de QUEM CAPTUROU (o pedido é de quem implantou) da
+      // implantada por outra pessoa (ex.: o dono da carteira vendeu enquanto o cliente estava capturado).
       const venda = rowsOfAny(await db.execute(sql`
-        SELECT COALESCE(SUM(COALESCE(sale_value, 0)), 0) AS v, COUNT(*)::int AS q,
-               STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(seller_name), ''), seller_id), ', ') AS quem
-          FROM billing_pipeline
-         WHERE customer_id::text = ${c.customer_id} AND COALESCE(operation_type, 'venda') = 'venda'
-           AND created_at >= ${c.cap_at}::timestamp`))[0];
+        SELECT COALESCE(SUM(COALESCE(bp.sale_value, 0)), 0) AS v, COUNT(*)::int AS q,
+               COUNT(*) FILTER (WHERE bp.seller_id = ${c.attendant_id}
+                 OR EXISTS (SELECT 1 FROM users u WHERE u.id = ${c.attendant_id} AND u.omie_vendor_code IS NOT NULL
+                             AND bp.seller_id IN (u.omie_vendor_code, 'omie-vendor-' || u.omie_vendor_code)))::int AS proprio,
+               STRING_AGG(DISTINCT COALESCE(NULLIF(TRIM(bp.seller_name), ''), bp.seller_id), ', ') AS quem
+          FROM billing_pipeline bp
+         WHERE bp.customer_id::text = ${c.customer_id} AND COALESCE(bp.operation_type, 'venda') = 'venda'
+           AND bp.created_at >= ${c.cap_at}::timestamp`))[0];
       const log = rowsOfAny(await db.execute(sql`
         SELECT attendant_id, notes, service_type FROM virtual_service_logs
          WHERE customer_id = ${c.customer_id} AND created_at >= ${c.cap_at}::timestamp
@@ -3703,7 +3829,7 @@ export async function resolverCapturasRepescagem(f?: { customerId?: string; atte
       }
       let status: string | null = null; let texto: string | null = null; let valor: number | null = null; let quem: string | null = null; let st: string | null = null; let by: string | null = null;
       if (Number(venda?.q || 0) > 0) {
-        status = 'venda'; valor = Number(venda.v || 0); quem = venda.quem ? (await nomeUsuarioRep(String(venda.quem).split(',')[0].trim())) : null;
+        status = Number(venda?.proprio || 0) > 0 ? 'venda' : 'venda_outro'; valor = Number(venda.v || 0); quem = venda.quem ? (await nomeUsuarioRep(String(venda.quem).split(',')[0].trim())) : null;
         if (log) { texto = log.notes || null; st = log.service_type || null; by = log.attendant_id || null; }
       } else if (log) {
         status = 'atendida'; texto = String(log.notes || '').trim() || '(registro sem texto)'; st = log.service_type || null; by = log.attendant_id || null;
@@ -3720,6 +3846,8 @@ export async function resolverCapturasRepescagem(f?: { customerId?: string; atte
       if (upd.length) { n++; await inboxDesfechoCaptura(c.id); }
     } catch (e) { console.warn('[REP-CAPTURA] resolver:', (e as any)?.message); }
   }
+  // Varredura geral (cron de 5 min): junta cards duplicados de captura com o report normal.
+  if (!f?.customerId && !f?.attendantId) await unificarCardsCapturaDuplicados();
   return n;
 }
 

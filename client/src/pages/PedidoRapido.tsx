@@ -36,6 +36,7 @@ interface CartItem extends Product {
 interface CustomerData {
   name: string;
   phone: string;
+  contact: string;
   cpfCnpj: string;
   address: string;
   paymentMethod: 'pix' | 'boleto' | 'card';
@@ -101,6 +102,7 @@ export default function PedidoRapido() {
   const [customerData, setCustomerData] = useState<CustomerData>({
     name: '',
     phone: '',
+    contact: '',
     cpfCnpj: '',
     address: '',
     paymentMethod: 'pix',
@@ -241,6 +243,11 @@ export default function PedidoRapido() {
       toast({ title: 'Dados incompletos', description: 'Preencha todos os campos obrigatórios', variant: 'destructive' });
       return;
     }
+    // 👤 Responsável pelo WhatsApp: obrigatório (nov/2026).
+    if (String(customerData.contact || '').trim().length < 2) {
+      toast({ title: 'Dados incompletos', description: 'Informe o nome do responsável por este WhatsApp', variant: 'destructive' });
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -263,6 +270,7 @@ export default function PedidoRapido() {
         customer: {
           name: customerData.name,
           phone: cleanPhone,
+          contact: customerData.contact.trim(),
           address: customerData.address,
           cpfCnpj: cleanCpfCnpj || null,
           email: null,
@@ -441,6 +449,18 @@ export default function PedidoRapido() {
                   onChange={e => setCustomerData(prev => ({ ...prev, phone: e.target.value }))}
                   placeholder="(00) 00000-0000"
                   data-testid="input-phone"
+                />
+              </div>
+              <div>
+                <Label htmlFor="contact">Responsável por este WhatsApp *</Label>
+                <Input
+                  id="contact"
+                  value={customerData.contact}
+                  onChange={e => setCustomerData(prev => ({ ...prev, contact: e.target.value }))}
+                  onFocus={() => { if (!customerData.contact && customerData.name) setCustomerData(prev => ({ ...prev, contact: prev.name })); }}
+                  placeholder="Nome de quem atende neste número"
+                  maxLength={120}
+                  data-testid="input-contact"
                 />
               </div>
               <div>

@@ -2908,6 +2908,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // 📝 MOTIVO só circula à parte (nunca é coluna do cadastro): remove do payload antes de gravar.
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
       const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
       if (!_pmRes.ok) return res.status(_pmRes.status || 403).json({ message: _pmRes.message });
@@ -3144,7 +3146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (_wantsInactivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET status_reason = ${_motivoStatus}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
-        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
+        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
       } else if (_wantsActivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id = ${id}`); } catch (_e) {}
@@ -3294,7 +3296,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email };
         await logCustomerChanges({ customerId: id, before: { isActive: existingCustomer.isActive }, changes: { isActive: false }, actor, source: 'inactivate' });
-        await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: motivo, actor, source: 'inactivate' });
+        await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo, actor, source: 'inactivate' });
       } catch (_e) {}
       
       // Build success message
@@ -3424,6 +3426,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post('/api/customers', authenticateUser, requirePermission("Clientes / Carteira", "criar"), async (req: any, res) => {
     try {
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, null); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🔍 LOG 1: Payload recebido do frontend
       console.log('📝 [CREATE CUSTOMER] Payload recebido:', {
         weekdays: req.body.weekdays,
@@ -3736,6 +3740,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _wantsActivate = req.body.isActive === true;
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
       const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
       if (!_pmRes.ok) return res.status(_pmRes.status || 403).json({ message: _pmRes.message });
@@ -3979,7 +3985,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (_wantsInactivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS status_reason text`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET status_reason = ${_motivoStatus}, is_excluded = false WHERE id = ${id}`); } catch (_e) {}
-        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await logCustomerNote({ customerId: id, label: 'Motivo da inativação', text: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
+        try { const actor = { id: user?.id, name: [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || user?.email }; await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo: _motivoStatus, actor, source: 'edit' }); } catch (_e) {}
       } else if (_wantsActivate) {
         try { await db.execute(sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_excluded boolean DEFAULT false`); } catch (_e) {}
         try { await db.execute(sql`UPDATE customers SET is_excluded = false, status_reason = NULL WHERE id = ${id}`); } catch (_e) {}
@@ -4067,7 +4073,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const u = req.currentUser;
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
       try { await logCustomerChanges({ customerId: id, before: { isActive: before.isActive }, changes: { isActive: false }, actor, source: 'delete' }); } catch (_e) {}
-      try { await logCustomerNote({ customerId: id, label: 'Motivo da exclusão', text: motivo, actor, source: 'delete' }); } catch (_e) {}
+      try { await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: id, motivo, actor, source: 'delete', exclusao: true }); } catch (_e) {}
       res.json({ message: "Cliente excluído (inativado com trilha). Nenhum dado foi apagado." });
     } catch (error) {
       console.error("Error deleting customer:", error);
@@ -4084,6 +4090,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!phone) {
         return res.status(400).json({ message: "Telefone é obrigatório" });
       }
+      // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       
       const updateData: { phone: string; contact?: string } = { phone };
       if (contact !== undefined) {
@@ -5165,7 +5173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const actor = { id: u?.id, name: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim() || u?.email };
       for (const cid of (result.inactivatedIds || [])) {
         try { await logCustomerChanges({ customerId: cid, before: { isActive: true }, changes: { isActive: false }, actor, source: 'bulk' }); } catch (_e) {}
-        try { await logCustomerNote({ customerId: cid, label: 'Motivo da inativação', text: motivoTxt, actor, source: 'bulk' }); } catch (_e) {}
+        try { await (await import('./inativacao-trilha')).registrarObservacaoInativacao({ customerId: cid, motivo: motivoTxt, actor, source: 'bulk' }); } catch (_e) {}
       }
       res.json({ ok: true, ...result });
     } catch (error: any) {
@@ -5423,6 +5431,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // NCM da NF-e tem 8 digitos. Cadastro com menos (ex.: "3923.90") era aceito e so
+  // estourava la na SEFAZ, com "Rejeicao: Informado NCM inexistente" depois do pedido
+  // pronto. Barrar aqui custa um toast; barrar la custa refazer o faturamento.
+  const validarNcm = (ncm: any): string | null => {
+    const d = String(ncm ?? '').replace(/\D/g, '');
+    if (!d) return null; // NCM em branco continua permitido (preenche depois)
+    if (d.length !== 8) return `NCM deve ter 8 digitos (recebido: ${d.length}). Ex.: 3923.90.00`;
+    return null;
+  };
+
   app.post('/api/products', authenticateUser, async (req: any, res) => {
     try {
       // Only admin, coordinators and administrative can manage products
@@ -5432,6 +5450,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Access denied" });
       }
       
+      const _erroNcm = validarNcm(req.body?.ncm);
+      if (_erroNcm) return res.status(400).json({ message: _erroNcm, field: 'ncm' });
+
       const data = insertProductSchema.parse(req.body);
       const product = await storage.createProduct(data);
       res.json(product);
@@ -5455,6 +5476,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log(`📝 [PUT /api/products/${id}] Payload recebido:`, JSON.stringify(req.body, null, 2));
       
+      const _erroNcmPut = validarNcm(req.body?.ncm);
+      if (_erroNcmPut) return res.status(400).json({ message: _erroNcmPut, field: 'ncm' });
+
       const data = insertProductSchema.partial().parse(req.body);
       console.log(`✅ [PUT /api/products/${id}] Dados após validação Zod:`, JSON.stringify(data, null, 2));
       
@@ -7846,6 +7870,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
         const _reqPhone = String((req.body && req.body.customerPhone) || '').trim();
         const _custPh: any = await storage.getCustomer(cardBefore.customerId);
+        // 👤 RESPONSÁVEL pelo telefone informado no pedido → grava no cadastro (customers.contact).
+        try {
+          const { limparResponsavel } = await import('./responsavel-telefone');
+          const _reqResp = limparResponsavel(req.body && req.body.customerContact);
+          if (_reqResp && _custPh && _reqResp !== limparResponsavel(_custPh.contact)) {
+            await storage.updateCustomer(cardBefore.customerId, { contact: _reqResp } as any);
+            _custPh.contact = _reqResp;
+          }
+        } catch (_eResp) { /* não bloqueia a venda */ }
         const _cadPhone = String((_custPh && _custPh.phone) || '');
         const _effPhone = _reqPhone || _cadPhone;
         const _phDigits = _effPhone.replace(/[^0-9]/g, '');
@@ -11427,6 +11460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             trocaPhotoUrl: fotosDoCard(order.salesCardId)[0] || null,
             trocaPhotoUrls: fotosDoCard(order.salesCardId),
             trocaRecorrencia: recPorCard.get(String(order.salesCardId)) || null,
+            trocaDescontoBoleto: recPorCard.get(String(order.salesCardId))?.descontoBoleto === true,
             paidOnline: paidSet.has(String(order.salesCardId)),
             customer: {
               name: customer?.name || 'Cliente não encontrado',
@@ -23121,6 +23155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: z.string().min(1, 'Nome é obrigatório'),
           email: z.string().email('Email inválido').optional().nullable(),
           phone: z.string().min(10, 'Telefone inválido'),
+          contact: z.string().optional().nullable(), // 👤 responsável pelo WhatsApp (nov/2026)
           address: z.string().min(1, 'Endereço é obrigatório'),
           cpfCnpj: z.string().optional().nullable(),
           customerType: z.enum(['pessoa_fisica', 'pessoa_juridica']).default('pessoa_fisica')
@@ -23399,13 +23434,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Atualizar todas as informações do cliente
         // isActive: quem acabou de fazer um pedido e cliente ativo. Sem isto o cadastro
         // reaberto pela compra continuaria invisivel nas telas que filtram por ativo.
+        // 👤 Responsável pelo WhatsApp: o informado no pedido; pessoa física sem informar = o próprio nome.
+        const _respHot = String((validatedData.customer as any).contact || '').trim() || (validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.name : '');
         await storage.updateCustomer(customerId, {
           isActive: true,
           name: validatedData.customer.name,
           email: validatedData.customer.email,
           phone: validatedData.customer.phone,
-          address: validatedData.customer.address
-        });
+          address: validatedData.customer.address,
+          ...(_respHot ? { contact: _respHot } : {}),
+        } as any);
         
       } else {
         // ✅ NOVO cliente do hotsite — padroes CONFIGURAVEIS na pagina Canais (04/ago/2026).
@@ -23424,6 +23462,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           name: validatedData.customer.name,
           email: validatedData.customer.email,
           phone: validatedData.customer.phone,
+          contact: String((validatedData.customer as any).contact || '').trim() || validatedData.customer.name,
           address: validatedData.customer.address,
           customerType: validatedData.customer.customerType,
           cpf: validatedData.customer.customerType === 'pessoa_fisica' ? validatedData.customer.cpfCnpj : null,
@@ -27104,6 +27143,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: 'Nome, tipo de cliente, telefone e endereço são obrigatórios'
         });
       }
+      // 👤 Responsável pelo telefone (nov/2026): o informado na conversão, senão o contato do lead.
+      const { limparResponsavel: __limpResp, MSG_RESPONSAVEL_OBRIGATORIO: __msgResp } = await import('./responsavel-telefone');
+      const __contato = __limpResp(req.body?.contact) || __limpResp((lead as any)?.contact);
+      if (!__contato) return res.status(400).json({ message: __msgResp, code: 'RESPONSAVEL_OBRIGATORIO' });
 
       // Normaliza documentos: só grava se tiver dígitos (evita colisão na unique de cpf/cnpj com valor vazio).
       const _cpf = (String(cpf ?? '').replace(/\D/g, '').length ? cpf : null);
@@ -27141,6 +27184,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
         phone,
+        contact: __contato,
         email: email || null,
         address,
         city: city || null,
@@ -27163,6 +27207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
         phone,
+        contact: __contato,
         email: email || null,
         address,
         city: city || null,

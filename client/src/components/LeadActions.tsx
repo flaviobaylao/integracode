@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useState, useRef } from "react";
 import { useMutation } from "@/lib/queryClient";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
@@ -138,6 +139,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
         cnpj: cust.cnpj || null,
         companyName: cust.companyName || null,
         phone: cust.phone,
+        contact: String(cust.contact || "").trim(),
         email: cust.email || null,
         address: cust.address,
         city: cust.city || null,
@@ -171,6 +173,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
           ...prev,
           name: l.fantasyName || prev.name,
           phone: l.phone || prev.phone,
+          contact: l.contact || prev.contact || "",
           assignedTo: l.assignedTo || sellerId,
         }));
       }
@@ -500,6 +503,13 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
                 <Input value={cust.phone || ""} onChange={(e) => setCust({ ...cust, phone: e.target.value })} />
               </div>
               <div>
+                <Label>Responsável pelo telefone *</Label>
+                <Input value={cust.contact || ""} onChange={(e) => setCust({ ...cust, contact: e.target.value })} placeholder="Nome de quem atende" maxLength={120} data-testid="input-converter-contact" />
+              </div>
+              <div className="col-span-2 -mt-1">
+                <ContactPickerButton onPick={({ nome, telefone }) => setCust((prev: any) => ({ ...prev, ...(telefone ? { phone: telefone } : {}), ...(nome ? { contact: nome } : {}) }))} />
+              </div>
+              <div>
                 <Label>Periodicidade</Label>
                 <Select value={cust.visitPeriodicity || "semanal"} onValueChange={(v) => setCust({ ...cust, visitPeriodicity: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -545,7 +555,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
             <Button variant="outline" onClick={() => setConverterOpen(false)}>Cancelar</Button>
             <Button
               className="bg-green-600 hover:bg-green-700 text-white"
-              disabled={!cust.name || !cust.phone || !cust.address || converterMut.isPending}
+              disabled={!cust.name || !cust.phone || String(cust.contact || "").trim().length < 2 || !cust.address || converterMut.isPending}
               onClick={() => converterMut.mutate()}
             >
               Converter em cliente

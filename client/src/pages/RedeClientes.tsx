@@ -11,6 +11,7 @@
 // filtro do resto da tela de carteiras (sem devolucao, amostra, aporte, NF-e
 // cancelada, transferencia...), entao os numeros fecham com a aba Carteira.
 // -----------------------------------------------------------------------------
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -1182,7 +1183,13 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
   };
 
   const salvar = async () => {
-    setErro(""); setSalvando(true);
+    setErro("");
+    // 👤 Telefone do ponto exige o responsável ao lado (nov/2026).
+    if (String(f.telefone || "").replace(/\D/g, "") && String(f.contato || "").trim().length < 2) {
+      setErro("Informe o contato (responsável) do telefone do ponto.");
+      return;
+    }
+    setSalvando(true);
     try {
       const url = p ? `/api/carteira/redes/pontos/${p.id}` : `/api/carteira/redes/${props.redeId}/pontos`;
       const resp = await fetch(url, {
@@ -1306,12 +1313,15 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
           </div>
 
           <div className="col-span-3">
-            <label className="text-xs text-muted-foreground">Contato no local</label>
+            <label className="text-xs text-muted-foreground">Contato no local (responsável){String(f.telefone || "").replace(/\D/g, "") ? " *" : ""}</label>
             <Input value={f.contato} onChange={(e) => set("contato", e.target.value)} placeholder="Gerente da loja" />
           </div>
           <div className="col-span-3">
             <label className="text-xs text-muted-foreground">Telefone</label>
             <Input value={f.telefone} onChange={(e) => set("telefone", e.target.value)} placeholder="(62) 90000-0000" />
+          </div>
+          <div className="col-span-6 -mt-1">
+            <ContactPickerButton onPick={({ nome, telefone }) => { if (telefone) set("telefone", telefone); if (nome) set("contato", nome); }} />
           </div>
           <div className="col-span-6">
             <label className="text-xs text-muted-foreground">Observação para a entrega</label>

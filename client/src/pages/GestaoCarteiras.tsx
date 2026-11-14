@@ -24,6 +24,7 @@ import { escalaEixo, picoDaSerie } from "@/lib/escalaEixo";
 import { tendenciaDaSerie } from "@/lib/tendencia";
 import RedeClientes from "@/pages/RedeClientes";
 import AgendaRota from "@/pages/AgendaRota";
+import DossieVendedor from "@/pages/DossieVendedor";
 
 // ── Paleta validada (scripts/validate_palette.js — light, surface #ffffff) ──────
 // Classe e ordinal: rampa de UM tom (azul), escuro (A) -> claro (D).
@@ -86,7 +87,7 @@ type Cliente = {
   // Aba "Implantação e repescagem".
   implantador?: string; implantadorData?: string | null; implantadorPedido?: string | null;
   repescagens?: number; ultimaRepescagem?: string | null;
-  ultimaVendaData?: string | null; mediaUlt3?: number; faturamentos?: number;
+  ultimaVendaData?: string | null; ultimaVendaValor?: number; mediaUlt3?: number; faturamentos?: number;
 };
 
 /** dd/mm/aaaa a partir de "aaaa-mm-dd"; traço quando vazio. */
@@ -296,7 +297,9 @@ export default function GestaoCarteiras() {
   const [visiveis, setVisiveis] = useState(50);
   // Aba da tela: a carteira (faturamento, classe, situacao) ou a agenda de
   // atendimentos do mes. Sao dois assuntos com recortes de tempo diferentes.
-  const [aba, setAba] = useState<"carteira" | "rota" | "rede">("carteira");
+  // A aba "Gráficos" saiu em 13/11/2026: os dois gráficos dela passaram a viver
+  // dentro do Dossiê do vendedor, que já é a tela de olhar vendedor.
+  const [aba, setAba] = useState<"carteira" | "dossie" | "rota" | "rede">("carteira");
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/reports/gestao-carteiras", inicio, fim],
@@ -544,14 +547,25 @@ export default function GestaoCarteiras() {
     semMedicao: classes.reduce((s: number, n: any) => s + (n.semMedicao || 0), 0),
   }), [classes]);
 
+  // 14/11/2026 (Flavio) — PERDIDO E DEVEDOR NÃO SE MISTURAM. "Perdidos" e "Com
+  // débito" se cruzavam: o mesmo cliente parado que ainda devia entrava nos
+  // dois, e quem dividia o trabalho contava a mesma pessoa duas vezes. O
+  // DÉBITO TEM PRIORIDADE, porque é a ação mais urgente e a mais concreta:
+  // quem deve fica em "Com débito" — e a coluna "Parado há" na mesma linha não
+  // deixa esquecer que ele também parou de comprar. "Perdidos" passa a ser o
+  // que o nome diz: quem não compra E não deve nada.
+  const temDebito = (c: Cliente) => (c.debito || 0) > 0;
+  const perdidoLimpo = (c: Cliente) => c.situacao === "perdido" && !temDebito(c);
+  const noBalde = (c: Cliente, b: "inativos" | "perdidos" | "debito") =>
+    b === "debito" ? temDebito(c) : b === "inativos" ? c.situacao === "inativo" : perdidoLimpo(c);
+
   // Lista que sustenta as barras: um balde por vez, ordenada pelo que importa
   // em cada um (potencial nos parados, valor em aberto no débito).
   const listaSituacao = useMemo(() => {
     if (balde === "debito") {
-      return clientes.filter((c) => (c.debito || 0) > 0).sort((a, b) => b.debito - a.debito);
+      return clientes.filter((c) => noBalde(c, "debito")).sort((a, b) => b.debito - a.debito);
     }
-    const alvo = balde === "inativos" ? "inativo" : "perdido";
-    return clientes.filter((c) => c.situacao === alvo).sort((a, b) => b.potencialMes - a.potencialMes);
+    return clientes.filter((c) => noBalde(c, balde)).sort((a, b) => b.potencialMes - a.potencialMes);
   }, [clientes, balde]);
 
   const totalSituacao = useMemo(
@@ -567,6 +581,8 @@ export default function GestaoCarteiras() {
       if (ordSitCol === "nome") return (c.nome || "").toLocaleLowerCase("pt-BR");
       if (ordSitCol === "vendedor") return (c.vendedor || "").toLocaleLowerCase("pt-BR");
       if (ordSitCol === "valor") return balde === "debito" ? c.debito || 0 : c.potencialMes || 0;
+      if (ordSitCol === "ultima") return c.ultimaVendaData || "0000-00-00";
+      if (ordSitCol === "ultimaValor") return c.ultimaVendaValor || 0;
       return c.mesesSemComprar >= 99 ? -1 : c.mesesSemComprar; // "parado há"
     };
     const arr = [...listaSituacao].sort((a2, b2) => {
@@ -973,13 +989,14 @@ export default function GestaoCarteiras() {
     const fatMes = meses.length ? totalPeriodo / meses.length : 0;
     const debito = clientes.reduce((s, c) => s + (c.debito || 0), 0);
     const inat = clientes.filter((c) => c.situacao === "inativo");
-    const perd = clientes.filter((c) => c.situacao === "perdido");
+    // Perdido é só quem não compra E não deve — quem deve está no balde do débito.
+    const perd = clientes.filter(perdidoLimpo);
     const soma = (arr: Cliente[]) => arr.reduce((s, c) => s + (c.potencialMes || 0), 0);
     return [
       { chave: "faturamento", nome: "Faturamento", valor: fatMes, cor: COR_BARRA.faturamento, unidade: "por mês", nota: `${NUM(clientes.length)} clientes · ${BRL0(totalPeriodo)} no período`, clientes: clientes.length },
       { chave: "debito", nome: "Débito da carteira", valor: debito, cor: COR_BARRA.debito, unidade: "vencido em aberto", nota: `${NUM(clientes.filter((c) => (c.debito || 0) > 0).length)} clientes com título vencido`, clientes: clientes.filter((c) => (c.debito || 0) > 0).length },
       { chave: "inativos", nome: "Inativos", valor: soma(inat), cor: COR_BARRA.inativos, unidade: "potencial por mês", nota: `${NUM(inat.length)} clientes com cadastro inativado`, clientes: inat.length },
-      { chave: "perdidos", nome: "Perdidos", valor: soma(perd), cor: COR_BARRA.perdidos, unidade: "potencial por mês", nota: `${NUM(perd.length)} clientes sem comprar há 3+ meses`, clientes: perd.length },
+      { chave: "perdidos", nome: "Perdidos", valor: soma(perd), cor: COR_BARRA.perdidos, unidade: "potencial por mês", nota: `${NUM(perd.length)} clientes sem comprar há 3+ meses e sem débito`, clientes: perd.length },
     ];
   }, [clientes, meses]);
 
@@ -1020,6 +1037,7 @@ export default function GestaoCarteiras() {
           "Repescagens (vezes)": c.repescagens || 0,
           "Última repescagem": c.ultimaRepescagem || "",
           "Última venda faturada": c.ultimaVendaData || "",
+          "Valor da última venda": Number((c.ultimaVendaValor || 0).toFixed(2)),
           "Média últ. 3 faturamentos": Number((c.mediaUlt3 || 0).toFixed(2)),
           "Qtd. faturamentos": c.faturamentos || 0,
         })),
@@ -1044,7 +1062,9 @@ export default function GestaoCarteiras() {
       "Potencial/mês": Number((c.potencialMes || 0).toFixed(2)),
       "Débito vencido": Number((c.debito || 0).toFixed(2)),
       "Parado há (meses)": c.mesesSemComprar >= 99 ? "" : c.mesesSemComprar,
-      "Última compra": c.ultimaCompra || "",
+      "Última compra": c.ultimaVendaData || "",
+      "Valor da última compra": Number((c.ultimaVendaValor || 0).toFixed(2)),
+      "Último mês com compra": c.ultimaCompra || "",
       "Meses com compra": c.mesesComCompra,
       "Faturamento no período": Number((c.total || 0).toFixed(2)),
     }));
@@ -1083,6 +1103,7 @@ export default function GestaoCarteiras() {
       <div className="flex gap-2 border-b">
         {([
           { k: "carteira", rotulo: "Carteira", ativa: "border-blue-600 text-blue-700 bg-blue-50", parada: "text-blue-700/60 hover:text-blue-700 hover:bg-blue-50/50" },
+          { k: "dossie", rotulo: "Dossiê do vendedor", ativa: "border-rose-600 text-rose-700 bg-rose-50", parada: "text-rose-700/60 hover:text-rose-700 hover:bg-rose-50/50" },
           { k: "rota", rotulo: "Agenda de Rota", ativa: "border-amber-500 text-amber-700 bg-amber-50", parada: "text-amber-700/60 hover:text-amber-700 hover:bg-amber-50/50" },
           { k: "rede", rotulo: "Rede de Cliente", ativa: "border-emerald-600 text-emerald-700 bg-emerald-50", parada: "text-emerald-700/60 hover:text-emerald-700 hover:bg-emerald-50/50" },
         ] as const).map((t) => (
@@ -1100,7 +1121,7 @@ export default function GestaoCarteiras() {
         ))}
       </div>
 
-      {aba === "rede" ? <RedeClientes /> : aba === "rota" ? <AgendaRota /> : (
+      {aba === "rede" ? <RedeClientes /> : aba === "rota" ? <AgendaRota /> : aba === "dossie" ? <DossieVendedor /> : (
       <>
       {/* Filtros — uma linha acima dos gráficos */}
       <Card>
@@ -1250,7 +1271,9 @@ export default function GestaoCarteiras() {
                           <>
                             <p className="text-muted-foreground">
                               Tudo abaixo respeita os filtros de cima: o período de {labelMes(inicio)} a {labelMes(fim)}
-                              {filtrarVend ? `${rotuloCarteira}` : " e a carteira inteira"}. Cada cliente entra em um balde só.
+                              {filtrarVend ? `${rotuloCarteira}` : " e a carteira inteira"}. Inativos e Perdidos nunca se
+                              cruzam, e Perdidos também não se cruza com Com débito: quem está parado mas ainda deve
+                              conta só no débito.
                             </p>
                             <div>
                               <p className="font-semibold flex items-center gap-2">
@@ -1292,8 +1315,10 @@ export default function GestaoCarteiras() {
                                 Perdidos — {BRL0(barras[3]?.valor)} por mês
                               </p>
                               <p className="text-muted-foreground mt-1">
-                                Cadastro <b>ativo</b>, comprou em 3 meses ou mais e está <b>há 3 meses ou mais sem comprar</b> —
-                                o churn que ninguém marcou. Mesmo cálculo de potencial dos inativos.
+                                Cadastro <b>ativo</b>, comprou em 3 meses ou mais, está <b>há 3 meses ou mais sem comprar</b>{" "}
+                                e <b>não tem título vencido em aberto</b> — o churn que ninguém marcou, limpo de cobrança.
+                                Quem está parado mas ainda deve fica só em "Com débito", porque ali a ação é outra;
+                                a coluna "Parado há" na lista mostra que ele também parou. Mesmo cálculo de potencial dos inativos.
                                 {meses.length < 6 ? " Atenção: com menos de 6 meses de período esta barra tende a zerar, porque não cabem 3 meses comprando mais 3 parado." : ""}
                               </p>
                             </div>
@@ -1306,14 +1331,16 @@ export default function GestaoCarteiras() {
                             </p>
                             <ul className="text-muted-foreground list-disc pl-4 space-y-1">
                               <li><b>Inativos</b> — cadastro inativado. Mostra o potencial de cada um (o que faturava nos meses em que comprava) e há quanto tempo está parado.</li>
-                              <li><b>Perdidos</b> — cadastro ativo, comprou em 3 meses ou mais e está há 3+ meses sem comprar.</li>
+                              <li><b>Perdidos</b> — cadastro ativo, comprou em 3 meses ou mais, está há 3+ meses sem comprar e <b>não deve nada</b>.</li>
                               <li><b>Com débito</b> — quem tem título vencido em aberto hoje, do maior para o menor.</li>
                             </ul>
                             <p className="text-muted-foreground">
-                              Um cliente pode aparecer em "com débito" e também em inativos ou perdidos — os dois primeiros
-                              baldes é que são exclusivos entre si. O Exportar Excel deste card leva o balde aberto,
-                              cliente a cliente, com vendedor, potencial e débito; o de cima, no topo da tela, leva a
-                              carteira inteira.
+                              <b>Perdidos e Com débito não se cruzam</b>: cliente parado que ainda deve aparece só em
+                              "Com débito", porque ali a ação é cobrar, não vender — e a coluna "Parado há" na lista
+                              mostra que ele também parou de comprar. Inativos (cadastro inativado) é uma situação de
+                              cadastro, não de cobrança: quem foi inativado devendo continua aparecendo nos dois.
+                              O Exportar Excel deste card leva o balde aberto, cliente a cliente, com vendedor,
+                              potencial e débito; o de cima, no topo da tela, leva a carteira inteira.
                             </p>
                           </>
                         )}
@@ -1360,9 +1387,9 @@ export default function GestaoCarteiras() {
                     {/* Baldes: trocam a lista sem sair do card */}
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
                       {([
-                        { k: "inativos", rotulo: "Inativos", cor: COR_BARRA.inativos, n: clientes.filter((c) => c.situacao === "inativo").length },
-                        { k: "perdidos", rotulo: "Perdidos", cor: COR_BARRA.perdidos, n: clientes.filter((c) => c.situacao === "perdido").length },
-                        { k: "debito", rotulo: "Com débito", cor: COR_BARRA.debito, n: clientes.filter((c) => (c.debito || 0) > 0).length },
+                        { k: "inativos", rotulo: "Inativos", cor: COR_BARRA.inativos, n: clientes.filter((c) => noBalde(c, "inativos")).length },
+                        { k: "perdidos", rotulo: "Perdidos", cor: COR_BARRA.perdidos, n: clientes.filter((c) => noBalde(c, "perdidos")).length },
+                        { k: "debito", rotulo: "Com débito", cor: COR_BARRA.debito, n: clientes.filter((c) => noBalde(c, "debito")).length },
                       ] as const).map((b) => (
                         <button
                           key={b.k}
@@ -1386,6 +1413,8 @@ export default function GestaoCarteiras() {
                             <TableHead className="w-8">#</TableHead>
                             {thSituacao("nome", "Cliente")}
                             {thSituacao("vendedor", "Vendedor", "w-32 whitespace-nowrap")}
+                            {thSituacao("ultima", "Última compra", "w-24 whitespace-nowrap")}
+                            {thSituacao("ultimaValor", "Valor da última", "text-right whitespace-nowrap", true)}
                             {thSituacao("valor", balde === "debito" ? "Vencido em aberto" : "Potencial/mês", "text-right whitespace-nowrap", true)}
                             {thSituacao("parado", "Parado há", "text-right w-20 whitespace-nowrap", true)}
                           </TableRow>
@@ -1419,6 +1448,15 @@ export default function GestaoCarteiras() {
                                   {c.vendedor}
                                 </span>
                               </TableCell>
+                              {/* Ultima compra: a data e o valor DAQUELE
+                                  faturamento. Numa lista de cliente parado e a
+                                  primeira pergunta — quando foi e de quanto. */}
+                              <TableCell className="text-sm whitespace-nowrap">
+                                {c.ultimaVendaData ? c.ultimaVendaData.split("-").reverse().join("/") : <span className="text-muted-foreground">—</span>}
+                              </TableCell>
+                              <TableCell className="text-sm text-right whitespace-nowrap">
+                                {c.ultimaVendaValor ? BRL(c.ultimaVendaValor) : <span className="text-muted-foreground">—</span>}
+                              </TableCell>
                               <TableCell className="text-right font-semibold whitespace-nowrap">
                                 {BRL(balde === "debito" ? c.debito : c.potencialMes)}
                               </TableCell>
@@ -1428,7 +1466,7 @@ export default function GestaoCarteiras() {
                             </TableRow>
                           ))}
                           {listaSituacao.length === 0 ? (
-                            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                            <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-6">
                               Nenhum cliente neste balde no recorte atual.
                             </TableCell></TableRow>
                           ) : null}

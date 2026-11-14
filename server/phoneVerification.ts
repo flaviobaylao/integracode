@@ -70,7 +70,12 @@ export async function triggerPhoneConfirmation(
       VALUES (${customerId}, ${phone}, ${digits}, ${name || null}, ${token}, 'pending', ${createdBy || null})`);
     const link = publicBase() + '/confirmar-telefone/' + token;
     const nm = String(name || '').trim() || 'seu cadastro';
-    const msg = `Olá! A Honest Sucos registrou este número como contato de *${nm}*. Se este número é seu, confirme aqui: ${link} . Leva 5 segundos e garante que você receba os avisos do seu pedido e da entrega. 🧃`;
+    // 👤 Fala com o RESPONSÁVEL cadastrado ao lado do telefone (customers.contact) — nov/2026.
+    let resp = '';
+    try { const { responsavelDoCliente, primeiroNome } = await import('./responsavel-telefone'); resp = primeiroNome(await responsavelDoCliente(customerId)); } catch {}
+    const saud = resp ? `Olá, ${resp}!` : 'Olá!';
+    const quem = resp ? `como contato de *${resp}* em *${nm}*` : `como contato de *${nm}*`;
+    const msg = `${saud} A Honest Sucos registrou este número ${quem}. Se este número é seu, confirme aqui: ${link} . Leva 5 segundos e garante que você receba os avisos do seu pedido e da entrega. 🧃`;
     let sent = false; let err: string | null = null;
     try {
       const r = await sendUmblerTalkText(digits, msg);

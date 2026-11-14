@@ -19,6 +19,14 @@ import { nfVendaWhere, nfVendaFrom, nfData } from "./faturamento-oficial";
 // lista de meses oferecidos.
 const CAMPAIGN_YM = "2026-10";
 
+// Ata de 14/11/2026: o cliente novo deixa de render R$ 30 e passa a render 12%
+// de comissão por 6 meses ao vendedor que o conquistou. A troca é feita na TELA,
+// pelo flag de cada premissa: desligar "novos" encerra o R$ 30 naquele momento
+// (quem já tinha comprado continua valendo) e ligar "comissao_novo" faz valer os
+// 12% dali em diante. Os carimbos ativada_em/desativada_em guardam o momento.
+// Antes de novembro/2026 a premissa de comissão não existe.
+export const PRIMEIRO_MES_COMISSAO_NOVO = "2026-11";
+
 // ============================================================================
 // PREMISSAS DA CAMPANHA — ligadas/desligadas e com o valor editado POR MÊS
 // (01/nov/2026). Antes eram constantes no código: mudar o prêmio ou tirar uma
@@ -47,6 +55,9 @@ type Premissa = {
   // Mínimo próprio do cliente PF (05/nov/2026). Antes o PF positivava com
   // qualquer valor; agora tem um piso menor que o do PJ, mas tem piso.
   pedidoMinPf?: number; pedidoMinPfLabel?: string;
+  // Momento (BRT, "AAAA-MM-DD HH:MM") em que o flag foi ligado/desligado na tela.
+  // Desligar no meio do mês não apaga o que já valeu até ali.
+  ativadaEm?: string | null; desativadaEm?: string | null;
 };
 const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho" | "pedidoMin" | "pedidoMinPf"> & {
   ativaPadrao: boolean; modoPadrao: ModoPremissa; valorPadrao: number; gatilhoPadrao: number;
@@ -74,6 +85,17 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     base: "faturamento do vendedor no mês",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 500, gatilhoPadrao: 100,
   },
+  {
+    // Ata de 14/11/2026. Não é bônus da campanha: muda a COMISSÃO do vendedor
+    // sobre as vendas do cliente que ele conquistou (8% -> 12%) durante N meses.
+    // Calculada em server/comissao-novos-routes.ts; aqui só guarda o flag e os
+    // parâmetros do mês. valor = % de comissão; gatilho = meses de duração.
+    chave: "comissao_novo", label: "de comissão por novo cliente",
+    descricao: "Sobre as vendas de cada cliente novo, em vez de 8%, pelo prazo abaixo.",
+    gatilhoLabel: "Duração", gatilhoSufixo: "meses",
+    base: "vendas do cliente novo (em vez dos 8% normais)",
+    ativaPadrao: false, modoPadrao: "percentual", valorPadrao: 12, gatilhoPadrao: 6,
+  },
 ];
 
 let _premissasOk = false;
@@ -91,6 +113,8 @@ async function ensurePremissas(): Promise<void> {
   )`);
   await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS pedido_min numeric`);
   await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS pedido_min_pf numeric`);
+  await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS ativada_em timestamptz`);
+  await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS desativada_em timestamptz`);
 
   // CONGELAMENTO DE OUTUBRO (04/nov/2026). Outubro rodou SEM linha gravada: as
   // premissas vinham todas do catálogo. Como o catálogo passa a trazer pedido
@@ -125,16 +149,26 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
   const gravadas: Record<string, any> = {};
   try {
     const r: any = await db.execute(sql`
-      SELECT chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf FROM campanha_premissas WHERE ym = ${ym}`);
+      SELECT chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf,
+             to_char(ativada_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI') AS ativada_em,
+             to_char(desativada_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI') AS desativada_em
+      FROM campanha_premissas WHERE ym = ${ym}`);
     for (const x of r.rows || []) gravadas[String(x.chave)] = x;
   } catch (e: any) { console.error("[CAMPANHA] premissas:", e?.message || e); }
-  return CATALOGO_PREMISSAS.map((c) => {
+  return CATALOGO_PREMISSAS.filter((c) => c.chave !== "comissao_novo" || ym >= PRIMEIRO_MES_COMISSAO_NOVO).map((c) => {
     const g = gravadas[c.chave];
     const num = (v: any, p: number) => { const x = Number(v); return Number.isFinite(x) ? x : p; };
     return {
       chave: c.chave, label: c.label, descricao: c.descricao,
       gatilhoLabel: c.gatilhoLabel, gatilhoSufixo: c.gatilhoSufixo, base: c.base,
-      ativa: g ? g.ativa !== false : c.ativaPadrao,
+      // Depois de novembro/2026 (ata de 14/11) o mês novo nasce com a comissão de
+      // cliente novo LIGADA e o R$ por novo cliente DESLIGADO.
+      ativa: g ? g.ativa !== false
+        : ym > PRIMEIRO_MES_COMISSAO_NOVO && c.chave === "novos" ? false
+        : ym > PRIMEIRO_MES_COMISSAO_NOVO && c.chave === "comissao_novo" ? true
+        : c.ativaPadrao,
+      ativadaEm: g?.ativada_em || null,
+      desativadaEm: g?.desativada_em || null,
       modo: (g && g.modo === "percentual" ? "percentual" : g ? "valor" : c.modoPadrao) as ModoPremissa,
       valor: g ? num(g.valor, c.valorPadrao) : c.valorPadrao,
       gatilho: g ? num(g.gatilho, c.gatilhoPadrao) : c.gatilhoPadrao,
@@ -155,6 +189,15 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
   });
 }
 const achaPremissa = (ps: Premissa[], chave: string) => ps.find((p) => p.chave === chave);
+export { achaPremissa };
+
+/** Até que dia (inclusive, AAAA-MM-DD) o R$ por novo cliente vale no mês.
+ *  null = vale o mês todo; "" = não vale no mês (desligado sem nunca ter valido). */
+function corteNovos(p: Premissa | undefined): string | null {
+  if (!p) return "";
+  if (p.ativa) return null;
+  return p.desativadaEm ? p.desativadaEm.slice(0, 10) : "";
+}
 
 // Contas fora da campanha (canais digitais, contas institucionais e excecoes do gestor).
 // A comparacao ignora pontuacao, acentos, espacos e caixa ("Maria E." = "Maria E").
@@ -389,6 +432,50 @@ function donoNaData(janelas: JanelaDeleg[] | undefined, d: string, atual: { nome
   return ref && ref.de ? { nome: ref.de, id: ref.deId } : atual;
 }
 
+// Clientes novos (1ª NF-e de venda da base) a partir de `desde`, com o vendedor
+// que o conquistou = dono da carteira NA DATA da 1ª compra (respeita delegação).
+// Usado pela comissão de 12% por 6 meses (server/comissao-novos-routes.ts).
+// Sem pedido mínimo: a ata fala em "cliente novo", sem piso.
+export async function clientesNovosDesde(desde: string): Promise<Array<{
+  doc: string; customerId: string; nome: string; primeiraCompra: string; valor: number; seller: string; sellerUid: string;
+}>> {
+  const dcol = nfData("fi");
+  const firsts = await rawq(
+    "SELECT DISTINCT ON (doc) doc, d AS first_d, dayv FROM (" +
+    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, " + dcol + "::date::text AS d, COALESCE(SUM(fi.total_invoice),0) AS dayv" +
+    " FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") +
+    " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2" +
+    ") q ORDER BY doc, d"
+  );
+  const novos = firsts.filter((r) => String(r.first_d).slice(0, 10) >= desde);
+  if (!novos.length) return [];
+  const custs = await rawq(
+    "SELECT c.id, regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc," +
+    " COALESCE(NULLIF(c.fantasy_name,''), c.name, '(sem nome)') AS nome" +
+    " FROM customers c WHERE regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> ''" + PURO_EXCL
+  );
+  const cust: Record<string, { id: string; nome: string }> = {};
+  for (const r of custs) { const d = String(r.doc); if (d && !(d in cust)) cust[d] = { id: String(r.id), nome: String(r.nome || "") }; }
+  const carteira = await rawq("SELECT doc, seller, uid FROM " + CARTEIRA_SELLER);
+  const docSeller: Record<string, string> = {};
+  const docUid: Record<string, string> = {};
+  for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) { docSeller[d] = String(r.seller || ""); docUid[d] = String(r.uid || ""); } }
+  const janelasPorMes: Record<string, Record<string, JanelaDeleg[]>> = {};
+  const out: Array<any> = [];
+  for (const r of novos) {
+    const doc = String(r.doc);
+    const c = cust[doc];
+    if (!c) continue;
+    const fd = String(r.first_d).slice(0, 10);
+    const ymFd = fd.slice(0, 7);
+    if (!janelasPorMes[ymFd]) janelasPorMes[ymFd] = await janelasDelegacao(ymFd);
+    const dono = donoNaData(janelasPorMes[ymFd][doc], fd, { nome: docSeller[doc] || "", id: docUid[doc] || "" });
+    if (!dono.id || excluido(dono.nome)) continue; // conta de canal / sem vendedor: não há comissão
+    out.push({ doc, customerId: c.id, nome: c.nome, primeiraCompra: fd, valor: Math.round((Number(r.dayv) || 0) * 100) / 100, seller: dono.nome, sellerUid: dono.id });
+  }
+  return out;
+}
+
 export async function detectNovos(ym: string): Promise<number> {
   await ensureCampaignTable();
   const dcol = nfData("fi");
@@ -403,7 +490,11 @@ export async function detectNovos(ym: string): Promise<number> {
   // Pedido minimo e premissa do mes: muda na tela, nao no codigo.
   const pNovos = achaPremissa(await premissasDoMes(ym), "novos");
   const pedidoMin = pNovos ? pNovos.gatilho : 300;
-  const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= pedidoMin);
+  // Flag desligado no meio do mês: só entra 1ª compra até o dia em que desligou.
+  const corte = corteNovos(pNovos);
+  if (corte === "") return 0;
+  const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= pedidoMin
+    && (corte === null || String(r.first_d).slice(0, 10) <= corte));
   if (!novos.length) return 0;
   // Dados do cliente (nome, regiao, id) e vendedor da carteira.
   const custs = await rawq(
@@ -548,11 +639,14 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
   // Soma dos 1os pedidos dos aptos — base do bonus quando a premissa de novos
   // clientes esta em PERCENTUAL (ex.: 10% sobre o primeiro pedido).
   const valorNovos: Record<string, number> = {};
-  const crows = await rawq(
+  const corteN = corteNovos(achaPremissa(premissas, "novos"));
+  const crows = corteN === "" ? [] : await rawq(
     "SELECT " + NOME_VENDEDOR + " AS seller_name, cnc.status, COUNT(*)::int AS n," +
     " COALESCE(SUM(cnc.order_value), 0) AS valor" +
     " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
-    " WHERE cnc.campaign_ym = '" + ym + "' GROUP BY 1, 2"
+    " WHERE cnc.campaign_ym = '" + ym + "'" +
+    (corteN ? " AND (cnc.first_order_date IS NULL OR cnc.first_order_date <= '" + corteN + "'::date)" : "") +
+    " GROUP BY 1, 2"
   );
   for (const r of crows) {
     const s = String(r.seller_name || ""); if (!s) continue;
@@ -597,7 +691,7 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     // VALOR: R$ fixos (por cliente, ou de uma vez ao bater a condicao).
     // PERCENTUAL: % sobre a BASE da premissa — nos novos clientes, o 1o pedido
     // de cada apto; nas outras duas, o faturamento do vendedor no mes.
-    const bonusNovos = !pNovos?.ativa ? 0
+    const bonusNovos = corteN === "" || !pNovos ? 0
       : pNovos.modo === "percentual" ? ((valorNovos[seller] || 0) * pNovos.valor) / 100
       : aptos * pNovos.valor;
     const bonusPos = !pPos?.ativa || positivacao === null || positivacao < posMeta ? 0
@@ -742,6 +836,8 @@ export function registerCampanhaRoutes(app: Express): void {
       const pedidoMin = temMin ? num(b.pedidoMin) : null;
       const temMinPf = b.pedidoMinPf !== undefined && b.pedidoMinPf !== null && String(b.pedidoMinPf) !== "";
       const pedidoMinPf = temMinPf ? num(b.pedidoMinPf) : null;
+      const antes = achaPremissa(await premissasDoMes(ym), chave);
+      const ativaNova = b.ativa !== false;
       await db.execute(sql`
         INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf, updated_by, updated_at)
         VALUES (${ym}, ${chave}, ${b.ativa !== false}, ${modo}, ${num(b.valor)}, ${num(b.gatilho)},
@@ -752,6 +848,11 @@ export function registerCampanhaRoutes(app: Express): void {
           pedido_min = COALESCE(EXCLUDED.pedido_min, campanha_premissas.pedido_min),
           pedido_min_pf = COALESCE(EXCLUDED.pedido_min_pf, campanha_premissas.pedido_min_pf),
           updated_by = EXCLUDED.updated_by, updated_at = now()`);
+      // Carimbo do momento em que o flag mudou: daqui em diante vale (ou deixa de valer).
+      if (antes && antes.ativa !== ativaNova) {
+        if (ativaNova) await db.execute(sql`UPDATE campanha_premissas SET ativada_em = now(), desativada_em = NULL WHERE ym = ${ym} AND chave = ${chave}`);
+        else await db.execute(sql`UPDATE campanha_premissas SET desativada_em = now() WHERE ym = ${ym} AND chave = ${chave}`);
+      }
       res.json({ ok: true, premissas: await premissasDoMes(ym) });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
@@ -812,7 +913,7 @@ export function registerCampanhaRoutes(app: Express): void {
       const rows = await inboxPendentes(ym);
       // Sem premissa de novo cliente no mês não há o que aprovar: o painel some.
       const pNovos = achaPremissa(await premissasDoMes(ym), "novos");
-      res.json({ ativo: campaignActive(ym) && pNovos?.ativa !== false, ym, meses: mesesDaCampanha(), rows });
+      res.json({ ativo: campaignActive(ym) && corteNovos(pNovos) !== "", ym, meses: mesesDaCampanha(), rows });
     } catch (e: any) { res.status(500).json({ error: (e && e.message) ? e.message : String(e) }); }
   });
 

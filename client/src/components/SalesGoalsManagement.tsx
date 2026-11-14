@@ -96,9 +96,11 @@ interface YearlySummaryData {
 
 const CARD_METAS = "Metas de Vendas";
 
-// Módulo Metas: aba "Metas e comissão" (tela original) + aba "Descontos por troca"
-// (política de trocas 23/10/2026 — troca por vencimento desconta comissão).
-export default function SalesGoalsManagement({ user }: SalesGoalsManagementProps) {
+// Módulo Metas: tela "Metas e comissão". (14/nov/2026) "Descontos por troca" deixou de
+// ser sub-aba daqui e virou aba principal de Metas de Vendas (pages/SalesGoals.tsx).
+// `abaTrocas` mantém o layout antigo (sub-abas) só para o deep-link legado /?view=sales-goals.
+export default function SalesGoalsManagement({ user, abaTrocas = false }: SalesGoalsManagementProps & { abaTrocas?: boolean }) {
+  if (!abaTrocas) return <MetasEComissao user={user} />;
   return (
     <Tabs defaultValue="metas" className="space-y-4">
       <TabsList>

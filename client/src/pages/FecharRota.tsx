@@ -93,15 +93,15 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
     if (visitOk && !debito) continue;
     out.push({ id: String(v?.id ?? customerId), customerId, nome: v?.customerName || "(sem nome)", tipo, debito: debito || undefined, atendido: visitOk, ciclo: !!v?.cicloPresencial });
   }
-  // Repescagem: cada cliente da repescagem NÃO atendido precisa de justificativa — mas SOMENTE
-  // do VENDEDOR DE CADASTRO (dono da carteira). O atendente habilitado que recebeu o cliente
-  // como repescagem NÃO justifica. Por isso só entram os cards do dono (r.isOwner).
+  // Repescagem (12/nov/2026, regra do Flavio): o report/justificativa só é OBRIGATÓRIO quando houve
+  // CAPTURA — entra no fechamento apenas o cliente de repescagem que ESTE vendedor capturou hoje e
+  // não atendeu. Repescagem sem captura (só estava na lista/rota) não exige nada no fechamento.
   if (includeRepescagem) {
     for (const r of (Array.isArray(overlay) ? overlay : [])) {
       const cid = r?.customerId ? String(r.customerId) : "";
       if (!cid || out.some((o) => o.customerId === cid)) continue;
-      // Só o vendedor de cadastro (dono) justifica; o habilitado não.
-      if (!r?.isOwner) continue;
+      // Só o que ele capturou (a marcação vem pronta do componente: capturadoPorMim).
+      if (!r?.capturadoPorMim) continue;
       if (crEfet.has(cid)) continue;
       // Card inativo = o cliente já foi atendido/vendido pela outra pessoa (dono ou habilitado).
       // O card não fica mais apto a vendas ao outro e não precisa de justificativa.
@@ -203,15 +203,17 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
   const { data: routeData } = useQuery<any>({ queryKey: ["/api/daily-routes", sellerId, "date", today], enabled, queryFn: () => apiRequest("GET", `/api/daily-routes/${encodeURIComponent(sellerId)}/date/${today}`) });
   const route = routeData?.route;
   const { data: overlayData } = useQuery<any>({ queryKey: ["/api/repescagem/route-overlay", sellerId, today], enabled, queryFn: () => apiRequest("GET", `/api/repescagem/route-overlay?sellerId=${encodeURIComponent(sellerId)}&date=${today}`) });
-  const overlay = Array.isArray(overlayData) ? overlayData : (overlayData?.overlay || []);
-  // Repescagem no fechamento: SOMENTE o VENDEDOR DE CADASTRO (dono da carteira) justifica os
-  // clientes em repescagem não atendidos. O atendente habilitado que recebeu o cliente NÃO
-  // justifica. Logo, só entra quando o vendedor tem cards de repescagem em que ele é o dono.
-  const incluiRepescagem = (Array.isArray(overlay) ? overlay : []).some((r: any) => r?.isOwner);
+  const overlayRaw = Array.isArray(overlayData) ? overlayData : (overlayData?.overlay || []);
+  // Repescagem no fechamento (12/nov/2026): justificativa obrigatória SÓ do que este vendedor
+  // CAPTUROU hoje. Marca cada card com capturadoPorMim; sem captura, nada é exigido.
+  const overlay = useMemo(() => (Array.isArray(overlayRaw) ? overlayRaw : []).map((r: any) => ({
+    ...r, capturadoPorMim: !!r?.captured && !!r?.capturedBy && String(r.capturedBy) === String(sellerId),
+  })), [overlayRaw, sellerId]);
+  const incluiRepescagem = overlay.some((r: any) => r?.capturadoPorMim);
   const routeCustomerIds = useMemo(() => {
     const s = new Set<string>();
     (route?.visits || []).forEach((v: any) => { const c = v?.customerId || v?.entityId; if (c) s.add(String(c)); });
-    if (incluiRepescagem) (Array.isArray(overlay) ? overlay : []).forEach((r: any) => { if (r?.customerId) s.add(String(r.customerId)); });
+    if (incluiRepescagem) (Array.isArray(overlay) ? overlay : []).forEach((r: any) => { if (r?.customerId && r?.capturadoPorMim) s.add(String(r.customerId)); });
     return Array.from(s);
   }, [route, overlay, incluiRepescagem]);
   const { data: svcData } = useQuery<any>({ queryKey: ["/api/service-logs/count/customer", sellerId, today, routeCustomerIds.length], enabled: enabled && routeCustomerIds.length > 0, queryFn: () => apiRequest("GET", `/api/service-logs/count/customer?sellerId=${encodeURIComponent(sellerId)}&date=${today}&customerIds=${routeCustomerIds.join(",")}`) });
@@ -299,7 +301,7 @@ export default function FecharRota({ embedded = false }: { embedded?: boolean })
       const isRep = cid && overlay.some((r: any) => String(r?.customerId) === cid);
       if (allowed.has(tipo) && !isRep) n++;
     });
-    if (incluiRepescagem) n += (Array.isArray(overlay) ? overlay : []).length;
+    if (incluiRepescagem) n += (Array.isArray(overlay) ? overlay : []).filter((r: any) => r?.capturadoPorMim).length;
     return n;
   }, [route, overlay, statusData, incluiRepescagem]);
 

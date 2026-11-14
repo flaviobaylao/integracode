@@ -1,8 +1,10 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import PaymentLinkDialog from "./PaymentLinkDialog";
 import { TrocaRecorrenciaCard } from "./TrocaRecorrencia";
+import { prepararFotoSegura } from "@/lib/fotoSegura";
 import TrocaPreviaDesconto from "./TrocaPreviaDesconto";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +91,9 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   // Recorrência (30/10/2026): da 2ª troca do mesmo motivo em 60 dias, ação com o cliente obrigatória.
   const [trocaAcao, setTrocaAcao] = useState('');
   const [trocaExigeAcao, setTrocaExigeAcao] = useState(false);
+  // Compensação da troca por DESCONTO EM BOLETO (05/11/2026): só marca o selo
+  // "Troca - Desconto em Boleto" no pipeline; o financeiro aplica o desconto manualmente.
+  const [trocaDescontoBoleto, setTrocaDescontoBoleto] = useState(false);
   // Popup "Preencher card com dados do pedido anterior"
   const [fillPopupOpen, setFillPopupOpen] = useState(false);
   const [prevOrderData, setPrevOrderData] = useState<any>(null);
@@ -105,6 +110,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
   const [customerVisitPeriodicity, setCustomerVisitPeriodicity] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  // 👤 Responsável pelo telefone (customers.contact) — obrigatório ao lado do telefone (nov/2026).
+  const [customerContact, setCustomerContact] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 09/set/2026: cobre TODO o "Finalizar e Enviar p/ Faturamento" (finalizar + espera +
@@ -203,6 +210,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         // tem de digitar de novo a cada pedido e pedir a confirmação ao contato.
         // (o efeito que zera está logo abaixo, quando o status chega do servidor)
         setCustomerPhone(card.customer.phone || '');
+        setCustomerContact((card.customer as any).contact || '');
         setLatitude(card.customer.latitude || '');
         setLongitude(card.customer.longitude || '');
       }
@@ -462,35 +470,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     } catch { setGravandoObs(false); recObsRef.current = null; toast({ title: 'Não foi possível iniciar a gravação', variant: 'destructive' }); }
   };
 
-  // Comprime/redimensiona a foto p/ upload confiavel (evita estourar 10MB no mobile).
-  const compressTrocaImage = (src: string, maxSide = 1280, quality = 0.72): Promise<string> =>
-    new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        let w = img.width, h = img.height;
-        if (w > h && w > maxSide) { h = Math.round(h * maxSide / w); w = maxSide; }
-        else if (h >= w && h > maxSide) { w = Math.round(w * maxSide / h); h = maxSide; }
-        const c = document.createElement('canvas'); c.width = w; c.height = h;
-        const cx = c.getContext('2d'); if (!cx) { resolve(src); return; }
-        cx.drawImage(img, 0, 0, w, h);
-        resolve(c.toDataURL('image/jpeg', quality));
-      };
-      img.onerror = () => resolve(src);
-      img.src = src;
-    });
-
   // Troca: capturar/selecionar as fotos dos produtos. Dois caminhos alimentam o
   // mesmo estado: o input com `capture="environment"` abre a camera no celular e o
   // input sem `capture` (com `multiple`) abre a galeria do celular ou o explorador
   // de arquivos do PC. Teto de TROCA_MAX_FOTOS imagens.
-  const lerArquivo = (f: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (ev: any) => resolve(ev?.target?.result as string);
-      reader.onerror = () => reject(new Error('leitura falhou'));
-      reader.readAsDataURL(f);
-    });
-
   const handleTrocaPhotoChange = async (e: any) => {
     const arquivos: File[] = Array.from(e?.target?.files || []);
     if (e?.target) e.target.value = ''; // permite reescolher o mesmo arquivo depois
@@ -518,10 +501,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     }
     try {
       const novas: string[] = [];
-      for (const f of aceitos) novas.push(await compressTrocaImage(await lerArquivo(f)));
+      // prepararFotoSegura: reduz a foto e confere se não saiu preta (falha de alguns celulares).
+      for (const f of aceitos) novas.push(await prepararFotoSegura(f));
       setTrocaPhotos((atuais) => [...atuais, ...novas].slice(0, TROCA_MAX_FOTOS));
-    } catch {
-      toast({ title: 'Não foi possível ler a imagem', description: 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
+    } catch (err: any) {
+      toast({ title: 'Não foi possível ler a imagem', description: err?.message || 'Tente novamente ou escolha outro arquivo.', variant: 'destructive' });
     }
   };
 
@@ -619,11 +603,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
       // Se o telefone foi alterado, atualizar no cliente.
       // Não bloqueia a venda se falhar: o backend grava o telefone do comprador ao finalizar (customerPhone vai no PUT do card).
-      if (customerPhone && customerPhone !== card.customer?.phone) {
+      if ((customerPhone && customerPhone !== card.customer?.phone) || (customerContact.trim() && customerContact.trim() !== String((card.customer as any)?.contact || ''))) {
         try {
           await updateCustomerMutation.mutateAsync({
             id: card.customerId,
-            data: { phone: customerPhone }
+            data: { ...(customerPhone ? { phone: customerPhone } : {}), contact: customerContact.trim() }
           });
         } catch (_ePhone) {
           console.warn('Não foi possível atualizar o telefone do cliente antes de finalizar (seguindo; o backend grava no fechamento):', _ePhone);
@@ -637,6 +621,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           status: 'completed',
           saleValue: totalValue.toFixed(2),
           customerPhone: (customerPhone || '').trim(),
+          customerContact: (customerContact || '').trim(),
           referralCode: (referralCode || '').trim() || undefined,
           products: products,
           paymentMethod: paymentMethod,
@@ -765,6 +750,18 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       });
       return;
     }
+    // 👤 Responsável pelo telefone obrigatório (nov/2026).
+    {
+      const _resp = String(customerContact || '').replace(/\s+/g, ' ').trim();
+      if (_resp.length < 2 || !/[A-Za-zÀ-ÿ]/.test(_resp)) {
+        toast({
+          title: "Responsável obrigatório",
+          description: "Informe o nome do responsável pelo telefone do comprador (campo ao lado do telefone).",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
 
     try {
       // Troca: enviar a foto dos produtos ANTES de finalizar (se falhar, aborta).
@@ -789,7 +786,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ motivo: trocaMotivo, acaoCliente: trocaExigeAcao ? trocaAcao : undefined }),
+            body: JSON.stringify({ motivo: trocaMotivo, acaoCliente: trocaExigeAcao ? trocaAcao : undefined, descontoBoleto: trocaDescontoBoleto }),
           });
           if (!_r.ok) throw new Error((await _r.json().catch(() => ({})))?.message || 'Falha ao registrar o motivo');
           const _d = await _r.json();
@@ -981,7 +978,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     // O campo do telefone abre VAZIO quando o número ainda não foi confirmado pelo
     // contato. Salvar '' aqui APAGARIA o telefone do cadastro — por isso só vai no
     // patch quando o vendedor realmente digitou algo.
-    const _phonePatch = (customerPhone || '').trim() ? { phone: customerPhone } : {};
+    const _phonePatch: any = (customerPhone || '').trim() ? { phone: customerPhone } : {};
+    if ((customerContact || '').trim()) _phonePatch.contact = customerContact.trim();
     await updateCustomerMutation.mutateAsync({
       id: card.customer.id,
       data: {
@@ -1649,15 +1647,27 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     </span>
                   )}
                 </Label>
-                <Input
-                  type="tel"
-                  inputMode="numeric"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="(DDD) 9XXXX-XXXX"
-                  data-testid="input-customer-phone"
-                  className="mt-1"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                  <Input
+                    type="tel"
+                    inputMode="numeric"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="(DDD) 9XXXX-XXXX"
+                    data-testid="input-customer-phone"
+                  />
+                  <Input
+                    value={customerContact}
+                    onChange={(e) => setCustomerContact(e.target.value)}
+                    placeholder="Responsável (comprador) *"
+                    title="Nome do responsável por este telefone (obrigatório)"
+                    maxLength={120}
+                    data-testid="input-customer-contact"
+                  />
+                </div>
+                <div className="mt-1">
+                  <ContactPickerButton onPick={({ nome, telefone }) => { if (telefone) setCustomerPhone(telefone); if (nome) setCustomerContact(nome); }} />
+                </div>
                 {telefoneConfirmado ? (
                   <p className="text-xs text-emerald-700 mt-1">
                     Número já confirmado. Só altere se o contato tiver mudado de telefone.
@@ -1857,6 +1867,20 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   {trocaMotivo === 'vencido' && (
                     <TrocaPreviaDesconto cardId={card?.id} products={products} />
                   )}
+                  {/* Compensação por desconto em boleto (05/11/2026): só o selo no pipeline. */}
+                  <label htmlFor="troca-desconto-boleto" className="flex items-start gap-2 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm cursor-pointer">
+                    <Checkbox
+                      id="troca-desconto-boleto"
+                      checked={trocaDescontoBoleto}
+                      onCheckedChange={(v) => setTrocaDescontoBoleto(v === true)}
+                      className="mt-0.5"
+                      data-testid="checkbox-troca-desconto-boleto"
+                    />
+                    <span>
+                      <span className="font-medium">Desconto em boleto</span>
+                      <span className="block text-xs text-gray-600">O cliente será compensado com desconto em um boleto, aplicado pelo financeiro. O card segue no pipeline como "Troca - Desconto em Boleto".</span>
+                    </span>
+                  </label>
                 </div>
               )}
 

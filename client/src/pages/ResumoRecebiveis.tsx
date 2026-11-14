@@ -1324,7 +1324,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       {(cfgData?.colaboradores || []).map((c: any) => (
-                        <SelectItem key={c.id} value={c.id}>{c.nome} · {PAPEL_LABEL[c.role] || c.role}</SelectItem>
+                        <SelectItem key={c.id} value={c.id}>{c.nome} · {PAPEL_LABEL[c.role] || c.role}{c.no_resumo === false ? " · fora do resumo" : ""}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1830,7 +1830,7 @@ function DialogGestor({ open, onOpenChange, ym, colabs, campanhas }: {
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       {(cfgData?.colaboradores || []).map((c: any) => (
-                        <SelectItem key={c.id} value={c.id}>{c.nome} · {PAPEL_LABEL[c.role] || c.role}</SelectItem>
+                        <SelectItem key={c.id} value={c.id}>{c.nome} · {PAPEL_LABEL[c.role] || c.role}{c.no_resumo === false ? " · fora do resumo" : ""}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

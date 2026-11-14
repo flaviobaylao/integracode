@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
@@ -35,7 +36,7 @@ import CustomerHistoryBox from "@/components/CustomerHistoryBox";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
-import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
+import { AJUDA_SEMANA_ATENDIMENTO, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
 import { 
   Upload, 
@@ -111,6 +112,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+// 📅 SEMANA DO MÊS (semanaAtendimento): rótulo curto para a coluna; o completo vai no title.
+const SEMANA_CURTA: Record<string, string> = { toda: "Toda", impar: "1ª e 3ª", par: "2ª e 4ª", "1": "1ª", "2": "2ª", "3": "3ª", "4": "4ª", ultima: "Última" };
+const semanaCurta = (v: any) => SEMANA_CURTA[normalizarSemana(v)] || "Toda";
+const semanaLonga = (v: any) => ROTULO_SEMANA[normalizarSemana(v)] || "Toda semana";
 
 // ── BUSCA de Clientes Ativos: razão social, nome fantasia, CNPJ/CPF, inscrição estadual,
 // e-mail ou telefone. Sem acento/maiúscula; vários termos = todos precisam casar (em qualquer
@@ -421,6 +427,14 @@ export default function ActiveCustomers() {
       toast({ variant: "destructive", title: "Erro", description: "Digite um telefone válido" });
       return;
     }
+    // 👤 Responsável pelo telefone: obrigatório (nov/2026).
+    {
+      const resp = String(phoneEditData.newContact || '').replace(/\s+/g, ' ').trim();
+      if (resp.length < 2 || !/[A-Za-zÀ-ÿ]/.test(resp)) {
+        toast({ variant: "destructive", title: "Responsável obrigatório", description: "Informe o nome do responsável pelo telefone." });
+        return;
+      }
+    }
     updatePhoneMutation.mutate({ customerId: phoneEditData.customerId, phone: phoneEditData.newPhone, contact: phoneEditData.newContact });
   };
 
@@ -698,6 +712,7 @@ export default function ActiveCustomers() {
         'Tipo': ac.customer?.virtualService ? 'Virtual' : 'Presencial',
         'Dia da Rota': ac.customer?.weekdays ? formatWeekdays(ac.customer.weekdays) : '',
         'Periodicidade': ac.customer?.visitPeriodicity === 'semanal' ? 'Semanal' : ac.customer?.visitPeriodicity === 'quinzenal' ? 'Quinzenal' : ac.customer?.visitPeriodicity === 'mensal' ? 'Mensal' : ac.customer?.visitPeriodicity || '',
+        'Semana do mês': ac.customer ? semanaLonga((ac.customer as any)?.semanaAtendimento) : '',
         'Positivado': ac.customer?.emQuarentena ? 'QUARENTENA' : ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO',
         'Mês Anterior': prev > 0 ? prev.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Mês Atual': curr > 0 ? curr.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
@@ -718,7 +733,7 @@ export default function ActiveCustomers() {
       return;
     }
 
-    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Semana do mês', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
     const csvContent = [
       headers.join(';'),
       ...dataToExport.map(row =>
@@ -1463,6 +1478,7 @@ export default function ActiveCustomers() {
                         <TableHead>Tipo</TableHead>
                         <TableHead>Dia da Rota</TableHead>
                         <TableHead>Periodicidade</TableHead>
+                        <TableHead className="whitespace-nowrap">Semana do mês</TableHead>
                         <TableHead>Positivado</TableHead>
                         <TableHead className="text-right">
                           <button
@@ -1514,7 +1530,7 @@ export default function ActiveCustomers() {
                     <TableBody>
                       {filteredCustomers.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={16} className="text-center py-8 text-muted-foreground">
+                          <TableCell colSpan={17} className="text-center py-8 text-muted-foreground">
                             {searchTerm || selectedSeller || dayMulti.length > 0 || cityMulti.length > 0 || neighborhoodMulti.length > 0 ? "Nenhum cliente encontrado com os filtros aplicados" : "Nenhum cliente ativo na lista. Faça upload de uma planilha."}
                           </TableCell>
                         </TableRow>
@@ -1621,6 +1637,11 @@ export default function ActiveCustomers() {
                               </div>
                             </TableCell>
                             <TableCell>
+                              <div className="text-sm whitespace-nowrap" title={semanaLonga((ac.customer as any)?.semanaAtendimento)} data-testid={`semana-${ac.id}`}>
+                                {ac.customer ? semanaCurta((ac.customer as any)?.semanaAtendimento) : "-"}
+                              </div>
+                            </TableCell>
+                            <TableCell>
                               {ac.customer?.emQuarentena ? (
                                 <span className="font-semibold text-gray-500" title="Início do fornecimento futuro: não entra na positivação até a data de início">QUARENTENA</span>
                               ) : (
@@ -1702,7 +1723,7 @@ export default function ActiveCustomers() {
                           </TableRow>
                           {historyOpenId === ac.id && (
                             <TableRow className="bg-muted/20 hover:bg-muted/20">
-                              <TableCell colSpan={16} className="py-1">
+                              <TableCell colSpan={17} className="py-1">
                                 <CustomerHistoryBox customerId={ac.customer?.id} />
                               </TableCell>
                             </TableRow>
@@ -1854,12 +1875,12 @@ export default function ActiveCustomers() {
                 Cliente: <span className="font-medium text-foreground">{phoneEditData.customerName}</span>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="contact">Nome do Contato</Label>
+                <Label htmlFor="contact">Responsável pelo telefone (comprador) *</Label>
                 <Input
                   id="contact"
                   value={phoneEditData.newContact}
                   onChange={(e) => setPhoneEditData(prev => ({ ...prev, newContact: e.target.value }))}
-                  placeholder="Nome da pessoa de contato"
+                  placeholder="Nome de quem atende neste telefone"
                   data-testid="input-edit-contact"
                 />
               </div>
@@ -1873,6 +1894,7 @@ export default function ActiveCustomers() {
                   data-testid="input-edit-phone"
                 />
               </div>
+              <ContactPickerButton onPick={({ nome, telefone }) => setPhoneEditData(prev => ({ ...prev, ...(telefone ? { newPhone: telefone } : {}), ...(nome ? { newContact: nome } : {}) }))} />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowPhoneEditModal(false)}>

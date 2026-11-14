@@ -60,6 +60,40 @@ function withinBusinessHours(now = new Date()): boolean {
   return mins >= 8*60+30 && mins < 18*60+30;
 }
 
+// 🔎 Busca SOMENTE LEITURA de contatos na Umbler (nov/2026 — "Buscar no WhatsApp" do cadastro).
+// Por telefone usa /v1/contacts/phone/ (o mesmo que o disparo oficial já usa); por nome tenta a
+// listagem /v1/contacts/ com filtro. Qualquer falha devolve [] — nunca cria nem altera contato.
+export async function buscarContatosUmbler(q: string): Promise<Array<{ nome: string; telefone: string }>> {
+  if (!process.env.UMBLER_TALK_TOKEN) return [];
+  const out: Array<{ nome: string; telefone: string }> = [];
+  const pega = (c: any) => {
+    if (!c || typeof c !== 'object') return;
+    const nome = String(c.name || c.Name || c.displayName || c.fullName || c.contactName || c.profileName || c.pushName || c.nickname || '').trim();
+    const tel = String(c.phoneNumber || c.PhoneNumber || c.phone || c.Phone || '').replace(/\D/g, '');
+    if (tel) out.push({ nome, telefone: tel });
+  };
+  try {
+    const dig = String(q || '').replace(/\D/g, '');
+    if (dig.length >= 10) {
+      const d = normalizeBrPhone(dig);
+      const r = await umblerFetch('/v1/contacts/phone/?organizationId=' + encodeURIComponent(orgId()) + '&phone=' + encodeURIComponent('+' + d), { signal: AbortSignal.timeout(8000) });
+      if (r.ok) { const c: any = await r.json().catch(() => null); pega(c?.contact || c); }
+    } else if (String(q || '').trim().length >= 3) {
+      const r = await umblerFetch('/v1/contacts/?organizationId=' + encodeURIComponent(orgId()) + '&Search=' + encodeURIComponent(String(q).trim()) + '&Take=15', { signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        const j: any = await r.json().catch(() => null);
+        const lista = Array.isArray(j) ? j : (j?.items || j?.Items || j?.contacts || j?.data || j?.results || []);
+        // A API pode ignorar o filtro: só fica quem tem o termo no nome.
+        const alvo = String(q).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const casa = (c: any) => String(c?.name || c?.Name || c?.displayName || c?.fullName || c?.contactName || c?.profileName || c?.pushName || c?.nickname || '')
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(alvo);
+        if (Array.isArray(lista)) for (const c of lista.filter(casa).slice(0, 15)) pega(c);
+      }
+    }
+  } catch { /* busca é best-effort */ }
+  return out;
+}
+
 async function officialCheckWhatsapp(toPhone: string): Promise<boolean | null> {
   const d = normalizeBrPhone(toPhone); if (!d) return null;
   try {

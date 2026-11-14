@@ -53,7 +53,7 @@ export default function Home() {
       case 'customers':
         return <CustomerManagement />;
       case 'sales-goals':
-        return <SalesGoalsManagement user={user as any} />;
+        return <SalesGoalsManagement user={user as any} abaTrocas />;
       case 'products':
         return <ProductManagement />;
       case 'billings':

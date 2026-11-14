@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -76,13 +77,15 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
     return isNaN(d.getTime()) ? String(s || '').slice(0, 19).replace('T', ' ') : d.toLocaleString('pt-BR');
   };
 
+  // 📝 Inativar pelo toggle de Status também pede o MOTIVO (popup padrão de todos os "Inativar").
+  const { pedirMotivo, MotivoModal } = useMotivoInativacao();
   const toggleActiveMutation = useMutation({
-    mutationFn: async (next: boolean) => {
+    mutationFn: async ({ next, motivo }: { next: boolean; motivo?: string }) => {
       const url = next ? '/api/customers/bulk-reactivate' : '/api/customers/bulk-inactivate';
-      const r: any = await apiRequest('POST', url, { ids: [customer!.id] });
+      const r: any = await apiRequest('POST', url, next ? { ids: [customer!.id] } : { ids: [customer!.id], motivo });
       return (r ?? {});
     },
-    onSuccess: (_data: any, next: boolean) => {
+    onSuccess: (_data: any, { next }: { next: boolean; motivo?: string }) => {
       setLocalActive(next);
       toast({
         title: next ? 'Cliente reativado' : 'Cliente inativado',
@@ -326,6 +329,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
   if (!customer) return null;
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh]">
         <DialogHeader>
@@ -499,7 +503,12 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                         <div className="flex items-center gap-2 mt-1">
                           <Switch
                             checked={localActive}
-                            onCheckedChange={(v: boolean) => toggleActiveMutation.mutate(v)}
+                            onCheckedChange={async (v: boolean) => {
+                              if (v) { toggleActiveMutation.mutate({ next: true }); return; }
+                              const motivo = await pedirMotivo({ titulo: `Inativar ${customer?.fantasyName || customer?.name || 'cliente'}` });
+                              if (!motivo) return; // cancelou: o toggle continua Ativo
+                              toggleActiveMutation.mutate({ next: false, motivo });
+                            }}
                             disabled={toggleActiveMutation.isPending}
                             data-testid="switch-customer-active"
                           />
@@ -685,11 +694,15 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
                               <span className="font-medium text-gray-900">{h.label || h.field}</span>
                               <span className="text-xs text-gray-500">{fmtAudit(h.created_at)}</span>
                             </div>
+                            {(h.field === 'inativacao' || h.field === 'motivo') ? (
+                              <div className={`mt-1 whitespace-pre-wrap break-words ${h.field === 'inativacao' ? 'rounded-md bg-amber-50 border border-amber-200 px-2 py-1 text-amber-900' : 'text-gray-700'}`}>📝 {h.new_value ?? '—'}</div>
+                            ) : (
                             <div className="mt-1 text-gray-700">
                               <span className="line-through text-gray-400">{h.old_value ?? '—'}</span>
                               <span className="mx-2">→</span>
                               <span className="font-medium text-green-700">{h.new_value ?? '—'}</span>
                             </div>
+                            )}
                             <div className="mt-1 text-xs text-gray-500">por {h.changed_by_name || 'Sistema'}</div>
                           </div>
                         ))}
@@ -710,5 +723,7 @@ export default function CustomerDetailsModal({ isOpen, onClose, customer }: Cust
         </ScrollArea>
       </DialogContent>
     </Dialog>
+    {MotivoModal}
+    </>
   );
 }
