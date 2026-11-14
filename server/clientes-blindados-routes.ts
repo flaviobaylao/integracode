@@ -80,7 +80,9 @@ export function registerClientesBlindados(app: Express) {
       const ehVendedor = (id: string | null) => {
         if (!id) return false;
         const i = info.get(id);
-        return !!i && i.ativo && ["vendedor", "telemarketing"].includes(i.role);
+        // Contas de sistema/canal (Hotsite, Instagram, Honest Admin/Colaboradores/Fornecedores) não têm carteira de verdade.
+        if (!i || /^(hotsite|instagram|honest\b|\[canal\])/i.test(i.nome.trim())) return false;
+        return i.ativo && ["vendedor", "telemarketing"].includes(i.role);
       };
 
       // ── carteira: clientes ativos com dono vendedor/telemarketing ativo ──
