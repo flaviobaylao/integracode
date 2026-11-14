@@ -499,7 +499,7 @@ export default function DossieVendedor() {
               </PopoverTrigger>
               <PopoverContent align="end" className="w-[520px] text-sm space-y-2 max-h-[70vh] overflow-auto">
                 <p><b>Início na atividade:</b> o 1º pedido que o vendedor digitou no pipeline (ou o cadastro do usuário, se ele nunca digitou). Como o pipeline só existe desde a virada para o 2.0, a data pode ser ajustada à mão.</p>
-                <p><b>Herdados:</b> clientes da carteira atual que já existiam antes do início dele. <b>Conquistados:</b> clientes da carteira atual que entraram a partir do início dele. Entrada do cliente = cadastro ou 1ª compra, o que vier primeiro.</p>
+                <p><b>Herdados:</b> clientes da carteira atual que já existiam antes do início dele — não dependem do período. <b>Conquistados:</b> clientes da carteira atual que entraram a partir do início dele <b>e dentro do período do filtro</b>: mudando De/Até, a lista e o cartão mudam junto. Entrada do cliente = cadastro ou 1ª compra, o que vier primeiro.</p>
                 <p><b>Inativados por ele:</b> inativações registradas na auditoria do cadastro com o usuário dele. A auditoria só começou em set/2026.</p>
                 <p><b>Vendas dele:</b> pedidos que ele digitou (regra do implantador), mesmo para cliente de outra carteira. <b>Faturamento da carteira:</b> o que os clientes da carteira dele faturaram, na régua da aba Carteira.</p>
                 <p className="border-t pt-2"><b>Por que as barras e a linha não batem.</b> São perguntas diferentes: a barra é <b>o que ele digitou</b>, a linha é <b>o que os clientes da carteira dele faturaram</b>. Elas só coincidiriam se ele digitasse todos os pedidos dos seus clientes e nenhum outro. Separam as duas: pedido que o telemarketing (ou outro vendedor) digitou para um cliente da carteira dele entra só na linha; pedido que ele digitou para cliente de outra carteira entra só na barra; a carteira é a de <b>hoje</b> aplicada ao período inteiro, então cliente que chegou em setembro leva o faturamento dele de janeiro para a linha; e pedido digitado não é nota autorizada — valor, cancelamento e a virada do mês deslocam os dois.</p>
@@ -550,8 +550,8 @@ export default function DossieVendedor() {
                 sub={`de ${consolidado.ativos} ativos na carteira`} cor="text-red-700" />
               {modo !== "sem" && <Kpi titulo="Rezoneados para a carteira" valor={String(consolidado.herdados)}
                 sub={`herdados · ${consolidado.herdadosAtivos} ativos`} />}
-              {modo !== "sem" && <Kpi titulo="Clientes conquistados" valor={String(consolidado.conquistados.length)}
-                sub={`${consolidado.conquistados.filter((c: any) => c.ativo).length} ativos`} />}
+              {modo !== "sem" && <Kpi titulo="Clientes conquistados no período" valor={String(consolidado.conquistados.length)}
+                sub={`${rotPeriodo} · ${consolidado.conquistados.filter((c: any) => c.ativo).length} ativo${consolidado.conquistados.filter((c: any) => c.ativo).length === 1 ? "" : "s"}`} />}
               {modo !== "sem" && <Kpi titulo="Leads cadastrados" valor={String(consolidado.leadsCad)}
                 sub={`${consolidado.leadsAnd} em andamento · ${consolidado.leadsDesc} descartados`} />}
               {modo !== "sem" && <Kpi titulo="Leads convertidos" valor={String(consolidado.leadsConv)}
@@ -562,7 +562,8 @@ export default function DossieVendedor() {
               “Com compra” conta o cliente <b>ativo</b> que faturou em algum mês de <b>{rotPeriodo}</b>
               {meses.length > 1 ? ` (${meses.length} meses)` : ""}; “sem compra” é o resto da carteira ativa.
               {" "}Mudando o período no topo, os dois números mudam junto.
-              {" "}Rezoneados, conquistados e leads são do cadastro de hoje, não do período.
+              {" "}Conquistados também segue o período: são os que entraram na carteira dentro da faixa.
+              {" "}Rezoneados e leads são do cadastro de hoje, não do período.
             </div>
           </Card>
 
@@ -595,7 +596,7 @@ export default function DossieVendedor() {
                   <table className="w-full text-sm">
                     <thead><tr className="text-left text-muted-foreground border-b">
                       <th className="py-1">Vendedor</th><th>Tipo</th><th>Início</th><th className="text-right">Carteira</th><th className="text-right">Herdados</th>
-                      <th className="text-right">Conquistados</th><th className="text-right">Inativou</th><th className="text-right">Leads</th>
+                      <th className="text-right">Conquistados no período</th><th className="text-right">Inativou</th><th className="text-right">Leads</th>
                       <th className="text-right">Vendas no período</th><th className="text-right">Carteira no período</th></tr></thead>
                     <tbody>
                       {resumoVendedores.map((v) => (
@@ -620,8 +621,8 @@ export default function DossieVendedor() {
             ) : umSo ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Clientes conquistados por {umSo.nome}</CardTitle>
-                  <CardDescription>Entraram na carteira a partir de {dataBR(umSo.inicio)}, com o que já compraram.</CardDescription>
+                  <CardTitle>Clientes conquistados por {umSo.nome} em {rotPeriodo}</CardTitle>
+                  <CardDescription>Entraram na carteira <b>dentro do período</b>, a partir de {dataBR(umSo.inicio)} (início dele), com o que já compraram.</CardDescription>
                 </CardHeader>
                 <CardContent className="overflow-auto max-h-[420px]">
                   <table className="w-full text-sm">
@@ -630,7 +631,7 @@ export default function DossieVendedor() {
                     <tbody>
                       {consolidado.conquistados.map((c: any) => (
                         <tr key={c.id} className="border-b last:border-0">
-                          <td className="py-1">{c.nome}<div className="text-xs text-muted-foreground">{c.cidade} · {c.segmento}</div></td>
+                          <td className="py-1">{c.nome}<div className="text-xs text-muted-foreground">{c.cidade}</div></td>
                           <td>{dataBR(c.conquista)}</td>
                           <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>{c.ativo ? "Ativo" : "Inativo"}</td>
                           <td className="text-right">{c.vendasVida}</td><td className="text-right">{brl(c.valorVida)}</td><td className="text-right">{brl(c.fatAno)}</td>
@@ -654,8 +655,8 @@ export default function DossieVendedor() {
             ) : (
               <Card>
                 <CardHeader>
-                  <CardTitle>Clientes conquistados</CardTitle>
-                  <CardDescription>Soma dos {selecionados.length} vendedores marcados.</CardDescription>
+                  <CardTitle>Clientes conquistados em {rotPeriodo}</CardTitle>
+                  <CardDescription>Soma dos {selecionados.length} vendedores marcados, só quem entrou dentro do período.</CardDescription>
                 </CardHeader>
                 <CardContent className="overflow-auto max-h-[420px]">
                   <table className="w-full text-sm">
@@ -664,7 +665,7 @@ export default function DossieVendedor() {
                     <tbody>
                       {consolidado.conquistados.map((c: any) => (
                         <tr key={`${c.vendedor}-${c.id}`} className="border-b last:border-0">
-                          <td className="py-1">{c.nome}<div className="text-xs text-muted-foreground">{c.cidade} · {c.segmento}</div></td>
+                          <td className="py-1">{c.nome}<div className="text-xs text-muted-foreground">{c.cidade}</div></td>
                           <td className="text-xs">{c.vendedor}</td>
                           <td>{dataBR(c.conquista)}</td>
                           <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>{c.ativo ? "Ativo" : "Inativo"}</td>
