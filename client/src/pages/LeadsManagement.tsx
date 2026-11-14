@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { sortSellersByType } from "@/lib/sellerOrder";
@@ -1699,6 +1700,9 @@ export default function LeadsManagement() {
                 placeholder="(DDD) 9XXXX-XXXX"
                 data-testid="input-phone"
               />
+            </div>
+            <div className="-mt-1">
+              <ContactPickerButton onPick={({ nome, telefone }) => setFormData((prev: any) => ({ ...prev, ...(telefone ? { phone: telefone } : {}), ...(nome ? { contact: nome } : {}) }))} />
             </div>
 
             <div>

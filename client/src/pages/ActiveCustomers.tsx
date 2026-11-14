@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useActiveSellers, MultiSelect, multiMatch } from "@/lib/tableTools";
 import { cidadeCanonica } from "@/lib/cidadePadrao";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
@@ -1893,6 +1894,7 @@ export default function ActiveCustomers() {
                   data-testid="input-edit-phone"
                 />
               </div>
+              <ContactPickerButton onPick={({ nome, telefone }) => setPhoneEditData(prev => ({ ...prev, ...(telefone ? { newPhone: telefone } : {}), ...(nome ? { newContact: nome } : {}) }))} />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowPhoneEditModal(false)}>
