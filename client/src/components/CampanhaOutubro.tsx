@@ -142,6 +142,17 @@ function ultimoDia(ym: string): number {
   return new Date(Date.UTC(a, m, 0)).getUTCDate();
 }
 
+// Título de cada bloco do Planejamento. O label do catálogo é escrito para vir
+// depois do valor ("R$ 30 por novo cliente"); no topo do card vira um nome.
+function tituloPremissa(p: { chave: string; label: string; gatilho: number }): string {
+  if (p.chave === "novos") return "Novo cliente";
+  if (p.chave === "positivacao") return `Positivação de ${String(p.gatilho).replace(".", ",")}%`;
+  if (p.chave === "meta") return "Meta de faturamento";
+  if (p.chave === "comissao_novo") return `Comissão por novo cliente · ${p.gatilho} meses`;
+  const t = String(p.label || p.chave).replace(/^(por|de|da|do)\s+/i, "");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 export default function CampanhaOutubro() {
   const [ym, setYm] = useState(mesCorrente);
   const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery<Resp>({
@@ -249,9 +260,12 @@ export default function CampanhaOutubro() {
             <div key={p.chave}
               className={`rounded-xl border p-4 ${p.ativa ? "border-gray-200 bg-white" : "border-dashed border-gray-300 bg-gray-50"}`}
               data-testid={`premissa-${p.chave}`}>
+              {/* Título da premissa no topo, em destaque (pedido do Flavio, 14/nov/2026):
+                  antes o nome vinha embaixo do valor e se perdia no card. */}
               <div className="flex items-start justify-between gap-2">
-                <div className={`text-xl font-extrabold tracking-tight ${p.ativa ? "text-gray-800" : "text-gray-400 line-through"}`}>
-                  {p.modo === "percentual" ? `${String(p.valor).replace(".", ",")}%` : brl(p.valor)}
+                <div className={`text-[15px] font-extrabold uppercase leading-tight tracking-wide ${p.ativa ? "text-emerald-800" : "text-gray-400"}`}
+                  data-testid={`premissa-titulo-${p.chave}`}>
+                  {tituloPremissa(p)}
                 </div>
                 {admin && (
                   <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-[11px] text-gray-500">
@@ -262,6 +276,9 @@ export default function CampanhaOutubro() {
                   </label>
                 )}
               </div>
+              <div className={`mt-1 text-2xl font-extrabold tracking-tight ${p.ativa ? "text-gray-800" : "text-gray-400 line-through"}`}>
+                {p.modo === "percentual" ? `${String(p.valor).replace(".", ",")}%` : brl(p.valor)}
+              </div>
               {p.ativa && p.ativadaEm && (
                 <div className="text-[11px] font-semibold text-emerald-700">valendo desde {quando(p.ativadaEm)}</div>
               )}
@@ -270,11 +287,7 @@ export default function CampanhaOutubro() {
                   desligado em {quando(p.desativadaEm)}{p.chave === "novos" ? " — vale para quem comprou até aí" : ""}
                 </div>
               )}
-              <div className={`text-sm font-semibold ${p.ativa ? "text-gray-700" : "text-gray-400"}`}>
-                {p.chave === "positivacao" ? `positivação de ${p.gatilho}%`
-                  : p.chave === "comissao_novo" ? `${p.label} · ${p.gatilho} meses` : p.label}
-              </div>
-              <div className="text-xs text-gray-500">
+              <div className="mt-1 text-xs text-gray-500">
                 {p.chave === "comissao_novo" ? p.descricao : p.modo === "percentual" ? <>sobre o {p.base}.</> : p.descricao}
               </div>
 
