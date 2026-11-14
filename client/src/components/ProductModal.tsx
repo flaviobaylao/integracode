@@ -152,6 +152,15 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
         ...Object.fromEntries(LOGISTICA_CAMPOS.map(k => [k, formData[k] === '' ? null : formData[k]])),
       };
 
+      // NCM: 8 digitos ou vazio. Sem isso o erro so aparece na rejeicao da SEFAZ,
+      // com o pedido ja faturado (caso das bombonas, set/2026).
+      const _ncmDigitos = formData.ncm.replace(/\D/g, '');
+      if (_ncmDigitos.length > 0 && _ncmDigitos.length !== 8) {
+        setErrors({ ncm: `NCM deve ter 8 digitos — faltam ${8 - _ncmDigitos.length}. Ex.: 3923.90.00` });
+        toast({ title: 'NCM incompleto', description: 'O NCM da NF-e tem 8 digitos. Complete ou deixe em branco.', variant: 'destructive' });
+        return;
+      }
+
       const validatedData = insertProductSchema.parse(dataToValidate);
       createProductMutation.mutate(validatedData);
     } catch (error) {
@@ -269,6 +278,13 @@ export default function ProductModal({ isOpen, onClose, editingProduct }: Produc
                   maxLength={10}
                   data-testid="input-ncm"
                 />
+                {(() => {
+                  const d = formData.ncm.replace(/\D/g, '');
+                  if (d.length === 0) return null;
+                  if (d.length === 8) return <p className="text-xs text-emerald-700 mt-1">NCM completo ({d})</p>;
+                  return <p className="text-xs text-red-600 mt-1">NCM incompleto: {d.length} de 8 digitos. A SEFAZ recusa a nota.</p>;
+                })()}
+                {errors.ncm && <p className="text-xs text-red-600 mt-1">{errors.ncm}</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
