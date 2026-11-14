@@ -38,6 +38,13 @@ const mesAntes = (m: string) => {
   const y = b === 1 ? a - 1 : a, x = b === 1 ? 12 : b - 1;
   return `${y}-${String(x).padStart(2, "0")}`;
 };
+/** 'YYYY-MM' deslocado de `delta` meses (negativo anda para trás). */
+const somaMeses = (m: string, delta: number) => {
+  let y = Number(m.slice(0, 4)), x = Number(m.slice(5, 7)) + delta;
+  while (x < 1) { x += 12; y--; }
+  while (x > 12) { x -= 12; y++; }
+  return `${y}-${String(x).padStart(2, "0")}`;
+};
 /** Variação % de `atual` sobre `base`. Sem base não há variação — devolve null
  *  em vez de inventar "+100%", que é o erro clássico de dividir por zero. */
 const variacao = (atual: number, base: number): number | null => {
@@ -157,9 +164,21 @@ function Th({ cod, atual, onOrdenar, children, className = "" }: {
 export default function DossieVendedor() {
   const { user } = useAuth() as any;
   const podeAjustar = ["admin", "coordinator", "administrative"].includes(String(user?.role || ""));
-  const anoAtual = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric" }).format(new Date()));
-  const [ano, setAno] = useState(anoAtual);
-  const [mesSel, setMesSel] = useState<string>("");          // "" = ano inteiro
+  // 14/11/2026 (Flavio) — O FILTRO-MÃE VIROU UM PERÍODO. Antes eram "Mês" e
+  // "Ano": a tela trabalhava um ano civil por vez e, dentro dele, um mês. Isso
+  // impedia a pergunta mais natural do negócio — "e de nov/25 para cá?" —, que
+  // atravessa a virada do ano. Agora são DE (mês) e ATÉ (mês), um intervalo
+  // contínuo que pode cruzar anos, e TUDO abaixo obedece a ele: os cartões do
+  // topo, o resumo, as listas, as colunas mês a mês e os gráficos.
+  //
+  // O "mês escolhido" deixou de existir como conceito à parte. Quem quer um mês
+  // só põe De e Até no mesmo mês — e aí os cartões, a lista e as colunas falam
+  // daquele mês, sem um segundo seletor para desencontrar do primeiro.
+  const mesHojeBR = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit" })
+    .format(new Date()).slice(0, 7);
+  const anoAtual = Number(mesHojeBR.slice(0, 4));
+  const [ini, setIni] = useState(`${anoAtual}-01`);
+  const [fim, setFim] = useState(mesHojeBR);
   const [escopo, setEscopo] = useState<"toda" | "sem" | "sel">("toda");
   const [selIds, setSelIds] = useState<string[]>([]);
   const [incluirInativos, setIncluirInativos] = useState(false);
@@ -171,9 +190,9 @@ export default function DossieVendedor() {
   const qc = useQueryClient();
 
   const { data, isLoading, error } = useQuery<any>({
-    queryKey: ["/api/reports/dossie-vendedores", ano],
+    queryKey: ["/api/reports/dossie-vendedores", ini, fim],
     queryFn: async () => {
-      const r = await fetch(`/api/reports/dossie-vendedores?ano=${ano}`, { credentials: "include" });
+      const r = await fetch(`/api/reports/dossie-vendedores?inicio=${ini}&fim=${fim}`, { credentials: "include" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
@@ -183,9 +202,12 @@ export default function DossieVendedor() {
   const semVendedor: any[] = data?.semVendedor || [];
   const meses: string[] = data?.meses || [];
   const mesCorrente: string = data?.mesCorrente || "";
+  // O ano do FIM do período: é o que os gráficos embutidos usam para abrir.
+  const ano = Number(fim.slice(0, 4));
 
-  // Mês escolhido que não existe no ano carregado (trocou de ano) volta para o ano inteiro.
-  useEffect(() => { if (mesSel && meses.length && !meses.includes(mesSel)) setMesSel(""); }, [meses, mesSel]);
+  // De depois de Até é digitação, não intenção: arruma sozinho em vez de pedir
+  // ao servidor uma janela invertida.
+  useEffect(() => { if (ini > fim) setFim(ini); }, [ini, fim]);
 
   // ── quem está no seletor ──────────────────────────────────────────────────
   const naLista = useMemo(
@@ -259,10 +281,14 @@ export default function DossieVendedor() {
     };
   }, [modo, selecionados, semVendedor, data]);
 
-  // ── o mês escolhido e o anterior ──────────────────────────────────────────
-  const mesAnt = mesSel ? mesAntes(mesSel) : "";
-  // Janeiro não tem com o que comparar dentro do ano carregado.
-  const temAnterior = !!mesSel && meses.includes(mesAnt);
+  // ── os dois últimos meses do período ──────────────────────────────────────
+  // A coluna de variação compara o ÚLTIMO mês do período com o anterior a ele.
+  // Antes dependia de escolher um mês no filtro; agora que o filtro é uma
+  // faixa, o "mês da pergunta" é naturalmente o último — e com um mês só no
+  // período não há o que comparar.
+  const mesFoco = meses.length ? meses[meses.length - 1] : "";
+  const mesAnt = meses.length > 1 ? meses[meses.length - 2] : "";
+  const temAnterior = !!mesAnt;
   const noMes = (c: any, m: string) => Number(c?.porMes?.[m]) || 0;
 
   // ── tabela anual de clientes mês a mês ─────────────────────────────────────
@@ -292,9 +318,6 @@ export default function DossieVendedor() {
       const b = norm(busca);
       arr = arr.filter((c) => norm(`${c.nome} ${c.vendedor} ${c.cidade} ${c.segmento} ${c.rede || ""} ${c.doc || ""}`).includes(b));
     }
-    // Com um mês escolhido, a lista é a de quem comprou NELE ou no mês anterior
-    // — quem parou de comprar é justamente o que não pode sumir da tela.
-    if (mesSel) arr = arr.filter((c) => noMes(c, mesSel) > 0 || (temAnterior && noMes(c, mesAnt) > 0));
     const dir = ord.dir === "asc" ? 1 : -1;
     // .trim(): nome com espaco na frente existe no cadastro e, sem isto, ele
     // fura a ordem alfabetica e aparece antes do "2 IRMAOS" — o usuario ve uma
@@ -305,8 +328,11 @@ export default function DossieVendedor() {
       if (ord.col === "vendedor") return txt(c.vendedor);
       if (ord.col === "rede") return txt(c.rede);
       if (ord.col === "total") return Number(c.total) || 0;
+      if (ord.col === "situacao") return c.ativo ? "Ativo" : "Inativo";
+      if (ord.col === "ultima") return txt(c.ultimaCompra);
+      if (ord.col === "ultimaValor") return Number(c.ultimaCompraValor) || 0;
       if (ord.col === "var") {
-        const v = temAnterior ? variacao(noMes(c, mesSel), noMes(c, mesAnt)) : null;
+        const v = temAnterior ? variacao(noMes(c, mesFoco), noMes(c, mesAnt)) : null;
         return v === null ? -Infinity : v;
       }
       return noMes(c, ord.col); // uma coluna de mês
@@ -316,7 +342,7 @@ export default function DossieVendedor() {
       if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y), "pt-BR") * dir;
       return (x - y) * dir;
     });
-  }, [base, redeSel, busca, mesSel, mesAnt, temAnterior, ord]);
+  }, [base, redeSel, busca, mesFoco, mesAnt, temAnterior, ord]);
 
   const ordenar = (col: string) =>
     setOrd((o) => (o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "cliente" || col === "vendedor" || col === "rede" ? "asc" : "desc" }));
@@ -327,11 +353,13 @@ export default function DossieVendedor() {
   const exportarTabela = () => {
     exportToExcel(clientesTabela.map((c) => {
       const row: any = { Cliente: c.nome, "CPF/CNPJ": c.doc || "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
+      row["Última compra"] = c.ultimaCompra || "";
+      row["Valor da última compra"] = Number(c.ultimaCompraValor) || 0;
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
-      row["Total no ano"] = c.total;
-      if (mesSel && temAnterior) row[`Variação ${rotMes(mesSel)} vs ${rotMes(mesAnt)}`] = pct(variacao(noMes(c, mesSel), noMes(c, mesAnt)));
+      row["Total no período"] = c.total;
+      if (temAnterior) row[`Variação ${rotMes(mesFoco)} vs ${rotMes(mesAnt)}`] = pct(variacao(noMes(c, mesFoco), noMes(c, mesAnt)));
       return row;
-    }), `clientes-${ano}${mesSel ? "-" + mesSel.slice(5) : ""}-${modo === "sel" ? (umSo?.nome || `${selecionados.length}-vendedores`) : modo === "sem" ? "sem-vendedor" : "honest"}`);
+    }), `clientes-${ini}_a_${fim}-${modo === "sel" ? (umSo?.nome || `${selecionados.length}-vendedores`) : modo === "sem" ? "sem-vendedor" : "honest"}`);
   };
 
   const salvarInicio = async (valor: string | null) => {
@@ -362,52 +390,26 @@ export default function DossieVendedor() {
     : selecionados.length ? `${selecionados.length} vendedores` : "Nenhum vendedor marcado";
   const origemInicio = umSo?.inicioAjustado ? "ajustada manualmente" : umSo?.primeiroPedido ? "1º pedido digitado" : "cadastro do usuário";
 
-  // ── números do recorte de mês, para os cartões do topo ────────────────────
-  const rotPeriodo = mesSel ? rotMes(mesSel) : String(ano);
+  // ── como o período se escreve na tela ─────────────────────────────────────
+  const rotPeriodo = meses.length <= 1 ? rotMes(fim) : `${rotMes(ini)} a ${rotMes(fim)}`;
 
-  // ── OS 3 ÚLTIMOS MESES ────────────────────────────────────────────────────
-  // Os cartões do topo passaram a ser de atividade da carteira (Flavio,
-  // 13/11/2026): quem comprou e quem NÃO comprou nos últimos 3 meses.
+  // ── ATIVOS COM / SEM COMPRA NO PERÍODO ────────────────────────────────────
+  // Era uma janela fixa de 3 meses; virou O PERÍODO DO FILTRO (Flavio,
+  // 14/11/2026). O filtro-mãe passa a mandar também aqui: ano inteiro conta o
+  // ano inteiro, um mês só conta aquele mês. Manter uma janela própria aqui
+  // dentro era a tela ter dois períodos ao mesmo tempo.
   //
-  // A janela termina no mês escolhido no filtro; sem filtro, no último mês
-  // carregado do ano. Assim o seletor de mês continua mandando no topo, e num
-  // ano fechado a conta é a daquele ano, não a de hoje. Meses fora do ano
-  // carregado não entram — janeiro, por exemplo, só tem ele mesmo — e os meses
-  // contados aparecem escritos no cartão, para ninguém supor três.
-  const janela3 = useMemo(() => {
-    const fim = mesSel || meses[meses.length - 1];
-    if (!fim) return [] as string[];
-    const out = [fim];
-    let m = fim;
-    for (let i = 0; i < 2; i++) { m = mesAntes(m); if (meses.includes(m)) out.push(m); }
-    return out;
-  }, [mesSel, meses]);
-  /** Os 3 meses imediatamente anteriores à janela, para a seta de variação. */
-  const janela3Antes = useMemo(() => {
-    if (!janela3.length) return [] as string[];
-    const out: string[] = [];
-    let m = janela3[janela3.length - 1];
-    for (let i = 0; i < 3; i++) { m = mesAntes(m); if (meses.includes(m)) out.push(m); }
-    return out;
-  }, [janela3, meses]);
+  // COM COMPRA = cliente ATIVO do recorte que faturou em algum mês do período.
+  // SEM COMPRA é o resto da carteira ativa, POR SUBTRAÇÃO e não por uma segunda
+  // contagem: a lista do período só traz quem comprou, então quem está parado
+  // há mais tempo simplesmente não existe nela e seria invisível numa contagem
+  // direta.
   const comprouEm = (c: any, ms: string[]) => ms.some((m) => noMes(c, m) > 0);
-
-  // ATIVOS COM COMPRA = cliente ATIVO do recorte com faturamento em algum dos 3
-  // meses. ATIVOS SEM COMPRA é o resto da carteira ativa — por subtração, e não
-  // por uma segunda contagem: `clientesAno` só traz quem comprou no ano, então
-  // quem está parado há mais tempo simplesmente não existe nessa lista e seria
-  // invisível numa contagem direta.
-  const ativosComCompra3m = useMemo(
-    () => base.filter((c) => c.ativo && comprouEm(c, janela3)).length,
-    [base, janela3],
+  const ativosComCompra = useMemo(
+    () => base.filter((c) => c.ativo && comprouEm(c, meses)).length,
+    [base, meses],
   );
-  const ativosSemCompra3m = Math.max(0, consolidado.ativos - ativosComCompra3m);
-  const comCompra3mAntes = useMemo(
-    () => (janela3Antes.length ? base.filter((c) => c.ativo && comprouEm(c, janela3Antes)).length : null),
-    [base, janela3Antes],
-  );
-  const var3m = comCompra3mAntes === null ? null : variacao(ativosComCompra3m, comCompra3mAntes);
-  const rotJanela = janela3.map((m) => rotMes(m)).join(", ");
+  const ativosSemCompra = Math.max(0, consolidado.ativos - ativosComCompra);
 
   return (
     <div className="space-y-4">
@@ -419,27 +421,26 @@ export default function DossieVendedor() {
         <Card>
           <CardContent className="pt-4 flex flex-wrap items-end gap-3">
             <div>
-              <label className="text-xs text-muted-foreground block">Mês</label>
-              <Select value={mesSel || "__ano__"} onValueChange={(v) => { setMesSel(v === "__ano__" ? "" : v); setLimite(100); }}>
-                <SelectTrigger className="w-36" data-testid="dossie-mes"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__ano__">Ano inteiro</SelectItem>
-                  {meses.map((m) => (
-                    <SelectItem key={m} value={m}>{rotMes(m)}{m === mesCorrente ? " (em curso)" : ""}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <label className="text-xs text-muted-foreground block">De (mês)</label>
+              <Input type="month" value={ini} min="2025-01" max={fim} className="w-40" data-testid="dossie-de"
+                onChange={(e) => { if (e.target.value) { setIni(e.target.value.slice(0, 7)); setLimite(100); } }} />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground block">Ano</label>
-              <Select value={String(ano)} onValueChange={(v) => setAno(Number(v))}>
-                <SelectTrigger className="w-28" data-testid="dossie-ano"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Array.from({ length: anoAtual - 2024 }, (_, i) => anoAtual - i).map((a) => (
-                    <SelectItem key={a} value={String(a)}>{a}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <label className="text-xs text-muted-foreground block">Até (mês)</label>
+              <Input type="month" value={fim} min={ini} max={mesHojeBR} className="w-40" data-testid="dossie-ate"
+                onChange={(e) => { if (e.target.value) { setFim(e.target.value.slice(0, 7)); setLimite(100); } }} />
+            </div>
+            {/* Atalhos: os recortes que se pede toda hora, sem digitar data. */}
+            <div className="flex gap-1">
+              {([
+                ["Este ano", `${anoAtual}-01`, mesHojeBR],
+                ["Últimos 12 meses", somaMeses(mesHojeBR, -11), mesHojeBR],
+                ["Este mês", mesHojeBR, mesHojeBR],
+                ["Desde nov/25", "2025-11", mesHojeBR],
+              ] as const).map(([rot, de, ate]) => (
+                <Button key={rot} variant="outline" size="sm" data-testid={`dossie-atalho-${rot}`}
+                  onClick={() => { setIni(de as string); setFim(ate as string); setLimite(100); }}>{rot}</Button>
+              ))}
             </div>
             {!restrito && (
               <div>
@@ -501,10 +502,12 @@ export default function DossieVendedor() {
                 <p><b>Herdados:</b> clientes da carteira atual que já existiam antes do início dele. <b>Conquistados:</b> clientes da carteira atual que entraram a partir do início dele. Entrada do cliente = cadastro ou 1ª compra, o que vier primeiro.</p>
                 <p><b>Inativados por ele:</b> inativações registradas na auditoria do cadastro com o usuário dele. A auditoria só começou em set/2026.</p>
                 <p><b>Vendas dele:</b> pedidos que ele digitou (regra do implantador), mesmo para cliente de outra carteira. <b>Faturamento da carteira:</b> o que os clientes da carteira dele faturaram, na régua da aba Carteira.</p>
-                <p className="border-t pt-2"><b>Por que as barras e a linha não batem.</b> São perguntas diferentes: a barra é <b>o que ele digitou</b>, a linha é <b>o que os clientes da carteira dele faturaram</b>. Elas só coincidiriam se ele digitasse todos os pedidos dos seus clientes e nenhum outro. Separam as duas: pedido que o telemarketing (ou outro vendedor) digitou para um cliente da carteira dele entra só na linha; pedido que ele digitou para cliente de outra carteira entra só na barra; a carteira é a de <b>hoje</b> aplicada ao ano inteiro, então cliente que chegou em setembro leva o faturamento dele de janeiro para a linha; e pedido digitado não é nota autorizada — valor, cancelamento e a virada do mês deslocam os dois.</p>
+                <p className="border-t pt-2"><b>Por que as barras e a linha não batem.</b> São perguntas diferentes: a barra é <b>o que ele digitou</b>, a linha é <b>o que os clientes da carteira dele faturaram</b>. Elas só coincidiriam se ele digitasse todos os pedidos dos seus clientes e nenhum outro. Separam as duas: pedido que o telemarketing (ou outro vendedor) digitou para um cliente da carteira dele entra só na linha; pedido que ele digitou para cliente de outra carteira entra só na barra; a carteira é a de <b>hoje</b> aplicada ao período inteiro, então cliente que chegou em setembro leva o faturamento dele de janeiro para a linha; e pedido digitado não é nota autorizada — valor, cancelamento e a virada do mês deslocam os dois.</p>
                 <p><b>Antes de abr/2026 a barra é zero</b> em quase todo mundo: o pipeline do INTEGRA só passou a receber os pedidos ali. Não é que não houve venda — é que ela não foi digitada aqui.</p>
-                <p className="border-t pt-2"><b>Mês:</b> manda nos cartões do topo e na lista de clientes. Escolhido um mês, a lista mostra quem comprou nele <b>ou no mês anterior</b> — quem parou de comprar é o que menos pode sumir da tela. O gráfico e as colunas mês a mês seguem no ano inteiro.</p>
-                <p><b>Setas:</b> comparam o mês com o mês anterior na mesma linha. Passe o mouse para ver os dois valores e a variação.</p>
+                <p className="border-t pt-2"><b>De / Até:</b> é o filtro-mãe. Define o período de <b>toda</b> a tela — os cartões do topo, o resumo por vendedor, as listas, as colunas mês a mês e os dois gráficos. Pode atravessar a virada do ano (nov/25 a nov/26, por exemplo). Para olhar um mês só, ponha o mesmo mês nos dois campos.</p>
+                <p><b>Ativos com / sem compra:</b> seguem o período inteiro. "Com compra" é o cliente <b>ativo</b> que faturou em algum mês da faixa; "sem compra" é o resto da carteira ativa, por subtração — a lista só traz quem comprou, então quem está parado há mais tempo não apareceria numa contagem direta.</p>
+                <p><b>Última compra e valor:</b> são da <b>vida</b> do cliente, não do período — a pergunta é "quando ele comprou pela última vez", e essa resposta não pode mudar porque o filtro mudou. Por isso a data pode ser anterior ao "De" ou posterior ao "Até". Valor = o faturamento daquele dia inteiro (parcelas do mesmo pedido somadas).</p>
+                <p><b>Setas:</b> comparam cada mês com o mês anterior na mesma linha. A última coluna compara o <b>último mês do período</b> com o mês antes dele. Passe o mouse para ver os dois valores e a variação.</p>
               </PopoverContent>
             </Popover>
           </CardContent>
@@ -541,9 +544,9 @@ export default function DossieVendedor() {
                 vendas digitadas e inativados: o topo passou a responder "a
                 carteira está sendo atendida?" em vez de "quanto entrou". */}
             <CardContent className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-              <Kpi titulo="Ativos com compra (3 meses)" valor={String(ativosComCompra3m)}
-                sub={rotJanela || "sem meses carregados"} cor="text-emerald-700" variacaoPct={var3m} />
-              <Kpi titulo="Ativos sem compra (3 meses)" valor={String(ativosSemCompra3m)}
+              <Kpi titulo="Ativos com compra no período" valor={String(ativosComCompra)}
+                sub={rotPeriodo} cor="text-emerald-700" />
+              <Kpi titulo="Ativos sem compra no período" valor={String(ativosSemCompra)}
                 sub={`de ${consolidado.ativos} ativos na carteira`} cor="text-red-700" />
               {modo !== "sem" && <Kpi titulo="Rezoneados para a carteira" valor={String(consolidado.herdados)}
                 sub={`herdados · ${consolidado.herdadosAtivos} ativos`} />}
@@ -556,26 +559,24 @@ export default function DossieVendedor() {
                 cor="text-emerald-700" />}
             </CardContent>
             <div className="px-6 pb-4 -mt-1 text-xs text-muted-foreground">
-              “Com compra” conta o cliente <b>ativo</b> que faturou em{" "}
-              {janela3.length ? <b>{janela3.map((m) => rotMes(m)).join(", ").replace(/, ([^,]*)$/, " ou $1")}</b> : "—"};
-              {" "}“sem compra” é o resto da carteira ativa.
-              {janela3.length > 0 && janela3.length < 3 && <> Só {janela3.length} mês(es) porque o ano carregado começa aí.</>}
-              {var3m !== null && <> A seta compara com os 3 meses anteriores ({janela3Antes.map((m) => rotMes(m)).reverse().join(", ")}).</>}
-              {" "}Rezoneados, conquistados e leads são do cadastro de hoje / do ano inteiro.
+              “Com compra” conta o cliente <b>ativo</b> que faturou em algum mês de <b>{rotPeriodo}</b>
+              {meses.length > 1 ? ` (${meses.length} meses)` : ""}; “sem compra” é o resto da carteira ativa.
+              {" "}Mudando o período no topo, os dois números mudam junto.
+              {" "}Rezoneados, conquistados e leads são do cadastro de hoje, não do período.
             </div>
           </Card>
 
           {/* Os dois gráficos que moravam na aba "Gráficos" (Flavio, 13/11/2026):
               comparação entre os anos e evolução por vendedor.
-              O período abre em JANEIRO DO ANO ANTERIOR ao do dossiê e vai até o
-              fim do ano dele — de propósito. Aberto só no ano do dossiê, o
-              primeiro gráfico tem um ano só para desenhar e cai no modo "mês a
-              mês"; é justamente a comparação ENTRE OS ANOS que se quis trazer
-              para cá, e ela precisa de dois anos no eixo. Dentro do card o
-              período continua livre. `key={ano}` reinicia quando o ano muda. */}
+              Eles abrem NO PERÍODO DO FILTRO-MÃE (14/11/2026) — era o que
+              faltava para a tela inteira falar do mesmo recorte. `key` muda com
+              o período, então trocar De/Até remonta os gráficos ali. Dentro do
+              card o período continua livre: o comparativo já traz o ano
+              anterior sozinho, então não é preciso alargar o filtro de cima
+              para ver dois anos no eixo. */}
           <GraficosCarteira
-            key={ano}
-            periodoInicial={{ inicio: `${ano - 1}-01`, fim: ano === anoAtual ? mesCorrente : `${ano}-12` }}
+            key={`${ini}_${fim}`}
+            periodoInicial={{ inicio: ini, fim }}
             vendedoresFiltro={vendedoresFiltro}
           />
 
@@ -595,7 +596,7 @@ export default function DossieVendedor() {
                     <thead><tr className="text-left text-muted-foreground border-b">
                       <th className="py-1">Vendedor</th><th>Tipo</th><th>Início</th><th className="text-right">Carteira</th><th className="text-right">Herdados</th>
                       <th className="text-right">Conquistados</th><th className="text-right">Inativou</th><th className="text-right">Leads</th>
-                      <th className="text-right">Vendas {ano}</th><th className="text-right">Carteira {ano}</th></tr></thead>
+                      <th className="text-right">Vendas no período</th><th className="text-right">Carteira no período</th></tr></thead>
                     <tbody>
                       {resumoVendedores.map((v) => (
                         <tr key={v.id} className="border-b last:border-0 hover:bg-slate-50 cursor-pointer"
@@ -625,7 +626,7 @@ export default function DossieVendedor() {
                 <CardContent className="overflow-auto max-h-[420px]">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-white"><tr className="text-left text-muted-foreground border-b">
-                      <th className="py-1">Cliente</th><th>Entrada</th><th>Situação</th><th className="text-right">Vendas</th><th className="text-right">Total vendido</th><th className="text-right">Em {ano}</th></tr></thead>
+                      <th className="py-1">Cliente</th><th>Entrada</th><th>Situação</th><th className="text-right">Vendas</th><th className="text-right">Total vendido</th><th className="text-right">No período</th></tr></thead>
                     <tbody>
                       {consolidado.conquistados.map((c: any) => (
                         <tr key={c.id} className="border-b last:border-0">
@@ -644,10 +645,10 @@ export default function DossieVendedor() {
               <Card>
                 <CardHeader>
                   <CardTitle>Relação dos clientes sem vendedor e inativados</CardTitle>
-                  <CardDescription>{semVendedor.length} clientes · {semVendedor.filter((c) => c.ativo).length} ativos · {brl(semVendedor.reduce((s, c) => s + c.fatAno, 0))} em {ano}</CardDescription>
+                  <CardDescription>{semVendedor.length} clientes · {semVendedor.filter((c) => c.ativo).length} ativos · {brl(semVendedor.reduce((s, c) => s + c.fatAno, 0))} em {rotPeriodo}</CardDescription>
                 </CardHeader>
                 <CardContent className="overflow-auto max-h-[420px]">
-                  <SemVendedorTabela lista={semVendedor} ano={ano} />
+                  <SemVendedorTabela lista={semVendedor} rotPeriodo={rotPeriodo} />
                 </CardContent>
               </Card>
             ) : (
@@ -659,7 +660,7 @@ export default function DossieVendedor() {
                 <CardContent className="overflow-auto max-h-[420px]">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-white"><tr className="text-left text-muted-foreground border-b">
-                      <th className="py-1">Cliente</th><th>Vendedor</th><th>Entrada</th><th>Situação</th><th className="text-right">Em {ano}</th></tr></thead>
+                      <th className="py-1">Cliente</th><th>Vendedor</th><th>Entrada</th><th>Situação</th><th className="text-right">No período</th></tr></thead>
                     <tbody>
                       {consolidado.conquistados.map((c: any) => (
                         <tr key={`${c.vendedor}-${c.id}`} className="border-b last:border-0">
@@ -696,9 +697,9 @@ export default function DossieVendedor() {
             <Card>
               <CardHeader>
                 <CardTitle>Relação dos clientes sem vendedor e inativados</CardTitle>
-                <CardDescription>{semVendedor.length} clientes · {semVendedor.filter((c) => c.ativo).length} ativos · {brl(semVendedor.reduce((s, c) => s + c.fatAno, 0))} em {ano}</CardDescription>
+                <CardDescription>{semVendedor.length} clientes · {semVendedor.filter((c) => c.ativo).length} ativos · {brl(semVendedor.reduce((s, c) => s + c.fatAno, 0))} em {rotPeriodo}</CardDescription>
               </CardHeader>
-              <CardContent className="overflow-auto max-h-[420px]"><SemVendedorTabela lista={semVendedor} ano={ano} /></CardContent>
+              <CardContent className="overflow-auto max-h-[420px]"><SemVendedorTabela lista={semVendedor} rotPeriodo={rotPeriodo} /></CardContent>
             </Card>
           )}
 
@@ -706,16 +707,11 @@ export default function DossieVendedor() {
             <CardHeader>
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <CardTitle>
-                    {mesSel ? `Clientes em ${rotPeriodo}` : `Clientes que compraram em ${ano}`} — mês a mês
-                  </CardTitle>
+                  <CardTitle>Clientes que compraram no período — mês a mês</CardTitle>
                   <CardDescription>
-                    {clientesTabela.length} clientes · {titulo}
-                    {mesSel
-                      ? temAnterior
-                        ? ` · compraram em ${rotMes(mesSel)} ou em ${rotMes(mesAnt)}`
-                        : ` · compraram em ${rotMes(mesSel)}`
-                      : ` · faturamento em R$ por mês até ${rotMes(meses[meses.length - 1] || mesCorrente)}`}
+                    {clientesTabela.length} clientes · {titulo} · {rotPeriodo} · faturamento em R$ por mês.
+                    {" "}“Última compra” é a da <b>vida</b> do cliente, não do período — por isso pode ser mais
+                    recente ou mais antiga do que as colunas.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -744,37 +740,50 @@ export default function DossieVendedor() {
                     <Th cod="cliente" atual={ord} onOrdenar={ordenar} className="py-2 px-3 min-w-[220px]">Cliente</Th>
                     {modo !== "sel" || !umSo ? <Th cod="vendedor" atual={ord} onOrdenar={ordenar}>Vendedor</Th> : null}
                     {redes.length > 0 && <Th cod="rede" atual={ord} onOrdenar={ordenar}>Rede</Th>}
+                    <Th cod="situacao" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Situação</Th>
+                    <Th cod="ultima" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Última compra</Th>
+                    <Th cod="ultimaValor" atual={ord} onOrdenar={ordenar} className="text-right whitespace-nowrap">Valor da última</Th>
                     {meses.map((m) => (
                       <Th key={m} cod={m} atual={ord} onOrdenar={ordenar}
-                        className={`text-right whitespace-nowrap ${m === mesSel ? "bg-amber-50 text-amber-900 font-semibold" : ""}`}>
+                        className={`text-right whitespace-nowrap ${m === mesFoco ? "bg-amber-50 text-amber-900 font-semibold" : ""}`}>
                         {rotMes(m)}{m === mesCorrente ? "*" : ""}
                       </Th>
                     ))}
-                    {mesSel && temAnterior && <Th cod="var" atual={ord} onOrdenar={ordenar} className="text-right whitespace-nowrap">vs {rotMes(mesAnt)}</Th>}
+                    {temAnterior && <Th cod="var" atual={ord} onOrdenar={ordenar} className="text-right whitespace-nowrap">{rotMes(mesFoco)} vs {rotMes(mesAnt)}</Th>}
                     <Th cod="total" atual={ord} onOrdenar={ordenar} className="px-3 text-right">Total</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {clientesTabela.slice(0, limite).map((c) => (
                     <tr key={c.id} className="border-b last:border-0 hover:bg-slate-50">
-                      <td className="py-1 px-3">{c.nome}{!c.ativo && <span className="ml-1 text-xs text-red-600">inativo</span>}
+                      <td className="py-1 px-3">{c.nome}
                         <div className="text-xs text-muted-foreground">{c.cidade}</div></td>
                       {modo !== "sel" || !umSo ? <td className="px-2 whitespace-nowrap">{c.vendedor}</td> : null}
                       {redes.length > 0 && <td className="px-2 text-xs whitespace-nowrap">{c.rede || <span className="text-slate-300">—</span>}</td>}
+                      {/* Situação em coluna própria e sempre escrita: antes só
+                          o inativo era marcado, e a ausência de marca exigia
+                          saber a regra para ler "ativo". */}
+                      <td className="px-2 whitespace-nowrap">
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${c.ativo ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                          {c.ativo ? "Ativo" : "Inativo"}
+                        </span>
+                      </td>
+                      <td className="px-2 text-sm whitespace-nowrap">{c.ultimaCompra ? dataBR(c.ultimaCompra) : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-2 text-sm text-right whitespace-nowrap">{c.ultimaCompraValor ? brl(c.ultimaCompraValor) : <span className="text-slate-300">—</span>}</td>
                       {meses.map((m, i) => {
                         const v = noMes(c, m);
                         const ant = i > 0 ? noMes(c, meses[i - 1]) : null;
                         return (
-                          <td key={m} className={`px-2 text-right whitespace-nowrap ${v ? "" : "text-slate-300"} ${m === mesSel ? "bg-amber-50" : ""}`}>
+                          <td key={m} className={`px-2 text-right whitespace-nowrap ${v ? "" : "text-slate-300"} ${m === mesFoco ? "bg-amber-50" : ""}`}>
                             {v ? brl(v) : "—"}
                             <Seta atual={v} anterior={ant} />
                           </td>
                         );
                       })}
-                      {mesSel && temAnterior && (
+                      {temAnterior && (
                         <td className={`px-2 text-right whitespace-nowrap font-medium ${
-                          (variacao(noMes(c, mesSel), noMes(c, mesAnt)) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-                          {pct(variacao(noMes(c, mesSel), noMes(c, mesAnt)))}
+                          (variacao(noMes(c, mesFoco), noMes(c, mesAnt)) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                          {pct(variacao(noMes(c, mesFoco), noMes(c, mesAnt)))}
                         </td>
                       )}
                       <td className="px-3 text-right font-semibold whitespace-nowrap">{brl(c.total)}</td>
@@ -784,16 +793,21 @@ export default function DossieVendedor() {
                     <td className="py-2 px-3">Total ({clientesTabela.length})</td>
                     {modo !== "sel" || !umSo ? <td></td> : null}
                     {redes.length > 0 && <td></td>}
+                    <td className="px-2 text-xs font-normal text-muted-foreground whitespace-nowrap">
+                      {clientesTabela.filter((c) => c.ativo).length} ativos
+                    </td>
+                    <td></td>
+                    <td className="px-2 text-right whitespace-nowrap">{brl(clientesTabela.reduce((s2, c) => s2 + (Number(c.ultimaCompraValor) || 0), 0))}</td>
                     {meses.map((m, i) => {
                       const v = totalMes(m);
                       const ant = i > 0 ? totalMes(meses[i - 1]) : null;
                       return (
-                        <td key={m} className={`px-2 text-right whitespace-nowrap ${m === mesSel ? "bg-amber-100" : ""}`}>
+                        <td key={m} className={`px-2 text-right whitespace-nowrap ${m === mesFoco ? "bg-amber-100" : ""}`}>
                           {brl(v)}<Seta atual={v} anterior={ant} />
                         </td>
                       );
                     })}
-                    {mesSel && temAnterior && <td className="px-2 text-right">{pct(variacao(totalMes(mesSel), totalMes(mesAnt)))}</td>}
+                    {temAnterior && <td className="px-2 text-right">{pct(variacao(totalMes(mesFoco), totalMes(mesAnt)))}</td>}
                     <td className="px-3 text-right whitespace-nowrap">{brl(totalGeral)}</td>
                   </tr>
                 </tbody>
@@ -840,7 +854,7 @@ function Grupo({ titulo, dica, lista, selIds, alterna, marcarTodos }: {
   );
 }
 
-function SemVendedorTabela({ lista, ano }: { lista: any[]; ano: number }) {
+function SemVendedorTabela({ lista, rotPeriodo }: { lista: any[]; rotPeriodo: string }) {
   // COLUNAS CENTRALIZADAS (Flavio, 13/11/2026), com duas exceções que são de
   // leitura, não de gosto: o MOTIVO é frase corrida — centrado, cada linha
   // começa num ponto diferente e a coluna deixa de ser varrível; e o VALOR fica
@@ -893,7 +907,7 @@ function SemVendedorTabela({ lista, ano }: { lista: any[]; ano: number }) {
         <Cab col="situacao">Situação</Cab>
         <th className="px-2 text-left min-w-[260px]">Motivo da inativação</th>
         <th className={c}>Entrada</th>
-        <Cab col="valor" className="px-2 text-right">Em {ano}</Cab></tr></thead>
+        <Cab col="valor" className="px-2 text-right">Em {rotPeriodo}</Cab></tr></thead>
       <tbody>
         {linhas.map((x) => (
           <tr key={x.id} className="border-b last:border-0">
