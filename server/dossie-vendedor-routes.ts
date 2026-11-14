@@ -262,7 +262,16 @@ export function registerDossieVendedor(app: Express) {
         const carteira = porVend.get(id) || [];
         const inicio = ajustes.get(id) || primeiroPedido.get(id) || u.criado || null;
         const herdados = carteira.filter((c) => !c.conquista || (inicio && c.conquista < inicio));
-        const conquistados = carteira.filter((c) => c.conquista && inicio && c.conquista >= inicio)
+        // CONQUISTADOS SEGUEM O FILTRO-MÃE (Flavio, 14/11/2026). Continuam
+        // sendo os clientes que entraram A PARTIR DO INÍCIO DO VENDEDOR — é o
+        // que separa conquistado de herdado —, mas agora só os que entraram
+        // DENTRO DO PERÍODO da tela. Antes a lista era da carteira inteira e
+        // não mudava com o filtro: olhar "este mês" e ver conquistas de março
+        // fazia o cartão não conversar com o resto da tela. `herdados` fica
+        // como está: "já existia antes dele" não é uma pergunta de período.
+        const conquistados = carteira
+          .filter((c) => c.conquista && inicio && c.conquista >= inicio
+            && String(c.conquista).slice(0, 7) >= inicioAno && String(c.conquista).slice(0, 7) <= fimAno)
           .sort((a, b) => String(b.conquista).localeCompare(String(a.conquista)));
         const vendasMes: Record<string, number> = {}; const pedidosMes: Record<string, number> = {};
         for (const r of vendasRows) if (resolve(r.seller_id) === id) {
@@ -295,7 +304,8 @@ export function registerDossieVendedor(app: Express) {
                       fatAno: carteira.reduce((s, c) => s + c.fatAno, 0), compraramAno: carteira.filter((c) => c.fatAno > 0).length },
           herdados: { total: herdados.length, ativos: herdados.filter((c) => c.ativo).length, compraramAno: herdados.filter((c) => c.fatAno > 0).length,
                       fatAno: herdados.reduce((s, c) => s + c.fatAno, 0) },
-          conquistados: conquistados.map((c) => ({ id: c.id, nome: c.nome, cidade: c.cidade, segmento: c.segmento, ativo: c.ativo,
+          // Sem `segmento`: saiu da tela (Flavio, 14/11/2026) e não tinha outro leitor.
+          conquistados: conquistados.map((c) => ({ id: c.id, nome: c.nome, cidade: c.cidade, ativo: c.ativo,
                       conquista: c.conquista, vendasVida: c.vendasVida, valorVida: c.valorVida, fatAno: c.fatAno })),
           inativadosPorEle: { total: inativadosPorEle.length,
                       lista: inativadosPorEle.map((r) => ({ data: r.data, cliente: custById.get(String(r.customer_id))?.nome || r.customer_id,
