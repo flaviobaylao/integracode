@@ -361,7 +361,8 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={340}>
-                <BarChart data={barras} margin={{ top: 24, right: 16, left: 8, bottom: 0 }}>
+                {/* barGap=2: o par do comparativo encosta, mas não se funde. */}
+                <BarChart data={barras} margin={{ top: 24, right: 16, left: 8, bottom: 0 }} barGap={2}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="rotulo" />
                   <YAxis tickFormatter={curto} width={70} />
