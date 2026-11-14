@@ -67,6 +67,21 @@ function somaMes(m: string, delta: number): string {
   return `${y}-${String(mm).padStart(2, "0")}`;
 }
 
+// 14/11/2026 — COMPARATIVO LIGA/DESLIGA (Flavio). Antes a comparação entre anos
+// era um efeito colateral do filtro: ela só aparecia quando o período pegava
+// mais de um ano civil. Com "Últimos 4 meses" ou "Este ano" não havia como ver
+// o ano anterior, e com "Tudo" não havia como NÃO ver. Agora é uma escolha:
+//  • Individual  — uma barra por mês do período, na ordem do calendário.
+//  • Comparativo — cada mês ao lado do mesmo mês do ano anterior.
+// O comparativo vale só para o gráfico de faturamento; o de Novos clientes
+// segue o filtro de período e mais nada.
+//
+// Quando o ano anterior não está dentro do filtro (o caso de "Últimos 4 meses"),
+// ele é buscado numa segunda chamada ao mesmo endpoint, deslocada 12 meses. Os
+// dois resultados entram num mapa mês -> faturamento, com o período filtrado
+// tendo precedência: em "Tudo", que já contém 2025 e 2026, as duas faixas se
+// cruzam e a mesma chave YYYY-MM não pode ser contada duas vezes.
+
 // 13/11/2026 — o seletor de base saiu (Flavio): o gráfico de baixo é SÓ "Novos
 // clientes", a quantidade que cada vendedor trouxe em cada mês. As outras duas
 // bases diziam a mesma história em unidades diferentes e obrigavam a escolher
@@ -80,16 +95,30 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
   const [inicio, setInicio] = useState(periodoInicial?.inicio || `${Number(hoje.slice(0, 4)) - 1}-01`);
   const [fim, setFim] = useState(periodoInicial?.fim || hoje);
   const [visao, setVisao] = useState<"mensal" | "anual">("mensal");
+  const [comparar, setComparar] = useState(true);
 
   const [selVend, setSelVend] = useState<string[] | null>(null); // null = padrão (top 8)
 
+  const buscar = async (de: string, ate: string): Promise<Resp> => {
+    const r = await fetch(`/api/reports/carteira-graficos?inicio=${de}&fim=${ate}`, { credentials: "include" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
+
   const { data, isLoading, error } = useQuery<Resp>({
     queryKey: ["/api/reports/carteira-graficos", inicio, fim],
-    queryFn: async () => {
-      const r = await fetch(`/api/reports/carteira-graficos?inicio=${inicio}&fim=${fim}`, { credentials: "include" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    queryFn: () => buscar(inicio, fim),
+  });
+
+  // O mesmo período, 12 meses atrás. Só sai do servidor com o comparativo
+  // ligado; a chave é a mesma do outro useQuery, então quando as duas faixas
+  // coincidem o cache responde sem ida à rede.
+  const iniPrev = somaMes(inicio, -12);
+  const fimPrev = somaMes(fim, -12);
+  const { data: dataPrev } = useQuery<Resp>({
+    queryKey: ["/api/reports/carteira-graficos", iniPrev, fimPrev],
+    queryFn: () => buscar(iniPrev, fimPrev),
+    enabled: comparar,
   });
 
   const meses = data?.periodo.meses || [];
@@ -98,27 +127,63 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
   const anos = useMemo(() => Array.from(new Set(meses.map((m) => m.slice(0, 4)))), [meses]);
 
   // ── Gráfico 1: barras ─────────────────────────────────────────────────────
+  // Mês -> faturamento. O período filtrado escreve por último: onde as duas
+  // faixas se cruzam, vale o número do filtro (são iguais, mas a precedência
+  // evita contar o mesmo mês duas vezes na soma por ano).
+  const fatPorMes = useMemo(() => {
+    const m = new Map<string, number>();
+    if (comparar) for (const t of dataPrev?.total || []) m.set(t.mes, t.valor);
+    for (const t of data?.total || []) m.set(t.mes, t.valor);
+    return m;
+  }, [data, dataPrev, comparar]);
+
+  // Meses em jogo no comparativo: os do filtro + os mesmos 12 meses atrás.
+  const mesesComp = useMemo(
+    () => Array.from(new Set(meses.flatMap((m) => [somaMes(m, -12), m]))).sort(),
+    [meses],
+  );
+  // Ano sem nenhum faturamento no recorte não vira barra: em "Tudo" o
+  // deslocamento de 12 meses alcança 2024, que é anterior à base.
+  const anosComp = useMemo(
+    () => Array.from(new Set(mesesComp.map((m) => m.slice(0, 4)))).sort()
+      .filter((a) => mesesComp.some((m) => m.startsWith(a) && (fatPorMes.get(m) || 0) > 0)),
+    [mesesComp, fatPorMes],
+  );
+  // Os meses do ano que o eixo mostra, na ordem em que aparecem no período
+  // ("Últimos 12 meses" começa em Dez, não em Jan).
+  const rotulosMes = useMemo(() => {
+    const out: string[] = [];
+    for (const m of meses) { const r = MESES_ABREV[Number(m.slice(5, 7)) - 1]; if (!out.includes(r)) out.push(r); }
+    return out;
+  }, [meses]);
+  // Comparar com um ano só não é comparar: cai no individual.
+  const comparando = comparar && anosComp.length > 1;
+
   const barras = useMemo(() => {
-    const tot = data?.total || [];
     if (visao === "anual") {
-      return anos.map((a) => ({
+      const lista = comparar ? anosComp : anos;
+      const escopo = comparar ? mesesComp : meses;
+      return lista.map((a) => ({
         rotulo: a + (temParcial && mesCorrente.startsWith(a) ? "*" : ""),
-        valor: tot.filter((t) => t.mes.startsWith(a)).reduce((s, t) => s + t.valor, 0),
+        valor: escopo.filter((m) => m.startsWith(a)).reduce((s, m) => s + (fatPorMes.get(m) || 0), 0),
       }));
     }
-    if (anos.length <= 1) return tot.map((t) => ({ rotulo: rotMes(t.mes) + (t.mes === mesCorrente ? "*" : ""), valor: t.valor }));
-    // Vários anos: Jan..Dez no eixo, uma barra por ano.
-    return MESES_ABREV.map((nome, i) => {
-      const row: any = { rotulo: nome };
-      for (const a of anos) {
-        const m = `${a}-${String(i + 1).padStart(2, "0")}`;
-        const t = tot.find((x) => x.mes === m);
-        row[a] = t ? t.valor : null;
-      }
-      return row;
-    });
-  }, [data, visao, anos, temParcial, mesCorrente]);
-  const barrasPorAno = visao === "mensal" && anos.length > 1;
+    if (comparando) {
+      // Mês do ano no eixo, uma barra por ano.
+      return rotulosMes.map((nome) => {
+        const mm = String(MESES_ABREV.indexOf(nome) + 1).padStart(2, "0");
+        const row: any = { rotulo: nome };
+        for (const a of anosComp) {
+          const m = `${a}-${mm}`;
+          row[a] = fatPorMes.has(m) ? fatPorMes.get(m)! : null;
+        }
+        return row;
+      });
+    }
+    // Individual: a linha do tempo do período, um mês depois do outro.
+    return meses.map((m) => ({ rotulo: rotMes(m) + (m === mesCorrente ? "*" : ""), valor: fatPorMes.get(m) || 0 }));
+  }, [visao, comparar, comparando, anos, anosComp, meses, mesesComp, rotulosMes, fatPorMes, temParcial, mesCorrente]);
+  const barrasPorAno = visao === "mensal" && comparando;
   const totalPeriodo = (data?.total || []).reduce((s, t) => s + t.valor, 0);
 
   // ── Gráfico 2: linhas por vendedor ────────────────────────────────────────
@@ -254,7 +319,17 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
             <Button variant="outline" size="sm" onClick={() => atalho(somaMes(hoje, -3), hoje)}>Últimos 4 meses</Button>
             <Button variant="outline" size="sm" onClick={() => atalho("2025-01", hoje)}>Tudo</Button>
           </div>
+          {/* Individual x Comparativo: vale com qualquer filtro de período. */}
           <div className="flex rounded-md border overflow-hidden ml-auto">
+            {([[false, "Individual"], [true, "Comparativo"]] as const).map(([v, rotulo]) => (
+              <button key={rotulo} type="button" onClick={() => setComparar(v)} data-testid={`graf-comp-${v ? "on" : "off"}`}
+                title={v ? "Mostra também o mesmo período do ano anterior" : "Mostra só o período filtrado"}
+                className={`px-3 py-1.5 text-sm ${comparar === v ? "bg-blue-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}>
+                {rotulo}
+              </button>
+            ))}
+          </div>
+          <div className="flex rounded-md border overflow-hidden">
             {(["mensal", "anual"] as const).map((v) => (
               <button key={v} type="button" onClick={() => setVisao(v)} data-testid={`graf-visao-${v}`}
                 className={`px-3 py-1.5 text-sm ${visao === v ? "bg-blue-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}>
@@ -278,6 +353,9 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
               <CardTitle>Evolução das vendas {visao === "anual" ? "por ano" : barrasPorAno ? "— comparação entre os anos" : "mês a mês"}</CardTitle>
               <CardDescription>
                 Faturamento de {rotMes(inicio)} a {rotMes(fim)}: <b>{brl(totalPeriodo)}</b>. Mesma régua da aba Carteira.
+                {barrasPorAno && " Comparativo ligado: cada mês aparece ao lado do mesmo mês do ano anterior."}
+                {comparar && visao === "anual" && " Comparativo ligado: o ano anterior entra com os mesmos meses, para a comparação ser de igual para igual."}
+                {comparar && !comparando && visao === "mensal" && " Sem faturamento no ano anterior para comparar — mostrando só o período."}
                 {temParcial && " *Mês em curso, ainda parcial."}
               </CardDescription>
             </CardHeader>
@@ -291,8 +369,8 @@ export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: 
                   {barrasPorAno ? (
                     <>
                       <Legend />
-                      {anos.map((a, i) => (
-                        <Bar key={a} dataKey={a} name={a} fill={RAMPA_ANO[Math.max(0, RAMPA_ANO.length - anos.length + i)]} isAnimationActive={false} />
+                      {anosComp.map((a, i) => (
+                        <Bar key={a} dataKey={a} name={a} fill={RAMPA_ANO[Math.max(0, RAMPA_ANO.length - anosComp.length + i)]} isAnimationActive={false} />
                       ))}
                     </>
                   ) : (
