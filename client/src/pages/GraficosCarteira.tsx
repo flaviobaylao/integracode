@@ -72,6 +72,7 @@ function somaMes(m: string, delta: number): string {
 // bases diziam a mesma história em unidades diferentes e obrigavam a escolher
 // antes de olhar; o que faltava não era opção, era detalhe — e esse agora vem
 // no tooltip: quantos entraram, QUEM entrou e o que compraram no período.
+// Quantos nomes o tooltip lista antes de resumir o resto.
 const MAX_TOOLTIP = 12;
 
 export default function GraficosCarteira({ periodoInicial }: { periodoInicial?: { inicio: string; fim: string } } = {}) {
