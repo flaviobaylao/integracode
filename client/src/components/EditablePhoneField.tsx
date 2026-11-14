@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useState } from "react";
 import { Phone, Check, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -91,6 +92,7 @@ export default function EditablePhoneField({
           maxLength={120}
           data-testid={`input-contact-edit-${customerId}`}
         />
+        <ContactPickerButton className="h-8" onPick={({ nome, telefone }) => { if (telefone) setNewPhone(telefone); if (nome) setNewContact(nome); }} />
         <Button
           size="sm"
           variant="ghost"

@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 import { latitudeEmGrade } from "@shared/coordenadas-aproximadas";
 import HorariosPreferenciaisCliente from "@/components/HorariosPreferenciaisCliente";
@@ -908,6 +909,13 @@ export default function CustomerEditModal({
                   />
                   <p className="text-[11px] text-muted-foreground mt-0.5">Responsável pelo telefone *</p>
                 </div>
+              </div>
+              <div className="mt-1">
+                <ContactPickerButton onPick={({ nome, telefone }) => setFormData((prev) => ({
+                  ...prev,
+                  ...(telefone ? { phone: formatPhone(telefone) } : {}),
+                  ...(nome ? { contact: nome } : {}),
+                }))} />
               </div>
               {/* Flag SOMENTE PARA ADMIN: dispensa a confirmação do contato pelo link. */}
               {isAdmin && customer?.id && (

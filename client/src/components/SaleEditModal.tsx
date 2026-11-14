@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -1683,6 +1684,9 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     maxLength={120}
                     data-testid="input-customer-contact"
                   />
+                </div>
+                <div className="mt-1">
+                  <ContactPickerButton onPick={({ nome, telefone }) => { if (telefone) setCustomerPhone(telefone); if (nome) setCustomerContact(nome); }} />
                 </div>
                 {telefoneConfirmado ? (
                   <p className="text-xs text-emerald-700 mt-1">

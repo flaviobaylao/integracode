@@ -22,6 +22,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDes
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { insertCustomerSchema, type InsertCustomer, type Customer, type User } from "@shared/schema";
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { AJUDA_SEMANA_ATENDIMENTO } from "@shared/visitSchedule";
 import { Search, Building2, User as UserIcon, MapPin, Phone, Mail, Calendar, Navigation, Target, Lock, Unlock, Clock, XCircle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -1078,6 +1079,12 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                         </FormItem>
                       )}
                     />
+                  </div>
+                  <div className="-mt-2">
+                    <ContactPickerButton onPick={({ nome, telefone }) => {
+                      if (telefone) form.setValue('phone', formatPhone(telefone), { shouldDirty: true });
+                      if (nome) form.setValue('contact' as any, nome, { shouldDirty: true });
+                    }} />
                   </div>
 
                   <FormField

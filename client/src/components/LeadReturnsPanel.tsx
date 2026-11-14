@@ -1,3 +1,4 @@
+import ContactPickerButton from "@/components/ContactPickerButton";
 import { useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -288,6 +289,9 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
               <div>
                 <Label>Responsável pelo telefone *</Label>
                 <Input value={cust.contact || ""} onChange={(e) => setCust({ ...cust, contact: e.target.value })} placeholder="Nome de quem atende" maxLength={120} data-testid="input-converter-contact" />
+              </div>
+              <div className="col-span-2 -mt-1">
+                <ContactPickerButton onPick={({ nome, telefone }) => setCust((prev: any) => ({ ...prev, ...(telefone ? { phone: telefone } : {}), ...(nome ? { contact: nome } : {}) }))} />
               </div>
               <div>
                 <Label>Periodicidade</Label>
