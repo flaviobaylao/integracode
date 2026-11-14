@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // COMISSÃO DE CLIENTE NOVO — 12% por 6 meses (ata da reunião de 14/11/2026).
 //
-// Até 15/11/2026 o cliente novo rendia R$ 30 de bônus (campanha, premissa
-// "novos"). A partir de 16/11/2026, o vendedor que CONQUISTA um cliente novo
-// recebe 12% de comissão sobre as vendas desse cliente durante 6 meses, em vez
-// dos 8% normais. Regras:
-//  • Cliente novo = 1ª NF-e de venda da base com data >= 16/11/2026, sem piso.
+// Liga/desliga pela tela da Campanha (premissa "comissao_novo", por mês, com o
+// carimbo do momento em que o flag foi marcado). Enquanto ela vale, o vendedor
+// que CONQUISTA um cliente novo recebe o % de comissão da premissa (12%) sobre
+// as vendas desse cliente pelo prazo da premissa (6 meses), em vez dos 8%. Regras:
+//  • Cliente novo = 1ª NF-e de venda da base com data dentro do período em que o
+//    flag esteve ligado no mês, sem piso. Cliente que já entrou no R$ 30 por novo
+//    cliente (campaign_new_clients) no mesmo mês não ganha os 12% também.
 //  • Quem conquistou = dono da carteira NA DATA da 1ª compra (respeita delegação).
 //  • Vigência = da 1ª compra até 6 meses depois.
 //  • Só quem conquistou recebe. Vendedor desligado (usuário inativo) dentro dos
@@ -20,7 +22,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
-import { clientesNovosDesde, INICIO_COMISSAO_NOVO } from "./campanha-outubro";
+import { clientesNovosDesde, premissasDoMes, achaPremissa, PRIMEIRO_MES_COMISSAO_NOVO } from "./campanha-outubro";
 import { nfVendaFrom, nfData } from "./faturamento-oficial";
 
 const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
@@ -66,6 +68,29 @@ async function historico(customerId: string, antes: string | null, depois: strin
     VALUES (${customerId}, 'comissaoClienteNovo', 'Comissão de cliente novo', ${antes}, ${depois}, 'Sistema (campanha)', 'campanha')`);
 }
 
+// Períodos (por dia, inclusive) em que a premissa "comissao_novo" esteve ligada.
+// Ligada sem carimbo = o mês todo; ligada com carimbo = do dia em que ligou ao fim
+// do mês; desligada depois de ter valido = do dia em que ligou ao dia em que desligou.
+async function janelasComissao(): Promise<Array<{ ini: string; fim: string; pct: number; meses: number }>> {
+  const out: Array<{ ini: string; fim: string; pct: number; meses: number }> = [];
+  const hoje = hojeBR();
+  let ym = PRIMEIRO_MES_COMISSAO_NOVO;
+  while (ym <= hoje.slice(0, 7)) {
+    const p = achaPremissa(await premissasDoMes(ym), "comissao_novo");
+    const inicioMes = ym + "-01";
+    const fimMes = (await q(`SELECT ((DATE '${inicioMes}' + INTERVAL '1 month') - INTERVAL '1 day')::date::text AS f`))[0].f;
+    if (p) {
+      const ligou = p.ativadaEm ? p.ativadaEm.slice(0, 10) : null;
+      const pct = Number(p.valor) || PERCENTUAL, meses = Number(p.gatilho) || MESES;
+      if (p.ativa) out.push({ ini: ligou && ligou > inicioMes ? ligou : inicioMes, fim: fimMes, pct, meses });
+      else if (ligou && p.desativadaEm) out.push({ ini: ligou > inicioMes ? ligou : inicioMes, fim: p.desativadaEm.slice(0, 10), pct, meses });
+    }
+    const [a, m] = ym.split("-").map(Number);
+    ym = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, "0")}`;
+  }
+  return out;
+}
+
 let _ultimaSync = 0;
 let _syncRodando: Promise<void> | null = null;
 export async function sincronizarComissaoNovos(forcar = false): Promise<void> {
@@ -74,18 +99,27 @@ export async function sincronizarComissaoNovos(forcar = false): Promise<void> {
   _syncRodando = (async () => {
     try {
       await ensureTable();
-      // 1) clientes novos a partir de 16/11 → abre a condição (uma vez por cliente)
-      const novos = await clientesNovosDesde(INICIO_COMISSAO_NOVO);
-      const ja = new Set((await q(`SELECT customer_id FROM comissao_cliente_novo`)).map((r) => String(r.customer_id)));
-      for (const n of novos) {
-        if (ja.has(n.customerId)) continue;
-        const fim = (await q(`SELECT (DATE '${esc(n.primeiraCompra)}' + INTERVAL '${MESES} months')::date::text AS f`))[0].f;
-        await q(`INSERT INTO comissao_cliente_novo (customer_id, doc, customer_name, seller_user_id, seller_name, percentual, percentual_base, inicio, fim, primeiro_pedido)
-                 VALUES ('${esc(n.customerId)}', '${esc(n.doc)}', '${esc(n.nome)}', '${esc(n.sellerUid)}', '${esc(n.seller)}',
-                         ${PERCENTUAL}, ${PERCENTUAL_BASE}, '${esc(n.primeiraCompra)}', '${esc(fim)}', ${Number(n.valor) || 0})
-                 ON CONFLICT (customer_id) DO NOTHING`);
-        await historico(n.customerId, `${PERCENTUAL_BASE}%`,
-          `${PERCENTUAL}% para ${n.seller} (cliente novo conquistado em ${dataBR(n.primeiraCompra)}) até ${dataBR(fim)}`);
+      // 1) janelas em que o flag esteve ligado, mês a mês, desde novembro/2026
+      const janelas = await janelasComissao();
+      if (janelas.length) {
+        const desde = janelas.map((j) => j.ini).sort()[0];
+        const novos = await clientesNovosDesde(desde);
+        const ja = new Set((await q(`SELECT customer_id FROM comissao_cliente_novo`)).map((r) => String(r.customer_id)));
+        // Quem já entrou no R$ 30 por novo cliente não ganha os 12% também.
+        const r30 = new Set((await q(`SELECT campaign_ym || '|' || doc AS k FROM campaign_new_clients WHERE status IN ('aprovado','pendente')`)).map((r) => String(r.k)));
+        for (const n of novos) {
+          if (ja.has(n.customerId)) continue;
+          const jan = janelas.find((j) => n.primeiraCompra >= j.ini && n.primeiraCompra <= j.fim);
+          if (!jan) continue;
+          if (r30.has(n.primeiraCompra.slice(0, 7) + "|" + n.doc)) continue;
+          const fim = (await q(`SELECT (DATE '${esc(n.primeiraCompra)}' + INTERVAL '${Math.round(jan.meses)} months')::date::text AS f`))[0].f;
+          await q(`INSERT INTO comissao_cliente_novo (customer_id, doc, customer_name, seller_user_id, seller_name, percentual, percentual_base, inicio, fim, primeiro_pedido)
+                   VALUES ('${esc(n.customerId)}', '${esc(n.doc)}', '${esc(n.nome)}', '${esc(n.sellerUid)}', '${esc(n.seller)}',
+                           ${jan.pct}, ${PERCENTUAL_BASE}, '${esc(n.primeiraCompra)}', '${esc(fim)}', ${Number(n.valor) || 0})
+                   ON CONFLICT (customer_id) DO NOTHING`);
+          await historico(n.customerId, `${PERCENTUAL_BASE}%`,
+            `${jan.pct}% para ${n.seller} (cliente novo conquistado em ${dataBR(n.primeiraCompra)}) até ${dataBR(fim)}`);
+        }
       }
       // 2) vendedor desligado dentro do prazo → encerra; volta aos 8%
       const desligados = await q(`
@@ -167,7 +201,7 @@ export function registerComissaoNovos(app: Express) {
         };
       });
       res.json({
-        ok: true, ym, inicioRegra: INICIO_COMISSAO_NOVO, percentual: PERCENTUAL, percentualBase: PERCENTUAL_BASE, meses: MESES,
+        ok: true, ym, percentual: PERCENTUAL, percentualBase: PERCENTUAL_BASE, meses: MESES,
         clientes,
         totais: {
           clientes: clientes.length,
