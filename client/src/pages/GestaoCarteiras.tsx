@@ -547,14 +547,25 @@ export default function GestaoCarteiras() {
     semMedicao: classes.reduce((s: number, n: any) => s + (n.semMedicao || 0), 0),
   }), [classes]);
 
+  // 14/11/2026 (Flavio) — PERDIDO E DEVEDOR NÃO SE MISTURAM. "Perdidos" e "Com
+  // débito" se cruzavam: o mesmo cliente parado que ainda devia entrava nos
+  // dois, e quem dividia o trabalho contava a mesma pessoa duas vezes. O
+  // DÉBITO TEM PRIORIDADE, porque é a ação mais urgente e a mais concreta:
+  // quem deve fica em "Com débito" — e a coluna "Parado há" na mesma linha não
+  // deixa esquecer que ele também parou de comprar. "Perdidos" passa a ser o
+  // que o nome diz: quem não compra E não deve nada.
+  const temDebito = (c: Cliente) => (c.debito || 0) > 0;
+  const perdidoLimpo = (c: Cliente) => c.situacao === "perdido" && !temDebito(c);
+  const noBalde = (c: Cliente, b: "inativos" | "perdidos" | "debito") =>
+    b === "debito" ? temDebito(c) : b === "inativos" ? c.situacao === "inativo" : perdidoLimpo(c);
+
   // Lista que sustenta as barras: um balde por vez, ordenada pelo que importa
   // em cada um (potencial nos parados, valor em aberto no débito).
   const listaSituacao = useMemo(() => {
     if (balde === "debito") {
-      return clientes.filter((c) => (c.debito || 0) > 0).sort((a, b) => b.debito - a.debito);
+      return clientes.filter((c) => noBalde(c, "debito")).sort((a, b) => b.debito - a.debito);
     }
-    const alvo = balde === "inativos" ? "inativo" : "perdido";
-    return clientes.filter((c) => c.situacao === alvo).sort((a, b) => b.potencialMes - a.potencialMes);
+    return clientes.filter((c) => noBalde(c, balde)).sort((a, b) => b.potencialMes - a.potencialMes);
   }, [clientes, balde]);
 
   const totalSituacao = useMemo(
@@ -976,13 +987,14 @@ export default function GestaoCarteiras() {
     const fatMes = meses.length ? totalPeriodo / meses.length : 0;
     const debito = clientes.reduce((s, c) => s + (c.debito || 0), 0);
     const inat = clientes.filter((c) => c.situacao === "inativo");
-    const perd = clientes.filter((c) => c.situacao === "perdido");
+    // Perdido é só quem não compra E não deve — quem deve está no balde do débito.
+    const perd = clientes.filter(perdidoLimpo);
     const soma = (arr: Cliente[]) => arr.reduce((s, c) => s + (c.potencialMes || 0), 0);
     return [
       { chave: "faturamento", nome: "Faturamento", valor: fatMes, cor: COR_BARRA.faturamento, unidade: "por mês", nota: `${NUM(clientes.length)} clientes · ${BRL0(totalPeriodo)} no período`, clientes: clientes.length },
       { chave: "debito", nome: "Débito da carteira", valor: debito, cor: COR_BARRA.debito, unidade: "vencido em aberto", nota: `${NUM(clientes.filter((c) => (c.debito || 0) > 0).length)} clientes com título vencido`, clientes: clientes.filter((c) => (c.debito || 0) > 0).length },
       { chave: "inativos", nome: "Inativos", valor: soma(inat), cor: COR_BARRA.inativos, unidade: "potencial por mês", nota: `${NUM(inat.length)} clientes com cadastro inativado`, clientes: inat.length },
-      { chave: "perdidos", nome: "Perdidos", valor: soma(perd), cor: COR_BARRA.perdidos, unidade: "potencial por mês", nota: `${NUM(perd.length)} clientes sem comprar há 3+ meses`, clientes: perd.length },
+      { chave: "perdidos", nome: "Perdidos", valor: soma(perd), cor: COR_BARRA.perdidos, unidade: "potencial por mês", nota: `${NUM(perd.length)} clientes sem comprar há 3+ meses e sem débito`, clientes: perd.length },
     ];
   }, [clientes, meses]);
 
@@ -1254,7 +1266,9 @@ export default function GestaoCarteiras() {
                           <>
                             <p className="text-muted-foreground">
                               Tudo abaixo respeita os filtros de cima: o período de {labelMes(inicio)} a {labelMes(fim)}
-                              {filtrarVend ? `${rotuloCarteira}` : " e a carteira inteira"}. Cada cliente entra em um balde só.
+                              {filtrarVend ? `${rotuloCarteira}` : " e a carteira inteira"}. Inativos e Perdidos nunca se
+                              cruzam, e Perdidos também não se cruza com Com débito: quem está parado mas ainda deve
+                              conta só no débito.
                             </p>
                             <div>
                               <p className="font-semibold flex items-center gap-2">
@@ -1296,8 +1310,10 @@ export default function GestaoCarteiras() {
                                 Perdidos — {BRL0(barras[3]?.valor)} por mês
                               </p>
                               <p className="text-muted-foreground mt-1">
-                                Cadastro <b>ativo</b>, comprou em 3 meses ou mais e está <b>há 3 meses ou mais sem comprar</b> —
-                                o churn que ninguém marcou. Mesmo cálculo de potencial dos inativos.
+                                Cadastro <b>ativo</b>, comprou em 3 meses ou mais, está <b>há 3 meses ou mais sem comprar</b>{" "}
+                                e <b>não tem título vencido em aberto</b> — o churn que ninguém marcou, limpo de cobrança.
+                                Quem está parado mas ainda deve fica só em "Com débito", porque ali a ação é outra;
+                                a coluna "Parado há" na lista mostra que ele também parou. Mesmo cálculo de potencial dos inativos.
                                 {meses.length < 6 ? " Atenção: com menos de 6 meses de período esta barra tende a zerar, porque não cabem 3 meses comprando mais 3 parado." : ""}
                               </p>
                             </div>
@@ -1310,14 +1326,16 @@ export default function GestaoCarteiras() {
                             </p>
                             <ul className="text-muted-foreground list-disc pl-4 space-y-1">
                               <li><b>Inativos</b> — cadastro inativado. Mostra o potencial de cada um (o que faturava nos meses em que comprava) e há quanto tempo está parado.</li>
-                              <li><b>Perdidos</b> — cadastro ativo, comprou em 3 meses ou mais e está há 3+ meses sem comprar.</li>
+                              <li><b>Perdidos</b> — cadastro ativo, comprou em 3 meses ou mais, está há 3+ meses sem comprar e <b>não deve nada</b>.</li>
                               <li><b>Com débito</b> — quem tem título vencido em aberto hoje, do maior para o menor.</li>
                             </ul>
                             <p className="text-muted-foreground">
-                              Um cliente pode aparecer em "com débito" e também em inativos ou perdidos — os dois primeiros
-                              baldes é que são exclusivos entre si. O Exportar Excel deste card leva o balde aberto,
-                              cliente a cliente, com vendedor, potencial e débito; o de cima, no topo da tela, leva a
-                              carteira inteira.
+                              <b>Perdidos e Com débito não se cruzam</b>: cliente parado que ainda deve aparece só em
+                              "Com débito", porque ali a ação é cobrar, não vender — e a coluna "Parado há" na lista
+                              mostra que ele também parou de comprar. Inativos (cadastro inativado) é uma situação de
+                              cadastro, não de cobrança: quem foi inativado devendo continua aparecendo nos dois.
+                              O Exportar Excel deste card leva o balde aberto, cliente a cliente, com vendedor,
+                              potencial e débito; o de cima, no topo da tela, leva a carteira inteira.
                             </p>
                           </>
                         )}
@@ -1364,9 +1382,9 @@ export default function GestaoCarteiras() {
                     {/* Baldes: trocam a lista sem sair do card */}
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
                       {([
-                        { k: "inativos", rotulo: "Inativos", cor: COR_BARRA.inativos, n: clientes.filter((c) => c.situacao === "inativo").length },
-                        { k: "perdidos", rotulo: "Perdidos", cor: COR_BARRA.perdidos, n: clientes.filter((c) => c.situacao === "perdido").length },
-                        { k: "debito", rotulo: "Com débito", cor: COR_BARRA.debito, n: clientes.filter((c) => (c.debito || 0) > 0).length },
+                        { k: "inativos", rotulo: "Inativos", cor: COR_BARRA.inativos, n: clientes.filter((c) => noBalde(c, "inativos")).length },
+                        { k: "perdidos", rotulo: "Perdidos", cor: COR_BARRA.perdidos, n: clientes.filter((c) => noBalde(c, "perdidos")).length },
+                        { k: "debito", rotulo: "Com débito", cor: COR_BARRA.debito, n: clientes.filter((c) => noBalde(c, "debito")).length },
                       ] as const).map((b) => (
                         <button
                           key={b.k}
