@@ -330,7 +330,6 @@ export default function DossieVendedor() {
       if (ord.col === "total") return Number(c.total) || 0;
       if (ord.col === "situacao") return c.ativo ? "Ativo" : "Inativo";
       if (ord.col === "ultima") return txt(c.ultimaCompra);
-      if (ord.col === "ultimaValor") return Number(c.ultimaCompraValor) || 0;
       if (ord.col === "var") {
         const v = temAnterior ? variacao(noMes(c, mesFoco), noMes(c, mesAnt)) : null;
         return v === null ? -Infinity : v;
@@ -354,7 +353,6 @@ export default function DossieVendedor() {
     exportToExcel(clientesTabela.map((c) => {
       const row: any = { Cliente: c.nome, "CPF/CNPJ": c.doc || "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
       row["Última compra"] = c.ultimaCompra || "";
-      row["Valor da última compra"] = Number(c.ultimaCompraValor) || 0;
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
       row["Total no período"] = c.total;
       if (temAnterior) row[`Variação ${rotMes(mesFoco)} vs ${rotMes(mesAnt)}`] = pct(variacao(noMes(c, mesFoco), noMes(c, mesAnt)));
@@ -390,6 +388,22 @@ export default function DossieVendedor() {
     : selecionados.length ? `${selecionados.length} vendedores` : "Nenhum vendedor marcado";
   const origemInicio = umSo?.inicioAjustado ? "ajustada manualmente" : umSo?.primeiroPedido ? "1º pedido digitado" : "cadastro do usuário";
 
+  // ── PAINÉIS CONGELADOS DA TABELA PRINCIPAL (Flavio, 14/11/2026) ───────────
+  // Com 13 colunas de mês a tabela rola muito para a direita e, lá no fim, a
+  // linha vira uma fileira de números sem dono. Cliente e Vendedor ficam
+  // grudados na esquerda. As larguras são FIXAS de propósito: o deslocamento
+  // da segunda coluna (`left`) tem que casar com a largura da primeira, e isso
+  // só é previsível com medida escrita. `table-fixed` não serve aqui porque as
+  // colunas de mês precisam se ajustar ao conteúdo.
+  // Escritas por extenso, nunca interpoladas: o Tailwind lê o código-fonte para
+  // decidir que classe gerar, e `w-[${n}px]` não existe para ele.
+  const CONGELA = {
+    cliente: "sticky left-0 w-[260px] min-w-[260px] max-w-[260px]",
+    vendedor: "sticky left-[260px] w-[130px] min-w-[130px] max-w-[130px]",
+  };
+  /** A coluna Vendedor some quando o dossiê é de um vendedor só. */
+  const temColunaVendedor = modo !== "sel" || !umSo;
+
   // ── como o período se escreve na tela ─────────────────────────────────────
   const rotPeriodo = meses.length <= 1 ? rotMes(fim) : `${rotMes(ini)} a ${rotMes(fim)}`;
 
@@ -414,10 +428,13 @@ export default function DossieVendedor() {
   return (
     <div className="space-y-4">
       {/* ── FILTROS — congelam no topo ao rolar ───────────────────────────────
-          A tela tem gráfico, segmentos e uma tabela longa: a pergunta "e no mês
+          A tela tem gráfico, listas e uma tabela longa: a pergunta "e no mês
           passado?" nasce no meio dela. Com o box preso no topo dá para trocar
-          mês e vendedor sem perder o lugar na lista. */}
-      <div className="sticky top-0 z-30 -mx-1 px-1 pt-1 pb-2 bg-slate-50/95 backdrop-blur supports-[backdrop-filter]:bg-slate-50/80">
+          período e vendedor sem perder o lugar na lista.
+          Fundo SÓLIDO e z-50 (14/11/2026): com fundo translúcido a barra ficava
+          ilegível por cima das tabelas brancas e parecia ter sumido, e o z-30
+          empatava com os cabeçalhos colados das tabelas de dentro dos cards. */}
+      <div className="sticky top-0 z-50 -mx-1 px-1 pt-1 pb-2 bg-slate-50 shadow-[0_6px_10px_-8px_rgba(0,0,0,0.45)]">
         <Card>
           <CardContent className="pt-4 flex flex-wrap items-end gap-3">
             <div>
@@ -627,17 +644,19 @@ export default function DossieVendedor() {
                 <CardContent className="overflow-auto max-h-[420px]">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-white"><tr className="text-left text-muted-foreground border-b">
-                      <th className="py-1">Cliente</th><th>Entrada</th><th>Situação</th><th className="text-right">Vendas</th><th className="text-right">Total vendido</th><th className="text-right">No período</th></tr></thead>
+                      <th className="py-1">Cliente</th><th>Entrada</th><th>Situação</th><th className="text-right">Vendas</th><th className="text-right">Total vendido</th><th>Última compra</th><th className="text-right">No período</th></tr></thead>
                     <tbody>
                       {consolidado.conquistados.map((c: any) => (
                         <tr key={c.id} className="border-b last:border-0">
                           <td className="py-1">{c.nome}<div className="text-xs text-muted-foreground">{c.cidade}</div></td>
                           <td>{dataBR(c.conquista)}</td>
                           <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>{c.ativo ? "Ativo" : "Inativo"}</td>
-                          <td className="text-right">{c.vendasVida}</td><td className="text-right">{brl(c.valorVida)}</td><td className="text-right">{brl(c.fatAno)}</td>
+                          <td className="text-right">{c.vendasVida}</td><td className="text-right">{brl(c.valorVida)}</td>
+                          <td className="whitespace-nowrap">{c.ultimaCompra ? dataBR(c.ultimaCompra) : <span className="text-slate-300">—</span>}</td>
+                          <td className="text-right">{brl(c.fatAno)}</td>
                         </tr>
                       ))}
-                      {consolidado.conquistados.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">Nenhum cliente novo na carteira dele.</td></tr>}
+                      {consolidado.conquistados.length === 0 && <tr><td colSpan={7} className="py-4 text-center text-muted-foreground">Nenhum cliente novo na carteira dele.</td></tr>}
                     </tbody>
                   </table>
                 </CardContent>
@@ -661,7 +680,7 @@ export default function DossieVendedor() {
                 <CardContent className="overflow-auto max-h-[420px]">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-white"><tr className="text-left text-muted-foreground border-b">
-                      <th className="py-1">Cliente</th><th>Vendedor</th><th>Entrada</th><th>Situação</th><th className="text-right">No período</th></tr></thead>
+                      <th className="py-1">Cliente</th><th>Vendedor</th><th>Entrada</th><th>Situação</th><th>Última compra</th><th className="text-right">No período</th></tr></thead>
                     <tbody>
                       {consolidado.conquistados.map((c: any) => (
                         <tr key={`${c.vendedor}-${c.id}`} className="border-b last:border-0">
@@ -669,10 +688,11 @@ export default function DossieVendedor() {
                           <td className="text-xs">{c.vendedor}</td>
                           <td>{dataBR(c.conquista)}</td>
                           <td className={c.ativo ? "text-emerald-700" : "text-red-700"}>{c.ativo ? "Ativo" : "Inativo"}</td>
+                          <td className="whitespace-nowrap">{c.ultimaCompra ? dataBR(c.ultimaCompra) : <span className="text-slate-300">—</span>}</td>
                           <td className="text-right">{brl(c.fatAno)}</td>
                         </tr>
                       ))}
-                      {consolidado.conquistados.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">Marque ao menos um vendedor.</td></tr>}
+                      {consolidado.conquistados.length === 0 && <tr><td colSpan={6} className="py-4 text-center text-muted-foreground">Marque ao menos um vendedor.</td></tr>}
                     </tbody>
                   </table>
                 </CardContent>
@@ -736,14 +756,17 @@ export default function DossieVendedor() {
             </CardHeader>
             <CardContent className="overflow-auto max-h-[70vh] p-0">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white z-10">
+                {/* z-40: o <thead> com z-index vira um contexto de empilhamento
+                    inteiro, e as células congeladas do corpo (z-10) empatavam com
+                    ele — num empate vence quem vem depois no HTML, então o corpo
+                    cobria o cabeçalho. Ele tem que ficar acima de tudo da tabela. */}
+                <thead className="sticky top-0 bg-white z-40">
                   <tr className="text-left text-muted-foreground border-b">
-                    <Th cod="cliente" atual={ord} onOrdenar={ordenar} className="py-2 px-3 min-w-[220px]">Cliente</Th>
-                    {modo !== "sel" || !umSo ? <Th cod="vendedor" atual={ord} onOrdenar={ordenar}>Vendedor</Th> : null}
+                    <Th cod="cliente" atual={ord} onOrdenar={ordenar} className={`py-2 px-3 top-0 ${CONGELA.cliente} bg-white z-30`}>Cliente</Th>
+                    {temColunaVendedor ? <Th cod="vendedor" atual={ord} onOrdenar={ordenar} className={`top-0 ${CONGELA.vendedor} bg-white z-30`}>Vendedor</Th> : null}
                     {redes.length > 0 && <Th cod="rede" atual={ord} onOrdenar={ordenar}>Rede</Th>}
                     <Th cod="situacao" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Situação</Th>
                     <Th cod="ultima" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Última compra</Th>
-                    <Th cod="ultimaValor" atual={ord} onOrdenar={ordenar} className="text-right whitespace-nowrap">Valor da última</Th>
                     {meses.map((m) => (
                       <Th key={m} cod={m} atual={ord} onOrdenar={ordenar}
                         className={`text-right whitespace-nowrap ${m === mesFoco ? "bg-amber-50 text-amber-900 font-semibold" : ""}`}>
@@ -756,10 +779,10 @@ export default function DossieVendedor() {
                 </thead>
                 <tbody>
                   {clientesTabela.slice(0, limite).map((c) => (
-                    <tr key={c.id} className="border-b last:border-0 hover:bg-slate-50">
-                      <td className="py-1 px-3">{c.nome}
+                    <tr key={c.id} className="group border-b last:border-0 hover:bg-slate-50">
+                      <td className={`py-1 px-3 ${CONGELA.cliente} bg-white group-hover:bg-slate-50 z-10`}>{c.nome}
                         <div className="text-xs text-muted-foreground">{c.cidade}</div></td>
-                      {modo !== "sel" || !umSo ? <td className="px-2 whitespace-nowrap">{c.vendedor}</td> : null}
+                      {temColunaVendedor ? <td className={`px-2 whitespace-nowrap ${CONGELA.vendedor} bg-white group-hover:bg-slate-50 z-10`}>{c.vendedor}</td> : null}
                       {redes.length > 0 && <td className="px-2 text-xs whitespace-nowrap">{c.rede || <span className="text-slate-300">—</span>}</td>}
                       {/* Situação em coluna própria e sempre escrita: antes só
                           o inativo era marcado, e a ausência de marca exigia
@@ -770,7 +793,6 @@ export default function DossieVendedor() {
                         </span>
                       </td>
                       <td className="px-2 text-sm whitespace-nowrap">{c.ultimaCompra ? dataBR(c.ultimaCompra) : <span className="text-slate-300">—</span>}</td>
-                      <td className="px-2 text-sm text-right whitespace-nowrap">{c.ultimaCompraValor ? brl(c.ultimaCompraValor) : <span className="text-slate-300">—</span>}</td>
                       {meses.map((m, i) => {
                         const v = noMes(c, m);
                         const ant = i > 0 ? noMes(c, meses[i - 1]) : null;
@@ -790,15 +812,14 @@ export default function DossieVendedor() {
                       <td className="px-3 text-right font-semibold whitespace-nowrap">{brl(c.total)}</td>
                     </tr>
                   ))}
-                  <tr className="border-t-2 font-semibold bg-slate-50 sticky bottom-0">
-                    <td className="py-2 px-3">Total ({clientesTabela.length})</td>
-                    {modo !== "sel" || !umSo ? <td></td> : null}
+                  <tr className="border-t-2 font-semibold bg-slate-50 sticky bottom-0 z-20">
+                    <td className={`py-2 px-3 bottom-0 ${CONGELA.cliente} bg-slate-50 z-20`}>Total ({clientesTabela.length})</td>
+                    {temColunaVendedor ? <td className={`bottom-0 ${CONGELA.vendedor} bg-slate-50 z-20`}></td> : null}
                     {redes.length > 0 && <td></td>}
                     <td className="px-2 text-xs font-normal text-muted-foreground whitespace-nowrap">
                       {clientesTabela.filter((c) => c.ativo).length} ativos
                     </td>
                     <td></td>
-                    <td className="px-2 text-right whitespace-nowrap">{brl(clientesTabela.reduce((s2, c) => s2 + (Number(c.ultimaCompraValor) || 0), 0))}</td>
                     {meses.map((m, i) => {
                       const v = totalMes(m);
                       const ant = i > 0 ? totalMes(meses[i - 1]) : null;
