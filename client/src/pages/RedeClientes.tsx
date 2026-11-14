@@ -1182,7 +1182,13 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
   };
 
   const salvar = async () => {
-    setErro(""); setSalvando(true);
+    setErro("");
+    // 👤 Telefone do ponto exige o responsável ao lado (nov/2026).
+    if (String(f.telefone || "").replace(/\D/g, "") && String(f.contato || "").trim().length < 2) {
+      setErro("Informe o contato (responsável) do telefone do ponto.");
+      return;
+    }
+    setSalvando(true);
     try {
       const url = p ? `/api/carteira/redes/pontos/${p.id}` : `/api/carteira/redes/${props.redeId}/pontos`;
       const resp = await fetch(url, {
@@ -1306,7 +1312,7 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
           </div>
 
           <div className="col-span-3">
-            <label className="text-xs text-muted-foreground">Contato no local</label>
+            <label className="text-xs text-muted-foreground">Contato no local (responsável){String(f.telefone || "").replace(/\D/g, "") ? " *" : ""}</label>
             <Input value={f.contato} onChange={(e) => set("contato", e.target.value)} placeholder="Gerente da loja" />
           </div>
           <div className="col-span-3">

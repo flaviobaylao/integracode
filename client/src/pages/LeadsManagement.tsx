@@ -628,6 +628,11 @@ export default function LeadsManagement() {
       return;
     }
 
+    // 👤 Telefone exige o responsável ao lado (nov/2026).
+    if (String((formData as any).phone || "").replace(/\D/g, "") && String((formData as any).contact || "").trim().length < 2) {
+      toast({ title: "Erro", description: "Informe o contato (responsável) do telefone", variant: "destructive" });
+      return;
+    }
     const payload: any = { ...formData };
     if (!payload.nextContactDate) delete payload.nextContactDate;
     if (!payload.temperature) delete payload.temperature;
@@ -1675,7 +1680,7 @@ export default function LeadsManagement() {
             </div>
 
             <div>
-              <Label htmlFor="contact">Contato</Label>
+              <Label htmlFor="contact">Contato (responsável pelo telefone){String((formData as any).phone || "").replace(/\D/g, "") ? " *" : ""}</Label>
               <Input
                 id="contact"
                 value={formData.contact}
@@ -2169,6 +2174,7 @@ export default function LeadsManagement() {
             name: converterFiscal?.companyName || converterLead.fantasyName,
             fantasyName: converterLead.fantasyName,
             phone: converterLead.phone || '',
+            contact: (converterLead as any).contact || '',
             customerType: 'pessoa_juridica',
             sellerId: converterLead.assignedTo || '',
             latitude: (converterLead as any).latitude,
