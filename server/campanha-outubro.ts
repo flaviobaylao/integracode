@@ -19,6 +19,12 @@ import { nfVendaWhere, nfVendaFrom, nfData } from "./faturamento-oficial";
 // lista de meses oferecidos.
 const CAMPAIGN_YM = "2026-10";
 
+// Ata de 14/11/2026: o bônus de R$ 30 por novo cliente vale para a 1ª compra
+// ATÉ esta data. A partir de 16/11 o cliente novo passa a render comissão de
+// 12% por 6 meses ao vendedor que o conquistou (server/comissao-novos-routes.ts).
+export const FIM_BONUS_NOVO_R30 = "2026-11-15";
+export const INICIO_COMISSAO_NOVO = "2026-11-16";
+
 // ============================================================================
 // PREMISSAS DA CAMPANHA — ligadas/desligadas e com o valor editado POR MÊS
 // (01/nov/2026). Antes eram constantes no código: mudar o prêmio ou tirar uma
@@ -53,7 +59,7 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
   pedidoMinPadrao?: number; pedidoMinPfPadrao?: number;
 }> = [
   {
-    chave: "novos", label: "por novo cliente", descricao: "Venda faturada dentro do raio logístico.",
+    chave: "novos", label: "por novo cliente", descricao: "Venda faturada dentro do raio logístico. Valeu para a 1ª compra até 15/11/2026; desde 16/11 o cliente novo dá 12% de comissão por 6 meses.",
     gatilhoLabel: "Pedido mínimo", gatilhoSufixo: "R$",
     base: "valor do 1º pedido de cada novo cliente apto",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 30, gatilhoPadrao: 300,
@@ -134,7 +140,10 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
     return {
       chave: c.chave, label: c.label, descricao: c.descricao,
       gatilhoLabel: c.gatilhoLabel, gatilhoSufixo: c.gatilhoSufixo, base: c.base,
-      ativa: g ? g.ativa !== false : c.ativaPadrao,
+      // R$ por novo cliente acabou em 15/11/2026 (ata de 14/11): de dezembro em
+      // diante a premissa nasce desligada — o cliente novo passa a render 12% de
+      // comissão por 6 meses (server/comissao-novos-routes.ts).
+      ativa: g ? g.ativa !== false : (c.chave === "novos" && ym > FIM_BONUS_NOVO_R30.slice(0, 7) ? false : c.ativaPadrao),
       modo: (g && g.modo === "percentual" ? "percentual" : g ? "valor" : c.modoPadrao) as ModoPremissa,
       valor: g ? num(g.valor, c.valorPadrao) : c.valorPadrao,
       gatilho: g ? num(g.gatilho, c.gatilhoPadrao) : c.gatilhoPadrao,
@@ -389,6 +398,50 @@ function donoNaData(janelas: JanelaDeleg[] | undefined, d: string, atual: { nome
   return ref && ref.de ? { nome: ref.de, id: ref.deId } : atual;
 }
 
+// Clientes novos (1ª NF-e de venda da base) a partir de `desde`, com o vendedor
+// que o conquistou = dono da carteira NA DATA da 1ª compra (respeita delegação).
+// Usado pela comissão de 12% por 6 meses (server/comissao-novos-routes.ts).
+// Sem pedido mínimo: a ata fala em "cliente novo", sem piso.
+export async function clientesNovosDesde(desde: string): Promise<Array<{
+  doc: string; customerId: string; nome: string; primeiraCompra: string; valor: number; seller: string; sellerUid: string;
+}>> {
+  const dcol = nfData("fi");
+  const firsts = await rawq(
+    "SELECT DISTINCT ON (doc) doc, d AS first_d, dayv FROM (" +
+    "SELECT regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') AS doc, " + dcol + "::date::text AS d, COALESCE(SUM(fi.total_invoice),0) AS dayv" +
+    " FROM " + nfVendaFrom("fi") + " WHERE " + nfVendaWhere("fi") +
+    " AND regexp_replace(COALESCE(fi.customer_cnpj_cpf,''),'[^0-9]','','g') <> '' GROUP BY 1, 2" +
+    ") q ORDER BY doc, d"
+  );
+  const novos = firsts.filter((r) => String(r.first_d).slice(0, 10) >= desde);
+  if (!novos.length) return [];
+  const custs = await rawq(
+    "SELECT c.id, regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') AS doc," +
+    " COALESCE(NULLIF(c.fantasy_name,''), c.name, '(sem nome)') AS nome" +
+    " FROM customers c WHERE regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g') <> ''" + PURO_EXCL
+  );
+  const cust: Record<string, { id: string; nome: string }> = {};
+  for (const r of custs) { const d = String(r.doc); if (d && !(d in cust)) cust[d] = { id: String(r.id), nome: String(r.nome || "") }; }
+  const carteira = await rawq("SELECT doc, seller, uid FROM " + CARTEIRA_SELLER);
+  const docSeller: Record<string, string> = {};
+  const docUid: Record<string, string> = {};
+  for (const r of carteira) { const d = String(r.doc); if (d && !(d in docSeller)) { docSeller[d] = String(r.seller || ""); docUid[d] = String(r.uid || ""); } }
+  const janelasPorMes: Record<string, Record<string, JanelaDeleg[]>> = {};
+  const out: Array<any> = [];
+  for (const r of novos) {
+    const doc = String(r.doc);
+    const c = cust[doc];
+    if (!c) continue;
+    const fd = String(r.first_d).slice(0, 10);
+    const ymFd = fd.slice(0, 7);
+    if (!janelasPorMes[ymFd]) janelasPorMes[ymFd] = await janelasDelegacao(ymFd);
+    const dono = donoNaData(janelasPorMes[ymFd][doc], fd, { nome: docSeller[doc] || "", id: docUid[doc] || "" });
+    if (!dono.id || excluido(dono.nome)) continue; // conta de canal / sem vendedor: não há comissão
+    out.push({ doc, customerId: c.id, nome: c.nome, primeiraCompra: fd, valor: Math.round((Number(r.dayv) || 0) * 100) / 100, seller: dono.nome, sellerUid: dono.id });
+  }
+  return out;
+}
+
 export async function detectNovos(ym: string): Promise<number> {
   await ensureCampaignTable();
   const dcol = nfData("fi");
@@ -403,7 +456,8 @@ export async function detectNovos(ym: string): Promise<number> {
   // Pedido minimo e premissa do mes: muda na tela, nao no codigo.
   const pNovos = achaPremissa(await premissasDoMes(ym), "novos");
   const pedidoMin = pNovos ? pNovos.gatilho : 300;
-  const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= pedidoMin);
+  const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= pedidoMin
+    && String(r.first_d).slice(0, 10) <= FIM_BONUS_NOVO_R30);
   if (!novos.length) return 0;
   // Dados do cliente (nome, regiao, id) e vendedor da carteira.
   const custs = await rawq(

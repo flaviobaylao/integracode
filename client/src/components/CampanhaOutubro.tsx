@@ -5,6 +5,7 @@
 // (admin ve todos; vendedor ve apenas o seu). Consome GET /api/campanha/outubro.
 import { useState, useEffect } from "react";
 import { useQuery, apiRequest } from "@/lib/queryClient";
+import ComissaoClienteNovoCard from "@/components/ComissaoClienteNovoCard";
 import { Card, CardContent } from "@/components/ui/card";
 
 type Seller = {
@@ -223,6 +224,8 @@ export default function CampanhaOutubro() {
           </div>
         </div>
       </div>
+
+      <ComissaoClienteNovoCard ym={ym} />
 
       {/* PLANEJAMENTO — um bloco por premissa, direto do catálogo do servidor.
           Premissa nova aparece aqui sozinha, com liga/desliga e edição. */}

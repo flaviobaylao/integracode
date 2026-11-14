@@ -249,6 +249,23 @@ export default function ActiveCustomers() {
   // 🔒 Inativar cliente é EXCLUSIVO do Admin (o isAdmin acima é o grupo gestor e governa outros botões).
   const isStrictAdmin = user?.role === 'admin';
   const delegMarks = useDelegacaoMarks();
+  // Comissão de cliente novo (12% por 6 meses — ata 14/11/2026): marca os vigentes.
+  const { data: comissaoNovos = {} } = useQuery<Record<string, { percentual: number; inicio: string; fim: string; vendedor: string }>>({
+    queryKey: ["/api/comissao-novos/marcas"],
+    staleTime: 5 * 60 * 1000,
+  });
+  const tagComissao = (id?: string) => {
+    const m = id ? (comissaoNovos as any)[id] : null;
+    if (!m) return null;
+    const fim = String(m.fim).slice(0, 10).split("-").reverse().join("/");
+    return (
+      <span className="text-[10px] font-semibold text-violet-800 border border-violet-300 bg-violet-100 px-1.5 py-0.5 rounded whitespace-nowrap"
+        title={`Cliente novo conquistado por ${m.vendedor}: comissão de ${m.percentual}% (em vez de 8%) até ${fim}`}
+        data-testid="tag-comissao-cliente-novo">
+        Comissão {m.percentual}% até {fim}
+      </span>
+    );
+  };
   const perms = usePermissions(); // gating de ações (admin bypass / só configurados)
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("list");
@@ -1571,6 +1588,7 @@ export default function ActiveCustomers() {
                                   <span className="text-[10px] font-normal italic text-slate-400 whitespace-nowrap" title="Colaborador — não entra em rota/agenda de visitas">colaborador</span>
                                 )}
                                 <OmieInstanceBadge instanceId={(ac.customer as any)?.omieInstanceId} />
+                                {tagComissao((ac.customer as any)?.id ?? ac.customerId)}
                                 {ac.customer && (!(ac.customer as any).latitude || !(ac.customer as any).longitude) && (
                                   <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap" title="Sem coordenadas no cadastro - nao entra na rota do dia">SEM COORDENADA</span>
                                 )}
