@@ -138,6 +138,7 @@ export default function CustomerEditModal({
     icmsCsosn: "102", // CSOSN da NF-e (Simples): 102 padrao, 101 com permissao de credito
     email: "",
     phone: "",
+    contact: "",
     particularidades: "",
     address: "",
     city: "",
@@ -339,6 +340,14 @@ export default function CustomerEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // 👤 RESPONSÁVEL pelo telefone: obrigatório (nov/2026) — vai para customers.contact.
+    {
+      const resp = String((formData as any).contact || "").replace(/\s+/g, " ").trim();
+      if (resp.length < 2 || !/[A-Za-zÀ-ÿ]/.test(resp)) {
+        toast({ title: "Responsável obrigatório", description: "Informe o nome do responsável pelo telefone (ao lado do telefone).", variant: "destructive" });
+        return;
+      }
+    }
     const payload: any = {
       ...formData,
       paymentMethod: (formData as any).paymentMethod || null,
@@ -640,6 +649,7 @@ export default function CustomerEditModal({
         icmsCsosn: (customer as any).icmsCsosn || (customer as any).icms_csosn || "102",
         email: customer.email || "",
         phone: formatPhone(customer.phone || ""),
+        contact: (customer as any).contact || "",
         particularidades: (customer as any).particularidades || "",
         address: customer.address || "",
         city: customer.city || "",
@@ -874,15 +884,31 @@ export default function CustomerEditModal({
                   )
                 )}
               </div>
-              <Input
-                id="phone"
-                name="phone"
-                value={formData.phone}
-                onChange={(e) => setFormData((prev) => ({ ...prev, phone: formatPhone(e.target.value) }))}
-                maxLength={15}
-                required
-                data-testid="input-customer-phone"
-              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input
+                  id="phone"
+                  name="phone"
+                  value={formData.phone}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, phone: formatPhone(e.target.value) }))}
+                  maxLength={15}
+                  required
+                  data-testid="input-customer-phone"
+                />
+                <div>
+                  <Input
+                    id="contact"
+                    name="contact"
+                    value={(formData as any).contact || ""}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, contact: e.target.value }))}
+                    placeholder="Responsável (comprador) *"
+                    title="Nome do responsável por este telefone (obrigatório)"
+                    maxLength={120}
+                    required
+                    data-testid="input-customer-contact"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Responsável pelo telefone *</p>
+                </div>
+              </div>
               {/* Flag SOMENTE PARA ADMIN: dispensa a confirmação do contato pelo link. */}
               {isAdmin && customer?.id && (
                 <div className="mt-2 flex items-start gap-2">

@@ -105,6 +105,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [customerWeekdays, setCustomerWeekdays] = useState<string[]>([]);
   const [customerVisitPeriodicity, setCustomerVisitPeriodicity] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  // 👤 Responsável pelo telefone (customers.contact) — obrigatório ao lado do telefone (nov/2026).
+  const [customerContact, setCustomerContact] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   // 09/set/2026: cobre TODO o "Finalizar e Enviar p/ Faturamento" (finalizar + espera +
@@ -203,6 +205,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         // tem de digitar de novo a cada pedido e pedir a confirmação ao contato.
         // (o efeito que zera está logo abaixo, quando o status chega do servidor)
         setCustomerPhone(card.customer.phone || '');
+        setCustomerContact((card.customer as any).contact || '');
         setLatitude(card.customer.latitude || '');
         setLongitude(card.customer.longitude || '');
       }
@@ -619,11 +622,11 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
 
       // Se o telefone foi alterado, atualizar no cliente.
       // Não bloqueia a venda se falhar: o backend grava o telefone do comprador ao finalizar (customerPhone vai no PUT do card).
-      if (customerPhone && customerPhone !== card.customer?.phone) {
+      if ((customerPhone && customerPhone !== card.customer?.phone) || (customerContact.trim() && customerContact.trim() !== String((card.customer as any)?.contact || ''))) {
         try {
           await updateCustomerMutation.mutateAsync({
             id: card.customerId,
-            data: { phone: customerPhone }
+            data: { ...(customerPhone ? { phone: customerPhone } : {}), contact: customerContact.trim() }
           });
         } catch (_ePhone) {
           console.warn('Não foi possível atualizar o telefone do cliente antes de finalizar (seguindo; o backend grava no fechamento):', _ePhone);
@@ -637,6 +640,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           status: 'completed',
           saleValue: totalValue.toFixed(2),
           customerPhone: (customerPhone || '').trim(),
+          customerContact: (customerContact || '').trim(),
           referralCode: (referralCode || '').trim() || undefined,
           products: products,
           paymentMethod: paymentMethod,
@@ -764,6 +768,18 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
         variant: "destructive",
       });
       return;
+    }
+    // 👤 Responsável pelo telefone obrigatório (nov/2026).
+    {
+      const _resp = String(customerContact || '').replace(/\s+/g, ' ').trim();
+      if (_resp.length < 2 || !/[A-Za-zÀ-ÿ]/.test(_resp)) {
+        toast({
+          title: "Responsável obrigatório",
+          description: "Informe o nome do responsável pelo telefone do comprador (campo ao lado do telefone).",
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     try {
@@ -981,7 +997,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
     // O campo do telefone abre VAZIO quando o número ainda não foi confirmado pelo
     // contato. Salvar '' aqui APAGARIA o telefone do cadastro — por isso só vai no
     // patch quando o vendedor realmente digitou algo.
-    const _phonePatch = (customerPhone || '').trim() ? { phone: customerPhone } : {};
+    const _phonePatch: any = (customerPhone || '').trim() ? { phone: customerPhone } : {};
+    if ((customerContact || '').trim()) _phonePatch.contact = customerContact.trim();
     await updateCustomerMutation.mutateAsync({
       id: card.customer.id,
       data: {
@@ -1649,15 +1666,24 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     </span>
                   )}
                 </Label>
-                <Input
-                  type="tel"
-                  inputMode="numeric"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="(DDD) 9XXXX-XXXX"
-                  data-testid="input-customer-phone"
-                  className="mt-1"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                  <Input
+                    type="tel"
+                    inputMode="numeric"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="(DDD) 9XXXX-XXXX"
+                    data-testid="input-customer-phone"
+                  />
+                  <Input
+                    value={customerContact}
+                    onChange={(e) => setCustomerContact(e.target.value)}
+                    placeholder="Responsável (comprador) *"
+                    title="Nome do responsável por este telefone (obrigatório)"
+                    maxLength={120}
+                    data-testid="input-customer-contact"
+                  />
+                </div>
                 {telefoneConfirmado ? (
                   <p className="text-xs text-emerald-700 mt-1">
                     Número já confirmado. Só altere se o contato tiver mudado de telefone.
