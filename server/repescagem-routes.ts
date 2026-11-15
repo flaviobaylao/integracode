@@ -263,6 +263,7 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     periodicity: customers.visitPeriodicity,
     semanaAtendimento: customers.semanaAtendimento,
     serviceStartDate: customers.serviceStartDate,
+    virtualService: customers.virtualService,
     omieClientCode: customers.omieClientCode,
     isActive: customers.isActive,
     isSupplier: customers.isSupplier,
@@ -278,9 +279,9 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
     : [];
   const candSellerRoleById = new Map(candSellerRoleRows.map(u => [u.id, u.role]));
 
-  // Clientes vinculados a uma REDE de clientes (cliente_rede_membros) NÃO entram em
-  // repescagem — a negociação/atendimento da rede é conduzido pelo destinatário da rede,
-  // não pelo fluxo de repescagem individual. (Set global; a tabela tem 1 linha por membro.)
+  // Clientes vinculados a uma REDE de clientes (cliente_rede_membros). Desde nov/2026 (regra do
+  // Flavio) as unidades de rede CAEM em repescagem: a unidade PRESENCIAL só vai para vendedor
+  // EXTERNO; a unidade VIRTUAL vai para internos e externos, como os demais clientes.
   const redeMemberIds = new Set<string>();
   try {
     const rm: any = await db.execute(sql`SELECT customer_id FROM cliente_rede_membros`);
@@ -576,8 +577,6 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
   for (const c of cs) {
     // Carteiras de canal/sistema (Honest 1/2/3, HOTSITE, INSTAGRAM) NAO entram em repescagem.
     if (REPESCAGEM_EXCLUDED_SELLER_IDS.has(c.sellerId || '')) continue;
-    // Clientes vinculados a uma REDE de clientes NAO caem em repescagem.
-    if (redeMemberIds.has(c.id)) continue;
     // FORNECEDORES (is_supplier) sao cadastro, nao cliente — NUNCA entram na Rota do Dia,
     // nem pela repescagem. (A rota regular ja os exclui via getCustomersForDate.)
     if ((c as any).isSupplier === true) continue;
@@ -705,6 +704,8 @@ async function __computeRedCandidatesRaw(opts: { startDate: string; endDate: str
       weekdays: (c.weekdays as unknown as string[]) || [],
       lastRedDate,
       daysSince: days,
+      // Unidade de REDE presencial: só vendedor externo atende na repescagem (nov/2026).
+      redePresencial: redeMemberIds.has(c.id) && !(c as any).virtualService,
     });
   }
 
@@ -739,6 +740,8 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   const skipCands: SkipCiclo[] = [];
   const candidates = await computeRedCandidates({ startDate, endDate }, skipCands);
   const candidateByCustomerId = new Map(candidates.map(c => [c.customerId, c]));
+  // Unidades PRESENCIAIS de rede de clientes: só vendedor EXTERNO recebe (nov/2026).
+  const soExterno = (custId: string): boolean => !!(candidateByCustomerId.get(custId) as any)?.redePresencial;
 
   // PULAR CICLO: clientes atendidos com PEDIDO (venda) FORA do dia de rota -> reescreve agenda
   // pendente pulando 1 ciclo. Idempotente (so reescreve se ainda nao foi pulado).
@@ -906,6 +909,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   for (const a of pendingNow) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
     if (isLockedToday(a)) continue;               // trava manual do dia: não reatribui
+    if (soExterno(a.customerId)) continue;        // unidade presencial de rede: só externo
     const ownerTmId = ownerTelemarketingId(a.customerId);
     if (!ownerTmId) continue;                     // dono não é telemarketing → regra não se aplica
     if (a.assignedUserId === ownerTmId) continue; // já está com o dono
@@ -964,8 +968,9 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     // Roteamento especial (carteira -> atendente configurado no painel) tem prioridade, se o alvo
     // estiver habilitado. O alvo pode ser TELEMARKETING ou VENDEDOR EXTERNO (cross-carteira).
     const spTarget = specialTargetFor(customerId);
-    if (spTarget && enabledSet.has(spTarget)) return { userId: spTarget, phase: externalSet.has(spTarget) ? 'external' : 'telemarketing' };
-    if (isExternalPortfolio(customerId)) {
+    const soExt = soExterno(customerId);
+    if (spTarget && enabledSet.has(spTarget) && (!soExt || externalSet.has(spTarget))) return { userId: spTarget, phase: externalSet.has(spTarget) ? 'external' : 'telemarketing' };
+    if (isExternalPortfolio(customerId) || soExt) {
       const ownerId = coordById.get(customerId)?.sellerId || null;
       const qualifying = externalIds.filter(extId =>
         (externalLoad.get(extId) || 0) < EXTERNAL_MAX_PER_SELLER && withinPerimeter(customerId, extId));
@@ -979,6 +984,15 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
         }
         return { userId: pick, phase: 'external' };
       }
+    }
+    // Unidade PRESENCIAL de rede: nunca vai para o telemarketing. Sem externo no perímetro, fica
+    // com o dono (se for externo habilitado) ou com o externo habilitado de menor carga.
+    if (soExt) {
+      const ownerId = coordById.get(customerId)?.sellerId || null;
+      if (ownerId && externalSet.has(ownerId)) return { userId: ownerId, phase: 'external' };
+      if (externalIds.length === 0) return null;
+      const pick = externalIds.reduce((best, id) => (externalLoad.get(id) || 0) < (externalLoad.get(best) || 0) ? id : best, externalIds[0]);
+      return { userId: pick, phase: 'external' };
     }
     // Fase B (telemarketing): NÃO cruzar carteira. Cliente de um TELEMARKETING só pode ir para o
     // PRÓPRIO dono (se habilitado na repescagem); nunca para outro telemarketing. Se o dono é
@@ -1003,7 +1017,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   const pinnedSpecial = new Set<string>();
   for (const cand of candidates) {
     const target = specialTargetFor(cand.customerId);
-    if (target && enabledSet.has(target)) pinnedSpecial.add(cand.customerId);
+    if (target && enabledSet.has(target) && (!soExterno(cand.customerId) || externalSet.has(target))) pinnedSpecial.add(cand.customerId);
   }
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId) || !pinnedSpecial.has(a.customerId)) continue;
@@ -1039,7 +1053,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
     if (isLockedToday(a)) continue;                   // trava manual do dia: não promove
     if (pinnedSpecial.has(a.customerId)) continue;    // roteamento especial: fica no telemarketing alvo
     if (!internalSet.has(a.assignedUserId)) continue; // so mexe em quem esta no telemarketing
-    if (!isExternalPortfolio(a.customerId)) continue;
+    if (!isExternalPortfolio(a.customerId) && !soExterno(a.customerId)) continue;
     const ownerId = coordById.get(a.customerId)?.sellerId || null;
     const qualifying = externalIds.filter(extId =>
       (externalLoad.get(extId) || 0) < EXTERNAL_MAX_PER_SELLER && withinPerimeter(a.customerId, extId));
@@ -1071,8 +1085,9 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
   // 4) Reatribuir os pendentes cujo atendente foi desabilitado
   for (const a of stillPending) {
     if (!candidateByCustomerId.has(a.customerId)) continue;
-    if (isLockedToday(a)) continue;                 // trava manual do dia: mantém o atendente escolhido
-    if (enabledSet.has(a.assignedUserId)) continue; // atribuicao ainda valida
+    if (isLockedToday(a) && !(soExterno(a.customerId) && !externalSet.has(a.assignedUserId))) continue; // trava manual do dia: mantém o atendente escolhido
+    // Atribuição ainda válida — exceto unidade presencial de rede parada com quem não é externo.
+    if (enabledSet.has(a.assignedUserId) && !(soExterno(a.customerId) && !externalSet.has(a.assignedUserId))) continue;
     const target = chooseTarget(a.customerId);
     if (!target) {
       await db.update(repescagemAssignments).set({
@@ -1129,7 +1144,7 @@ async function __reconcileAssignmentsRaw(actorUserId?: string): Promise<void> {
       if (!max.id || !min.id || max.v - min.v <= 1) break;
       // Só move clientes SEM dono de telemarketing (externos/sem dono). Cliente de carteira de
       // telemarketing fica preso ao próprio dono — o rebalanceamento nunca cruza carteira.
-      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId) && !isLockedToday(a) && !pinnedSpecial.has(a.customerId));
+      const toMove = Array.from(validPendingByCustomer.values()).find(a => a.assignedUserId === max.id && !ownerTelemarketingId(a.customerId) && !isLockedToday(a) && !pinnedSpecial.has(a.customerId) && !soExterno(a.customerId));
       if (!toMove) break;
       await db.update(repescagemAssignments).set({
         assignedUserId: min.id,
@@ -1519,6 +1534,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     const owner = coordById.get(cand.customerId)?.sellerId || null;
     const target = repescagemSpecialTarget(owner, crossReceiversDraw, splitLRDraw.get(cand.customerId));
     if (!target || (!teleSet.has(target) && !extSellerSet.has(target))) continue;
+    if ((cand as any).redePresencial && !extSellerSet.has(target)) continue; // unidade presencial de rede: só externo
     const targetIsExternal = extSellerSet.has(target);
     allocated.add(cand.customerId);
     if (targetIsExternal) extLoad.set(target, (extLoad.get(target) || 0) + 1);
@@ -1546,7 +1562,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
       phase: 'external', drawDate, status: 'in_route' });
   };
   const extCandidates = candidates
-    .filter((c: any) => isExtPortfolio(c.customerId))
+    .filter((c: any) => isExtPortfolio(c.customerId) || c.redePresencial)
     .sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
   // Pre-passo: o PROPRIO vendedor do cliente primeiro (se habilitado, perto da rota e abaixo do teto).
   for (const c of extCandidates) {
@@ -1565,9 +1581,20 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
     }
   }
 
+  // Unidade PRESENCIAL de rede sem externo no perímetro (nov/2026): fica com o dono, se ele é
+  // externo habilitado; senão com o externo habilitado de menor carga. Nunca vai ao telemarketing.
+  for (const c of extCandidates) {
+    if (allocated.has(c.customerId) || !(c as any).redePresencial) continue;
+    const owner = coordById.get(c.customerId)?.sellerId || null;
+    if (owner && extLoad.has(owner)) { allocExternal(c.customerId, owner, c); continue; }
+    if (externalSellers.length === 0) continue;
+    const pick = externalSellers.reduce((b, id) => (extLoad.get(id) || 0) < (extLoad.get(b) || 0) ? id : b, externalSellers[0]);
+    allocExternal(c.customerId, pick, c);
+  }
+
   // ---- Fase B: telemarketing (aleatório ponderado, inverso à carga) ----
   const remaining = candidates
-    .filter((c: any) => !allocated.has(c.customerId))
+    .filter((c: any) => !allocated.has(c.customerId) && !c.redePresencial)
     .sort((a: any, b: any) => repShuffleKey(a.customerId + '|' + drawDate) - repShuffleKey(b.customerId + '|' + drawDate));
   if (telemarketers.length > 0) {
     const load = new Map<string, number>(telemarketers.map(id => [id, preTeleLoad.get(id) || 0]));
@@ -2146,6 +2173,14 @@ export function registerRepescagemRoutes(app: Express, opts: {
       const rows = await db.select().from(repescagemAssignments).where(eq(repescagemAssignments.id, id));
       if (rows.length === 0) return res.status(404).json({ message: 'Alocação não encontrada' });
       const a = rows[0];
+      // Unidade PRESENCIAL de rede: só vendedor externo (ou admin) captura (nov/2026).
+      if (locked && !isAdmin && actor?.role !== 'vendedor') {
+        try {
+          const rp: any = await db.execute(sql`SELECT 1 FROM cliente_rede_membros m JOIN customers c ON c.id = m.customer_id
+            WHERE m.customer_id = ${a.customerId} AND COALESCE(c.virtual_service, false) = false LIMIT 1`);
+          if (((rp.rows || []) as any[]).length) return res.status(403).json({ message: 'Unidade presencial de rede: na repescagem, só vendedor externo atende.' });
+        } catch { /* sem tabela de rede */ }
+      }
       const capturadoHoje = !!(a as any).locked && (a as any).lockedDate === today;
       const dono = (a as any).lockedBy || null;
       // LIBERAR: só quem capturou (locked_by) ou um admin.
@@ -2549,7 +2584,20 @@ export function registerRepescagemRoutes(app: Express, opts: {
           for (const r of ord.slice(0, k)) sharedKeep.add(String(r.id));
         }
       }
+      // UNIDADE PRESENCIAL DE REDE (nov/2026): só aparece na rota de VENDEDOR EXTERNO.
+      let redePresencialIds = new Set<string>();
+      try {
+        const vr = await db.select({ role: users.role }).from(users).where(eq(users.id, sellerId));
+        if (String(vr[0]?.role || '') !== 'vendedor' && rawRows.length) {
+          const rp: any = await db.execute(sql`
+            SELECT m.customer_id FROM cliente_rede_membros m JOIN customers c ON c.id = m.customer_id
+             WHERE COALESCE(c.virtual_service, false) = false
+               AND m.customer_id = ANY(string_to_array(${rawRows.map((r: any) => String(r.customer_id)).join(',')}, ','))`);
+          redePresencialIds = new Set(((rp.rows || []) as any[]).map((x: any) => String(x.customer_id)));
+        }
+      } catch (e) { console.warn('[route-overlay][rede]', (e as any)?.message); }
       const rows = rawRows
+        .filter(r => !redePresencialIds.has(String(r.customer_id)))
         .filter(r => r.assigned_user_id === sellerId || r.owner_seller_id === sellerId || sharedKeep.has(String(r.id)))
         .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string, ownerSellerId: (r.owner_seller_id as string) || null,
           captured: !!r.locked && r.locked_date === today, capturedBy: (!!r.locked && r.locked_date === today) ? (r.locked_by || null) : null }));
