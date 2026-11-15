@@ -50,10 +50,33 @@ function ehPreenchimento(local: string, tudo: string): boolean {
 
 export function analisarTelefoneBR(raw: any): AnaliseTelefone {
   const original = String(raw ?? "").trim();
+  const base = analisarNucleo(original);
+  if (base.valido || base.situacao === "vazio") return base;
+  // Campo com mais de um número ("6132632010 / 000000000000") ou DDD repetido pelo
+  // formatador ("(62) (62) 9954-2578", "(62) +5562996311969"): aproveita o 1º número válido.
+  const partes = original.split(/\s*(?:\/|;|,|\||\be\b|\bou\b)\s*/i).map((x) => x.trim()).filter(Boolean);
+  const candidatos: Array<[string, string]> = [];
+  for (const pt of partes) {
+    if (partes.length > 1) candidatos.push([pt, "aproveitou o 1º número válido do campo"]);
+    const m = pt.match(/^\(?\d{2}\)?\s*(?=[(+]|\d{2}\s)(.+)$/);
+    if (m) candidatos.push([m[1], "tirou o DDD repetido"]);
+  }
+  for (const [c, motivo] of candidatos) {
+    const a = analisarNucleo(c);
+    if (a.valido) {
+      const fmt = formatarTelefoneBR(a.digitos);
+      return { ...a, situacao: "corrigir", novo: fmt, motivo: a.situacao === "corrigir" ? `${motivo} + ${a.motivo}` : motivo };
+    }
+  }
+  return base;
+}
+
+function analisarNucleo(original: string): AnaliseTelefone {
   const d0 = soDigitos(original);
   const vazio = (motivo: string, situacao: SituacaoTelefone = "esvaziar"): AnaliseTelefone =>
     ({ situacao, novo: "", digitos: "", tipo: null, valido: false, motivo });
   if (!d0) return vazio("", "vazio");
+  if (/^0+$/.test(d0)) return vazio("número de preenchimento");
 
   let x = d0.replace(/^0+/, "");
   const passos: string[] = [];
