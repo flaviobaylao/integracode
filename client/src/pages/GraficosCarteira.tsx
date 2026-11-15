@@ -33,11 +33,18 @@ type Vend = {
   novosTotal: number; novosValorTotal: number;
   /** mês de conquista -> quem entrou, com o que comprou no período. */
   novosLista?: Record<string, Novo[]>;
+  /** mês da inativação -> quantos saíram da carteira dele. */
+  inativosQtd?: Record<string, number>;
+  inativosTotal?: number;
+  /** mês da inativação -> quem saiu, com o valor da última compra. */
+  inativosLista?: Record<string, Novo[]>;
 };
 type Resp = {
   ok: boolean;
   periodo: { inicio: string; fim: string; meses: string[]; mesCorrente: string };
-  total: Array<{ mes: string; valor: number; novos: number }>;
+  total: Array<{ mes: string; valor: number; novos: number; inativos?: number }>;
+  /** Inativações do período somando TODAS as carteiras. */
+  inativados?: { porMes: Record<string, number>; lista: Record<string, Array<Novo & { vendedor?: string }>>; total: number };
   vendedores: Vend[];
 };
 
@@ -47,6 +54,21 @@ const rotMes = (m: string) => `${MESES_ABREV[Number(m.slice(5, 7)) - 1]}/${m.sli
 const RAMPA_ANO = ["#c3d9f3", "#86b6ef", "#3987e5", "#184f95", "#0c2e5c"];
 // Vendedores: categórico, ordem fixa.
 const CORES = ["#2a78d6", "#eb6834", "#1f8a4c", "#8e4c8a", "#b8901a", "#d03b3b", "#4a3aa7", "#0f8b8d", "#7c8a82", "#c2185b", "#5d4037", "#00897b"];
+// Inativados: vermelho de ESTADO, fora da paleta categórica de propósito — a
+// linha não é "mais um vendedor", é a perda. Com recorte por vendedor vira uma
+// rampa de vermelhos; são poucas linhas, e legenda e tooltip dizem de quem é
+// cada uma. `PREFIXO_INAT` separa a chave da série do nome de um vendedor que
+// por azar se chamasse "Inativados".
+// Medido, não escolhido no olho: #b91c1c e #ef4444 (os vermelhos "óbvios")
+// ficam a ΔE 7 e 3 do #d03b3b da paleta categórica, e o #ef4444 colapsa em
+// cima do laranja #eb6834 sob deuteranopia (ΔE 0,4) — duas linhas diferentes
+// viram a mesma linha. Estes passam longe de todas as categóricas, inclusive
+// simulando deuteranopia e protanopia.
+const VERMELHOS = ["#450a0a", "#7f1d1d", "#fca5a5", "#881337"];
+const PREFIXO_INAT = "\u0000inat\u0000";
+const TODOS_INAT = `${PREFIXO_INAT}__todos__`;
+const ehInat = (k: string) => k.startsWith(PREFIXO_INAT);
+const vendDaInat = (k: string) => k.slice(PREFIXO_INAT.length);
 
 const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const curto = (v: number) => {
@@ -247,12 +269,47 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
   // quando o filtro do topo muda o tamanho da lista.
   const corDe = (n: string) => CORES[Math.max(0, vendedoresTodos.findIndex((v) => v.vendedor === n)) % CORES.length];
 
+  // ── A OUTRA METADE: QUEM SAIU (Flavio, 15/11/2026) ────────────────────────
+  // Ganhou 3 e perdeu 5 no mesmo mês é carteira encolhendo, e o gráfico só
+  // contava o que entrou. A regra de QUANTAS linhas de inativados é dele:
+  //  • filtro em "Toda a Honest" → UMA linha só, da Honest inteira. Ali a
+  //    pergunta é da empresa, e oito linhas vermelhas por cima de oito azuis
+  //    não respondem nada;
+  //  • filtro com vendedor(es) marcado(s) → uma linha por carteira marcada,
+  //    que é quando a pergunta vira "quanto ESTE perdeu".
+  const inatPorMes = data?.inativados?.porMes || {};
+  const inatListaGeral = data?.inativados?.lista || {};
+  const inatDe = (v: Vend, m: string) => (v.inativosQtd && v.inativosQtd[m]) || 0;
+  const linhasInat: string[] = recortado
+    ? vendedores.filter((v) => ativos.includes(v.vendedor)).map((v) => `${PREFIXO_INAT}${v.vendedor}`)
+    : (data?.inativados ? [TODOS_INAT] : []);
+  const corInat = (k: string) => {
+    if (k === TODOS_INAT) return VERMELHOS[0];
+    const i = linhasInat.indexOf(k);
+    return VERMELHOS[(i < 0 ? 0 : i) % VERMELHOS.length];
+  };
+  const rotuloInat = (k: string) => (k === TODOS_INAT ? "Inativados (todas as carteiras)" : `Inativados — ${vendDaInat(k)}`);
+  /** Quantos saíram no mês `m` na série `k`. */
+  const qtdInat = (k: string, m: string) => {
+    if (k === TODOS_INAT) return inatPorMes[m] || 0;
+    const v = vendedores.find((x) => x.vendedor === vendDaInat(k));
+    return v ? inatDe(v, m) : 0;
+  };
+  /** Quem saiu no mês `m` na série `k`, com o valor da última compra. */
+  const listaInat = (k: string, m: string): Novo[] => {
+    if (k === TODOS_INAT) return inatListaGeral[m] || [];
+    const v = vendedores.find((x) => x.vendedor === vendDaInat(k));
+    return (v?.inativosLista && v.inativosLista[m]) || [];
+  };
+
   const pontos = useMemo(() => {
     const vs = vendedores.filter((v) => ativos.includes(v.vendedor));
     if (visao === "anual") {
       return anos.map((a) => {
         const row: any = { rotulo: a + (temParcial && mesCorrente.startsWith(a) ? "*" : "") };
-        for (const v of vs) row[v.vendedor] = meses.filter((m) => m.startsWith(a)).reduce((s, m) => s + valorDe(v, m), 0);
+        const doAno = meses.filter((m) => m.startsWith(a));
+        for (const v of vs) row[v.vendedor] = doAno.reduce((s, m) => s + valorDe(v, m), 0);
+        for (const k of linhasInat) row[k] = doAno.reduce((s, m) => s + qtdInat(k, m), 0);
         return row;
       });
     }
@@ -261,16 +318,17 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
       const row: any = { rotulo: rotMes(m) + (m === mesCorrente ? "*" : "") };
       const ultimo = i === meses.length - 1;
       const penultimo = i === meses.length - 2;
-      for (const v of vs) {
-        const val = valorDe(v, m);
+      const poe = (chave: string, val: number) => {
         if (temParcial) {
-          row[v.vendedor] = ultimo ? null : val;
-          row[`${v.vendedor}__p`] = ultimo || penultimo ? val : null;
-        } else row[v.vendedor] = val;
-      }
+          row[chave] = ultimo ? null : val;
+          row[`${chave}__p`] = ultimo || penultimo ? val : null;
+        } else row[chave] = val;
+      };
+      for (const v of vs) poe(v.vendedor, valorDe(v, m));
+      for (const k of linhasInat) poe(k, qtdInat(k, m));
       return row;
     });
-  }, [vendedores, ativos.join("|"), visao, meses, anos, temParcial, mesCorrente]);
+  }, [vendedores, ativos.join("|"), linhasInat.join("|"), data, visao, meses, anos, temParcial, mesCorrente]);
 
   const fmtEixo = (v: number) => String(v);
 
@@ -293,19 +351,27 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
       <div className="rounded-md border bg-white px-3 py-2 text-xs shadow max-w-[420px] max-h-[60vh] overflow-auto">
         <div className="font-semibold mb-1">{label}</div>
         {itens.map((p: any) => {
-          const v = vendedores.find((x) => x.vendedor === p.nome);
+          const saiu = ehInat(p.nome);
+          const anoDoRotulo = String(label).replace("*", "");
+          const mesesDoAno = meses.filter((m) => m.startsWith(anoDoRotulo));
+          const v = saiu ? undefined : vendedores.find((x) => x.vendedor === p.nome);
           // Na visao ANUAL o ponto soma 12 meses: a relacao sai da uniao deles.
-          const lista: Novo[] = !v ? []
+          const lista: Novo[] = saiu
+            ? (mesReal ? listaInat(p.nome, mesReal)
+                       : mesesDoAno.flatMap((m) => listaInat(p.nome, m)).sort((a, b) => b.valor - a.valor))
+            : !v ? []
             : mesReal ? novosDe(v, mesReal)
-            : meses.filter((m) => m.startsWith(String(label).replace("*", "")))
-                   .flatMap((m) => novosDe(v, m)).sort((a, b) => b.valor - a.valor);
+            : mesesDoAno.flatMap((m) => novosDe(v, m)).sort((a, b) => b.valor - a.valor);
           const somaLista = lista.reduce((s, x) => s + x.valor, 0);
           return (
             <div key={p.nome} className="mb-1.5 last:mb-0">
               <div className="flex justify-between gap-4 font-medium">
-                <span style={{ color: p.cor }}>{p.nome}</span>
+                <span style={{ color: p.cor }}>{saiu ? rotuloInat(p.nome) : p.nome}</span>
                 <span>{p.valor} cliente{p.valor === 1 ? "" : "s"}{somaLista > 0 ? ` · ${brl(somaLista)}` : ""}</span>
               </div>
+              {saiu && lista.length > 0 && (
+                <div className="text-[11px] text-muted-foreground pl-2 italic">valor da última compra de cada um</div>
+              )}
               {lista.slice(0, MAX_TOOLTIP).map((c, i) => (
                 <div key={`${c.nome}-${i}`} className="flex justify-between gap-4 text-[11px] text-muted-foreground pl-2">
                   <span className="truncate">{c.nome}</span>
@@ -326,7 +392,8 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
 
   const tabela = vendedores
     .filter((v) => ativos.includes(v.vendedor))
-    .map((v) => ({ vendedor: v.vendedor, cor: corDe(v.vendedor), valor: totalDe(v), novos: v.novosTotal, novosValor: v.novosValorTotal, carteira: v.total }))
+    .map((v) => ({ vendedor: v.vendedor, cor: corDe(v.vendedor), valor: totalDe(v), novos: v.novosTotal, novosValor: v.novosValorTotal, carteira: v.total,
+                   inativos: v.inativosTotal || 0, saldo: v.novosTotal - (v.inativosTotal || 0) }))
     .sort((a, b) => b.valor - a.valor);
 
   const exportar = () => {
@@ -336,8 +403,11 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
         row[`Fat. ${rotMes(m)}`] = v.fat[m] || 0;
       }
       for (const m of meses) row[`Novos ${rotMes(m)}`] = v.novosQtd[m] || 0;
+      for (const m of meses) row[`Inativados ${rotMes(m)}`] = (v.inativosQtd && v.inativosQtd[m]) || 0;
       row["Faturamento no período"] = v.total;
       row["Clientes novos no período"] = v.novosTotal;
+      row["Inativados no período"] = v.inativosTotal || 0;
+      row["Saldo (novos - inativados)"] = v.novosTotal - (v.inativosTotal || 0);
       row["Faturamento dos clientes novos"] = v.novosValorTotal;
       return row;
     });
@@ -453,11 +523,14 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <CardTitle>Novos clientes por vendedor</CardTitle>
+                  <CardTitle>Novos clientes e inativados por vendedor</CardTitle>
                   <CardDescription>
-                    Quantos clientes novos cada vendedor trouxe por mês (data de conquista: cadastro ou 1ª compra).
-                    Passe o cursor para ver quem entrou e o que cada um comprou no período.
+                    Em azul, quantos clientes novos cada vendedor trouxe por mês (data de conquista: cadastro ou 1ª compra).
+                    Em <b className="text-red-700">vermelho</b>, quantos saíram da carteira no mesmo mês — ganhou alguns, perdeu outros.
+                    {recortado ? " Com vendedor marcado no topo, cada carteira tem a própria linha de inativados." : " Em \u201cToda a Honest\u201d a linha vermelha é uma só, da empresa inteira."}
+                    {" "}Passe o cursor para ver quem entrou (com o que comprou no período) e quem saiu (com o valor da última compra).
                     {temParcial && visao === "mensal" && " O trecho até o mês em curso é tracejado."}
+                    {" "}<span className="text-amber-700">A auditoria de inativação só começou em set/2026; antes disso só aparece a inativação que está valendo hoje no cadastro.</span>
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
@@ -490,6 +563,18 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                     {temParcial && visao === "mensal" && ativos.map((n) => (
                       <Line key={`${n}__p`} type="linear" dataKey={`${n}__p`} stroke={corDe(n)} strokeWidth={2.5} strokeDasharray="6 5" dot={{ r: 3 }} legendType="none" connectNulls={false} isAnimationActive={false} />
                     ))}
+                    {/* Inativados: vermelho e marcador quadrado, para a linha
+                        não se confundir com mais um vendedor nem depender só da
+                        cor para quem enxerga cor de outro jeito. */}
+                    {linhasInat.map((k) => (
+                      <Line key={k} type="linear" dataKey={k} name={rotuloInat(k)} stroke={corInat(k)} strokeWidth={2.5}
+                        dot={{ r: 3.5, strokeWidth: 0, fill: corInat(k) }} activeDot={{ r: 5 }}
+                        connectNulls={false} isAnimationActive={false} />
+                    ))}
+                    {temParcial && visao === "mensal" && linhasInat.map((k) => (
+                      <Line key={`${k}__p`} type="linear" dataKey={`${k}__p`} stroke={corInat(k)} strokeWidth={2.5} strokeDasharray="6 5"
+                        dot={{ r: 3.5, strokeWidth: 0, fill: corInat(k) }} legendType="none" connectNulls={false} isAnimationActive={false} />
+                    ))}
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -500,6 +585,8 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                       <th className="py-1 pr-3">Vendedor</th>
                       <th className="py-1 pr-3 text-right">Faturamento da carteira</th>
                       <th className="py-1 pr-3 text-right">Clientes novos</th>
+                      <th className="py-1 pr-3 text-right">Inativados</th>
+                      <th className="py-1 pr-3 text-right">Saldo</th>
                       <th className="py-1 pr-3 text-right">Faturamento dos novos</th>
                     </tr>
                   </thead>
@@ -509,6 +596,10 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                         <td className="py-1 pr-3"><span className="inline-block w-3 h-3 rounded-full mr-2 align-middle" style={{ background: t.cor }} />{t.vendedor}</td>
                         <td className="py-1 pr-3 text-right">{brl(t.carteira)}</td>
                         <td className="py-1 pr-3 text-right">{t.novos}</td>
+                        <td className="py-1 pr-3 text-right text-red-700">{t.inativos || "—"}</td>
+                        <td className={`py-1 pr-3 text-right font-medium ${t.saldo > 0 ? "text-emerald-700" : t.saldo < 0 ? "text-red-700" : ""}`}>
+                          {t.saldo > 0 ? `+${t.saldo}` : t.saldo}
+                        </td>
                         <td className="py-1 pr-3 text-right">{brl(t.novosValor)}</td>
                       </tr>
                     ))}
@@ -520,6 +611,10 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                   <b>{recortado
                     ? vendedores.reduce((s, v) => s + (v.novosTotal || 0), 0)
                     : (data.total || []).reduce((s, t) => s + t.novos, 0)}</b>.
+                  {" "}Inativados no mesmo período:{" "}
+                  <b className="text-red-700">{recortado
+                    ? vendedores.reduce((s, v) => s + (v.inativosTotal || 0), 0)
+                    : (data.inativados?.total || 0)}</b>.
                 </p>
               </div>
             </CardContent>
