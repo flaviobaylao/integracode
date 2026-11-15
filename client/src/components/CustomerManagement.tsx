@@ -392,8 +392,8 @@ export default function CustomerManagement() {
     // Filtro por positivação
     const matchesPositivation = positivationFilter === 'all' ||
                                (positivationFilter === 'yes' && customer.isPositivatedThisMonth === true) ||
-                               // 🔒 Quarentena (isPositivatedThisMonth = null) não conta como "não positivado".
-                               (positivationFilter === 'no' && (customer as any).isPositivatedThisMonth === false);
+                               // nov/2026: quarentena (isPositivatedThisMonth = null) aparece como NÃO na coluna e no filtro.
+                               (positivationFilter === 'no' && (customer as any).isPositivatedThisMonth !== true);
     
     const matchesSellerMulti = multiMatch(sellerMulti, resolveSeller((customer as any).sellerName || customer.sellerId));
     const matchesSegment = multiMatch(segmentMulti, customer.segmentoPrincipal || '(Sem segmento)');
@@ -832,9 +832,7 @@ export default function CustomerManagement() {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
-                        {(customer as any).emQuarentena ? (
-                          <span className="font-semibold text-gray-500" title="Início do fornecimento futuro: não entra na positivação até a data de início">QUARENTENA</span>
-                        ) : customer.isPositivatedThisMonth ? (
+                        {customer.isPositivatedThisMonth === true ? (
                           <span className="font-semibold text-green-600">SIM</span>
                         ) : (
                           <span className="font-semibold text-red-600">NÃO</span>
