@@ -433,9 +433,13 @@ export default function DossieVendedor() {
           período e vendedor sem perder o lugar na lista.
           Fundo SÓLIDO e z-50 (14/11/2026): com fundo translúcido a barra ficava
           ilegível por cima das tabelas brancas e parecia ter sumido, e o z-30
-          empatava com os cabeçalhos colados das tabelas de dentro dos cards. */}
-      <div className="sticky top-0 z-50 -mx-1 px-1 pt-1 pb-2 bg-slate-50 shadow-[0_6px_10px_-8px_rgba(0,0,0,0.45)]">
-        <Card>
+          empatava com os cabeçalhos colados das tabelas de dentro dos cards.
+          VERDE CLARO (15/11/2026, Flavio): todo o resto da tela é card branco
+          sobre cinza, então uma barra cinza colada no topo se confundia com o
+          fundo e com os cabeçalhos das tabelas. O verde não é enfeite — é o que
+          diz "isto aqui manda no que está embaixo" enquanto a página rola. */}
+      <div className="sticky top-0 z-50 -mx-1 px-1 pt-1 pb-2 bg-emerald-50 shadow-[0_6px_10px_-8px_rgba(0,0,0,0.45)]">
+        <Card className="bg-emerald-50 border-emerald-300">
           <CardContent className="pt-4 flex flex-wrap items-end gap-3">
             <div>
               <label className="text-xs text-muted-foreground block">De (mês)</label>
