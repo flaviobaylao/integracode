@@ -505,12 +505,41 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                     <>
                       <Legend />
                       {anosComp.map((a, i) => (
-                        <Bar key={a} dataKey={a} name={a} fill={RAMPA_ANO[Math.max(0, RAMPA_ANO.length - anosComp.length + i)]} isAnimationActive={false} />
+                        <Bar key={a} dataKey={a} name={a} fill={RAMPA_ANO[Math.max(0, RAMPA_ANO.length - anosComp.length + i)]} isAnimationActive={false}>
+                          {/* O valor fica escrito na barra (Flavio, 15/11/2026):
+                              ler o gráfico não pode depender de passar o cursor
+                              barra por barra. Desenhado à mão em vez de pelo
+                              `formatter`: o LabelList limita o texto à largura
+                              da barra e quebrava "335 mil" em duas linhas nas 24
+                              barras do comparativo. Barra estreita demais para o
+                              número (menos de 26px) fica sem rótulo, que é
+                              melhor do que dois números embolados. */}
+                          <LabelList dataKey={a} content={(props: any) => {
+                            const { x, y, width, value } = props;
+                            if (value === null || value === undefined || !Number(value)) return null;
+                            if (Number(width) < 26) return null;
+                            return (
+                              <text x={Number(x) + Number(width) / 2} y={Number(y) - 4} textAnchor="middle"
+                                fontSize={10} fill="#475569">{curto(Number(value))}</text>
+                            );
+                          }} />
+                        </Bar>
                       ))}
                     </>
                   ) : (
                     <Bar dataKey="valor" name="Faturamento" fill="#2a78d6" isAnimationActive={false}>
-                      <LabelList dataKey="valor" position="top" formatter={(v: any) => curto(Number(v))} style={{ fontSize: 11, fill: "#475569" }} />
+                      {/* Mesmo rótulo desenhado à mão do comparativo: em "Tudo"
+                          são 23 meses, e aí o LabelList também quebrava
+                          "159 mil" em duas linhas. */}
+                      <LabelList dataKey="valor" content={(props: any) => {
+                        const { x, y, width, value } = props;
+                        if (value === null || value === undefined || !Number(value)) return null;
+                        if (Number(width) < 26) return null;
+                        return (
+                          <text x={Number(x) + Number(width) / 2} y={Number(y) - 4} textAnchor="middle"
+                            fontSize={11} fill="#475569">{curto(Number(value))}</text>
+                        );
+                      }} />
                     </Bar>
                   )}
                 </BarChart>
