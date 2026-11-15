@@ -259,7 +259,9 @@ export default function ActiveCustomers() {
   const [dayMulti, setDayMulti] = useState<string[]>([]);
   const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
   const [selectedSemana, setSelectedSemana] = useState<string>("");
-  const [selectedDate, setSelectedDate] = useState<string>("");
+  // nov/2026: filtro de data = PERÍODO (de/até) da ÚLTIMA COMPRA do cliente.
+  const [compraDe, setCompraDe] = useState<string>("");
+  const [compraAte, setCompraAte] = useState<string>("");
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
@@ -864,8 +866,18 @@ export default function ActiveCustomers() {
       const matchesVirtualType = !selectedVirtualType || 
         (selectedVirtualType === "virtual" ? ac.customer?.virtualService === true : ac.customer?.virtualService === false);
       
-      // Filtro de data - verificar se cliente tem visita agendada para aquele dia
-      const matchesDate = !selectedDate || ac.nextThreeVisits.some(v => v.date === selectedDate);
+      // Filtro de período (de/até) pela DATA DA ÚLTIMA COMPRA — mesmo dia mostrado na coluna "Última Compra".
+      let matchesDate = true;
+      if (compraDe || compraAte) {
+        const lc = ac.customer?.lastActivityDate;
+        const dt = lc ? new Date(lc) : null;
+        if (!dt || isNaN(dt.getTime())) matchesDate = false;
+        else {
+          const dia = format(dt, 'yyyy-MM-dd');
+          const [ini, fim] = compraDe && compraAte && compraDe > compraAte ? [compraAte, compraDe] : [compraDe, compraAte];
+          matchesDate = (!ini || dia >= ini) && (!fim || dia <= fim);
+        }
+      }
       
       // Filtro de positivação
       const matchesPositivation = !selectedPositivation || 
@@ -1294,13 +1306,28 @@ export default function ActiveCustomers() {
 
               <MultiSelect label="Bairro" options={neighborhoods} selected={neighborhoodMulti} onChange={setNeighborhoodMulti} testId="filter-neighborhood-active" />
 
-              <Input
-                type="date"
-                value={selectedDate}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSelectedDate(e.target.value)}
-                className="w-[130px] h-9"
-                data-testid="input-date-filter"
-              />
+              <div className="flex items-center gap-1" title="Filtra pela data da ÚLTIMA COMPRA do cliente">
+                <span className="text-xs text-muted-foreground whitespace-nowrap">Última compra:</span>
+                <Input
+                  type="date"
+                  value={compraDe}
+                  max={compraAte || undefined}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCompraDe(e.target.value)}
+                  className="w-[135px] h-9"
+                  aria-label="Última compra — de"
+                  data-testid="input-ultima-compra-de"
+                />
+                <span className="text-xs text-muted-foreground">até</span>
+                <Input
+                  type="date"
+                  value={compraAte}
+                  min={compraDe || undefined}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCompraAte(e.target.value)}
+                  className="w-[135px] h-9"
+                  aria-label="Última compra — até"
+                  data-testid="input-ultima-compra-ate"
+                />
+              </div>
               
               <Button
                 variant="outline"
@@ -1312,7 +1339,8 @@ export default function ActiveCustomers() {
                   setSelectedVirtualType("");
                   setSelectedPeriodicity("");
                   setSelectedSemana("");
-                  setSelectedDate("");
+                  setCompraDe("");
+                  setCompraAte("");
                   setSelectedPositivation("");
                   setCityMulti([]);
                   setNeighborhoodMulti([]);
