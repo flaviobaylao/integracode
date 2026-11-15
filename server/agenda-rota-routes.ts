@@ -58,6 +58,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
+import { escopoRestrito } from "./escopo-carteira";
 import { cteNotasVenda, MES_NFE_INTEGRA } from "./faturamento-carteira";
 
 const TZ = "America/Sao_Paulo";
@@ -182,7 +183,7 @@ export function registerAgendaRota(app: Express) {
     try {
       const usuario: any = (req as any)?.currentUser || (req as any)?.user || null;
       const papel = String(usuario?.role || "");
-      const restrito = ["vendedor", "telemarketing"].includes(papel);
+      const restrito = escopoRestrito(papel);
       // Vendedor so' enxerga a propria agenda, nao importa o que venha na query.
       const sellerId = restrito
         ? String(usuario?.id || "")
@@ -532,7 +533,7 @@ export function registerAgendaRota(app: Express) {
     try {
       const usuario: any = (req as any)?.currentUser || (req as any)?.user || null;
       const papel = String(usuario?.role || "");
-      const restrito = ["vendedor", "telemarketing"].includes(papel);
+      const restrito = escopoRestrito(papel);
       const pedido = String((req.body || {}).sellerId || "").replace(/[^A-Za-z0-9_-]/g, "");
       const sellerId = restrito ? String(usuario?.id || "") : pedido;
       if (!sellerId) return res.status(400).json({ ok: false, error: "Escolha um vendedor." });

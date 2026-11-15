@@ -25,6 +25,7 @@ import { authenticateUser } from "./authMiddleware";
 import { normalizeUf, ufFromCep } from "./cep-uf";
 import { normalizarSemana } from "@shared/visitSchedule";
 import { normalizeWeekdayInput } from "@shared/schema";
+import { escopoRestrito } from "./escopo-carteira";
 
 const TZ = "America/Sao_Paulo";
 
@@ -109,7 +110,7 @@ const CHAVE_CADASTRO = `COALESCE(
 function escopo(req: any) {
   const usuario: any = req?.currentUser || req?.user || null;
   const papel = String(usuario?.role || "");
-  const restrito = ["vendedor", "telemarketing"].includes(papel);
+  const restrito = escopoRestrito(papel);
   const limpa = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
   const ids: string[] = [];
   if (restrito) {

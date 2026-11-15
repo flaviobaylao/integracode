@@ -27,6 +27,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import { computeCarteiraClientes } from "./carteira-routes";
+import { escopoRestrito } from "./escopo-carteira";
 
 const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
 const limpa = (x: any) => String(x ?? "").replace(/[^A-Za-z0-9_-]/g, "");
@@ -64,7 +65,7 @@ export function registerDossieVendedor(app: Express) {
       ano = Number(fimAno.slice(0, 4));
 
       const usuario: any = (req as any).currentUser || (req as any).user || null;
-      const restrito = ["vendedor", "telemarketing"].includes(String(usuario?.role || ""));
+      const restrito = escopoRestrito(usuario?.role);
 
       // ── usuários e mapa "qualquer id de vendedor" → id do usuário ─────────
       const users = await q(`SELECT id, first_name, last_name, email, role::text AS role, is_active,

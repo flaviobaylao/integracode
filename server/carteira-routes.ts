@@ -30,6 +30,7 @@ import { registerCarteiraReclassificacao } from "./carteira-reclassificacao-rout
 import { registerAgendaRota } from "./agenda-rota-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
 import { registerDossieVendedor } from "./dossie-vendedor-routes";
+import { escopoRestrito } from "./escopo-carteira";
 
 const TZ = "America/Sao_Paulo";
 
@@ -167,7 +168,7 @@ export const CLASSES_ORDEM: string[] = CLASSE_LETRAS.flatMap((l) => [`${l}+`, `$
 function escopoDoUsuario(req: any) {
   const usuario: any = req?.currentUser || req?.user || null;
   const papel = String(usuario?.role || "");
-  const restrito = ["vendedor", "telemarketing"].includes(papel);
+  const restrito = escopoRestrito(papel);
   const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
   const idsCarteira: string[] = [];
   if (restrito) {
@@ -936,7 +937,7 @@ export function registerCarteira(app: Express) {
       const fimBruto = normMes(req.query.fim, hoje);
       const fim = fimBruto > hoje ? hoje : fimBruto;
       const usuario: any = (req as any).currentUser || (req as any).user || null;
-      const restrito = ["vendedor", "telemarketing"].includes(String(usuario?.role || ""));
+      const restrito = escopoRestrito(usuario?.role);
       const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
       const idsCarteira: string[] = [];
       if (restrito) {
@@ -959,15 +960,40 @@ export function registerCarteira(app: Express) {
       // e não diz QUAIS obriga a sair da tela para descobrir.
       type Novo = { nome: string; valor: number };
       type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number; novosLista: Record<string, Novo[]>;
-                   inativosQtd: Record<string, number>; inativosTotal: number; inativosLista: Record<string, Novo[]> };
+                   inativosQtd: Record<string, number>; inativosTotal: number; inativosLista: Record<string, Novo[]>; inativosFat: number };
       const porVend = new Map<string, Acc>();
       const novosTotalMes: Record<string, number> = {};
       const acc = (v: string): Acc => {
         let a = porVend.get(v);
         if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0, novosLista: {},
-                        inativosQtd: {}, inativosTotal: 0, inativosLista: {} }; porVend.set(v, a); }
+                        inativosQtd: {}, inativosTotal: 0, inativosLista: {}, inativosFat: 0 }; porVend.set(v, a); }
         return a;
       };
+      // ── REZONEADO NÃO É CLIENTE NOVO (Flavio, 15/11/2026) ─────────────────
+      // "Novo" aqui era quem ENTROU NA HONEST no período, e a carteira de hoje
+      // levava o crédito. Isso dava o crédito errado: cliente cadastrado em
+      // março para a Leticia e passado para o Gilmar em junho contava como
+      // conquista do Gilmar em março — mês em que ele nem atendia o cliente.
+      // Agora quem chegou por transferência sai da conta: novo é só o que foi
+      // cadastrado JÁ na carteira de quem está recebendo o crédito.
+      //
+      // COBERTURA: a auditoria de troca de vendedor (`customer_change_history`,
+      // campo sellerId) só começou em set/2026 e só registra troca manual. Um
+      // rezoneamento anterior a isso, ou feito por sincronização, não deixou
+      // rastro e ainda pode entrar como novo. Para o caso que importa — cliente
+      // cadastrado DENTRO do período, portanto recente — a cobertura é boa,
+      // porque a transferência dele também seria recente.
+      const rezoneados = new Set<string>();
+      try {
+        const consultaRez = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+        for (const r of await consultaRez(`SELECT DISTINCT customer_id::text AS cid FROM customer_change_history WHERE field = 'sellerId'`)) {
+          if (r.cid) rezoneados.add(String(r.cid));
+        }
+      } catch (e: any) {
+        console.warn("[carteira-graficos] historico de rezoneamento indisponivel:", e?.message || e);
+      }
+      let novosIgnoradosPorRezone = 0;
+
       for (const c of clientes) {
         const a = acc(String(c.vendedor || "Sem vendedor"));
         const pm: Record<string, number> = c.porMes || {};
@@ -976,7 +1002,9 @@ export function registerCarteira(app: Express) {
           if (val) { a.fat[m] = (a.fat[m] || 0) + val; a.total += val; }
         }
         const mc = String(c.conquista || "").slice(0, 7);
-        if (mc && mc >= inicio && mc <= fim) {
+        const veioDeOutraCarteira = !!c.customerId && rezoneados.has(String(c.customerId));
+        if (mc && mc >= inicio && mc <= fim && veioDeOutraCarteira) novosIgnoradosPorRezone++;
+        if (mc && mc >= inicio && mc <= fim && !veioDeOutraCarteira) {
           a.novosQtd[mc] = (a.novosQtd[mc] || 0) + 1;
           a.novosTotal++;
           novosTotalMes[mc] = (novosTotalMes[mc] || 0) + 1;
@@ -1006,6 +1034,15 @@ export function registerCarteira(app: Express) {
       type Perda = { nome: string; valor: number; vendedor: string };
       const inativosPorMes: Record<string, number> = {};
       const inativosLista: Record<string, Perda[]> = {};
+      // Quanto os inativados faturaram NO PERÍODO (Flavio, 15/11/2026). É outra
+      // pergunta que o valor da última compra: aquele é "de quanto era o último
+      // pedido", este é "quanto deixa de entrar por ano se eles não voltarem".
+      // Quem não faturou nada no período entra como zero, que é o certo.
+      let inativosFatGeral = 0;
+      const fatNoPeriodoPorDoc = new Map<string, number>();
+      for (const c of clientes) {
+        if (c.doc) fatNoPeriodoPorDoc.set(String(c.doc), (fatNoPeriodoPorDoc.get(String(c.doc)) || 0) + (Number(c.total) || 0));
+      }
       try {
         const consulta = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
         const inatRows = await consulta(`
@@ -1049,9 +1086,12 @@ export function registerCarteira(app: Express) {
           const perda: Perda = { nome: String(r.nome || "(sem nome)"), valor: Math.round((ult?.valorUltima || 0) * 100) / 100, vendedor };
           inativosPorMes[mes] = (inativosPorMes[mes] || 0) + 1;
           (inativosLista[mes] = inativosLista[mes] || []).push(perda);
+          const fatPeriodo = r.doc ? (fatNoPeriodoPorDoc.get(String(r.doc)) || 0) : 0;
+          inativosFatGeral += fatPeriodo;
           const a = acc(vendedor);
           a.inativosQtd[mes] = (a.inativosQtd[mes] || 0) + 1;
           a.inativosTotal++;
+          a.inativosFat += fatPeriodo;
           (a.inativosLista[mes] = a.inativosLista[mes] || []).push({ nome: perda.nome, valor: perda.valor });
         }
       } catch (e: any) {
@@ -1070,7 +1110,11 @@ export function registerCarteira(app: Express) {
         total: meses.map((m) => ({ mes: m, valor: recPorMes.get(m) || 0, novos: novosTotalMes[m] || 0, inativos: inativosPorMes[m] || 0 })),
         // A linha ÚNICA de inativados, para quando a tela não está recortada por
         // vendedor: ali a pergunta é da Honest inteira, não de cada carteira.
-        inativados: { porMes: inativosPorMes, lista: inativosLista, total: Object.values(inativosPorMes).reduce((x, y) => x + y, 0) },
+        inativados: { porMes: inativosPorMes, lista: inativosLista, total: Object.values(inativosPorMes).reduce((x, y) => x + y, 0),
+                      fat: Math.round(inativosFatGeral * 100) / 100 },
+        // Quantos deixaram de contar como novos por terem chegado de outra
+        // carteira: a tela mostra o número, senão a queda fica inexplicada.
+        rezoneadosForaDosNovos: novosIgnoradosPorRezone,
         vendedores: Array.from(porVend.values()).map((a) => {
           // Maior comprador primeiro: num mês com 40 entradas o tooltip mostra
           // as primeiras e resume o resto, e as primeiras têm que ser as que
@@ -1101,7 +1145,7 @@ export function registerCarteira(app: Express) {
       // recebe os clientes dele. Os demais papeis continuam vendo tudo.
       const usuario: any = (req as any).currentUser || (req as any).user || null;
       const papel = String(usuario?.role || "");
-      const restrito = ["vendedor", "telemarketing"].includes(papel);
+      const restrito = escopoRestrito(papel);
       const limpaId = (x: any) => String(x || "").replace(/[^A-Za-z0-9_-]/g, "");
       const idsCarteira: string[] = [];
       if (restrito) {
