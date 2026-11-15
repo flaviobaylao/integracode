@@ -72,6 +72,22 @@ const isHiddenRouteSeller = (s: any): boolean => {
 
 // 🧾 "21/09/2026 - R$ 260,40 (Seg-3ªSem-40 dias)": data do último faturamento com o dia da semana e a
 // semana do mês — mesma contagem da Semana de Atendimento do cadastro (semana pela segunda-feira).
+// 📅 Semana do mês do cliente quinzenal/mensal (nov/2026): usa a Semana de Atendimento do cadastro
+// ("2ª e 4ª do mês", "3ª do mês"…). Quando o cadastro está como "toda semana", mostra a semana do
+// mês do DIA da rota (mesma contagem do cadastro, pela segunda-feira) — ex.: "3ª semana do mês".
+// Semanal com "toda semana" não leva rótulo (vale toda semana).
+function rotuloSemanaDoCiclo(periodicidade: any, semana: any, dataIso?: string | null): string {
+  const s = normalizarSemana(semana);
+  if (s !== 'toda') return ROTULO_SEMANA[s] || '';
+  const p = String(periodicidade || '').toLowerCase();
+  if (!p || p.includes('seman')) return '';
+  if (!dataIso || !/^\d{4}-\d{2}-\d{2}$/.test(dataIso)) return '';
+  try {
+    const [y, m, d] = dataIso.split('-').map(Number);
+    return `${semanaDoMesDaData(new Date(y, m - 1, d)).n}ª semana do mês`;
+  } catch { return ''; }
+}
+
 function formatUltimoFaturamento(lo: { date: string; value: number; dia?: string } | null | undefined): string {
   if (!lo) return 'Sem registro';
   let d: Date;
@@ -2483,7 +2499,7 @@ export default function RotaDoDia() {
                           {formatWeekdaysLocal(r.weekdays)}
                           {r.weekdays && r.weekdays.length && r.visitPeriodicity ? ' • ' : ''}
                           {formatPeriodicity(r.visitPeriodicity)}
-                          {` • ${ROTULO_SEMANA[normalizarSemana((r as any).semanaAtendimento)]}`}
+                          {(() => { const rot = rotuloSemanaDoCiclo(r.visitPeriodicity, (r as any).semanaAtendimento); return rot ? ` • ${rot}` : ''; })()}
                         </p>
                       )}
                       </>)}
@@ -3176,7 +3192,7 @@ export default function RotaDoDia() {
                                 {(visit as any).weekdays && (visit as any).visitPeriodicity && ' • '}
                                 {formatPeriodicity((visit as any).visitPeriodicity)}
                                 {/* Semana do mês do cadastro (Semana de Atendimento) logo após a periodicidade */}
-                                {` • ${ROTULO_SEMANA[normalizarSemana((visit as any).semanaAtendimento)]}`}
+                                {(() => { const rot = rotuloSemanaDoCiclo((visit as any).visitPeriodicity, (visit as any).semanaAtendimento, selectedDate); return rot ? ` • ${rot}` : ''; })()}
                               </p>
                             )}
 
@@ -3590,7 +3606,8 @@ export default function RotaDoDia() {
                                   )}
                                   {visit.customerId && (
                                     <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
-                                      🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || '') || '—'}
+                                      🔄 Periodicidade de compra: {formatPeriodicity(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity || '') || '—'}
+                                      {(() => { const rot = rotuloSemanaDoCiclo(customerInfo?.periodicity?.[visit.customerId] || (visit as any).visitPeriodicity, (visit as any).semanaAtendimento, selectedDate); return rot ? ` (${rot})` : ''; })()}
                                       {' • '}
                                       📅 Dia de rota: {formatWeekdaysLocal((visit as any).weekdays) || '—'}
                                       {' • '}
