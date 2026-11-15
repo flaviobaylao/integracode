@@ -7868,7 +7868,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let _travaTelefoneErro: { message: string; code: string } | null = null;
     try {
       if ((data as any).status === 'completed' && Number((data as any).saleValue) > 0 && cardBefore && cardBefore.customerId) {
-        const _reqPhone = String((req.body && req.body.customerPhone) || '').trim();
+        const { analisarTelefoneBR: _analisarTel } = await import('../shared/telefone');
+        let _reqPhone = String((req.body && req.body.customerPhone) || '').trim();
+        // 📞 nov/2026: telefone digitado no pedido entra já no padrão (sem +55, com o 9 do celular).
+        { const _an = _analisarTel(_reqPhone); if (_an.situacao === 'corrigir') _reqPhone = _an.novo; }
         const _custPh: any = await storage.getCustomer(cardBefore.customerId);
         // 👤 RESPONSÁVEL pelo telefone informado no pedido → grava no cadastro (customers.contact).
         try {
@@ -7895,8 +7898,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           || _placeholders.has(d)
           || /^(\d{2})?0{8,}$/.test(d)
           || (!!_sellerDigits && _sellerDigits.length >= 10 && d === _sellerDigits);
-        const _phValid = _phDigits.length >= 10 && _phDigits.length <= 13 && !_isFakePhone(_phDigits);
-        if (!_phValid) {
+        // nov/2026: além do anti-falso, o número tem de estar no padrão (DDD válido, celular com 9 ou fixo).
+        const _phValid = _phDigits.length >= 10 && _phDigits.length <= 13 && !_isFakePhone(_phDigits) && _analisarTel(_effPhone).valido;
+        // 👤 nov/2026: sem RESPONSÁVEL pelo telefone (no pedido ou no cadastro) o pedido não é implantado.
+        let _semResponsavel = false;
+        try { const { limparResponsavel: _lr } = await import('./responsavel-telefone'); _semResponsavel = !_lr(_custPh && _custPh.contact); } catch { _semResponsavel = false; }
+        if (_phValid && _semResponsavel) {
+          console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, 'cliente', cardBefore.customerId, '- sem responsável pelo telefone');
+          _travaTelefoneErro = { message: 'Para implantar o pedido é obrigatório informar o NOME DO RESPONSÁVEL pelo telefone do comprador (campo ao lado do telefone).', code: 'CUSTOMER_CONTACT_REQUIRED' };
+        } else if (!_phValid) {
           console.log('🔒 [TRAVA-TELEFONE] Bloqueado card', id, 'cliente', cardBefore.customerId, '- telefone ausente/invalido/falso:', JSON.stringify(_effPhone));
           _travaTelefoneErro = { message: 'Para finalizar a venda é obrigatório um telefone de contato VÁLIDO do comprador (DDD + número real). Números repetidos, sequências ou o telefone do próprio vendedor não são aceitos. Confira o campo "Telefone do comprador".', code: 'CUSTOMER_PHONE_REQUIRED' };
         } else {
@@ -16807,6 +16817,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Use items as products for backward compatibility
       const products = items || req.body.products;
+
+      // 🔒 nov/2026 (regra do Flávio): sem TELEFONE válido e sem RESPONSÁVEL o pedido não é implantado.
+      // Vale também para "Retomar rascunho" (este endpoint). O que vier no pedido grava no cadastro.
+      try {
+        const _cardTel: any = await storage.getSalesCard(id);
+        const _volume = Number(totalValue) > 0 || (Array.isArray(products) && products.length > 0);
+        if (_cardTel && _cardTel.customerId && _volume) {
+          const { analisarTelefoneBR } = await import('../shared/telefone');
+          const { limparResponsavel } = await import('./responsavel-telefone');
+          const _cli: any = await storage.getCustomer(_cardTel.customerId);
+          const _aReq = analisarTelefoneBR(req.body?.customerPhone);
+          const _aCad = analisarTelefoneBR(_cli?.phone);
+          const _respReq = limparResponsavel(req.body?.customerContact);
+          const _telFinal = _aReq.valido ? _aReq.novo : (_aCad.valido ? _aCad.novo : '');
+          const _respFinal = _respReq || limparResponsavel(_cli?.contact);
+          if (!_telFinal) {
+            return res.status(400).json({ code: 'CUSTOMER_PHONE_REQUIRED', message: 'Para implantar o pedido é obrigatório o TELEFONE do comprador (DDD + número válido). Preencha o campo "Telefone do comprador".' });
+          }
+          if (!_respFinal) {
+            return res.status(400).json({ code: 'CUSTOMER_CONTACT_REQUIRED', message: 'Para implantar o pedido é obrigatório o NOME DO RESPONSÁVEL pelo telefone do comprador.' });
+          }
+          const _patch: any = {};
+          if (_aReq.valido && _aReq.digitos !== _aCad.digitos) _patch.phone = _aReq.novo;
+          if (_respReq && _respReq !== limparResponsavel(_cli?.contact)) _patch.contact = _respReq;
+          if (Object.keys(_patch).length) {
+            const _before = { ..._cli };
+            await storage.updateCustomer(_cardTel.customerId, _patch);
+            try {
+              const _u: any = req.user || {};
+              await logCustomerChanges({ customerId: _cardTel.customerId, before: _before, changes: _patch, actor: { id: _u.id, name: [_u.firstName, _u.lastName].filter(Boolean).join(' ').trim() || _u.email }, source: 'pedido' });
+            } catch (_eLog) { /* histórico não bloqueia */ }
+            if (_patch.phone) {
+              void triggerPhoneConfirmation(_cardTel.customerId, _patch.phone, _cli?.fantasyName || _cli?.name || null, (req.user as any)?.id).catch(() => {});
+            }
+          }
+        }
+      } catch (_eTel: any) { console.warn('[TRAVA-TELEFONE finalize-sale] erro (ignorado):', _eTel?.message); }
 
       console.log('Finalizing sale for card:', id);
       console.log('Sale data:', { products, totalValue, orderNumber, operationType });
