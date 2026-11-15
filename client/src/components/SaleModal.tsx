@@ -1,6 +1,8 @@
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 import { prepararFotoSegura } from "@/lib/fotoSegura";
 import { useState, useEffect, useMemo } from 'react';
+import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -124,6 +126,31 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   // para quem tem pontos cadastrados na rede; para todo o resto o seletor nem
   // aparece e o pedido segue como sempre.
   const [deliveryPointId, setDeliveryPointId] = useState<string>('');
+  // 📞 nov/2026: telefone + responsável do comprador obrigatórios para implantar o pedido.
+  const [telComprador, setTelComprador] = useState('');
+  const [respComprador, setRespComprador] = useState('');
+  useEffect(() => {
+    const cu: any = (salesCard as any)?.customer || {};
+    const a = analisarTelefoneBR(cu.phone);
+    setTelComprador(a.valido ? a.novo : '');
+    setRespComprador(String(cu.contact || ''));
+  }, [(salesCard as any)?.id]);
+  const validarComprador = (): boolean => {
+    if (!analisarTelefoneBR(telComprador).valido) {
+      toast({ title: 'Telefone do comprador obrigatório', description: 'Informe um telefone válido: celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX.', variant: 'destructive' });
+      return false;
+    }
+    const r = respComprador.replace(/\s+/g, ' ').trim();
+    if (r.length < 2 || !/[A-Za-zÀ-ÿ]/.test(r)) {
+      toast({ title: 'Responsável obrigatório', description: 'Informe o nome do responsável pelo telefone do comprador.', variant: 'destructive' });
+      return false;
+    }
+    return true;
+  };
+  const dadosComprador = () => {
+    const a = analisarTelefoneBR(telComprador);
+    return { customerPhone: a.valido ? a.novo : telComprador.trim(), customerContact: respComprador.replace(/\s+/g, ' ').trim() };
+  };
   const { data: pontosRede } = useQuery<any>({
     queryKey: ['/api/carteira/redes/pontos-do-cliente', customerId],
     enabled: !!customerId && isOpen,
@@ -795,6 +822,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Confirmar venda
   const confirmSale = async () => {
+    if (!validarComprador()) return;
     // Atualizar weekdays do cliente se admin alterou
     await updateCustomerWeekdaysIfChanged();
     
@@ -814,7 +842,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       // Ponto de entrega sem CNPJ escolhido acima (vazio = entrega no endereço do cadastro)
       deliveryPointId: deliveryPointId || null,
       // Salvar configurações para reutilização
-      saveForReuse: true
+      saveForReuse: true,
+      ...dadosComprador(),
     };
 
     finalizeSaleMutation.mutate(saleData);
@@ -847,6 +876,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
 
   // Fazer checkout
   const handleCheckout = async () => {
+    if (!validarComprador()) return;
     // Atualizar weekdays do cliente se admin alterou
     await updateCustomerWeekdaysIfChanged();
     
@@ -864,7 +894,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
       exclusiveVehicle,
       vehicleTypes,
       deliveryPointId: deliveryPointId || null,
-      saveForReuse: true
+      saveForReuse: true,
+      ...dadosComprador(),
     };
 
     // Troca: enviar a(s) foto(s) dos produtos ANTES de finalizar (se falhar, aborta).
@@ -933,6 +964,18 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                   <CardContent>
                     <div className="space-y-3">
                       <div><strong>Cliente:</strong> {(salesCard as any).customer?.fantasyName || (salesCard as any).customer?.name}</div>
+                      <div className="rounded-md border border-amber-300 bg-amber-50 p-2 space-y-1" data-testid="bloco-telefone-comprador">
+                        <div className="text-sm font-semibold flex items-center gap-1"><Phone className="h-4 w-4" /> Telefone e responsável do comprador *</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <Input type="tel" inputMode="numeric" value={telComprador} onChange={(e) => setTelComprador(e.target.value)}
+                            onBlur={() => { const a = analisarTelefoneBR(telComprador); if (a.situacao === 'corrigir') setTelComprador(a.novo); }}
+                            placeholder="(DDD) 9XXXX-XXXX" data-testid="input-tel-comprador" />
+                          <Input value={respComprador} onChange={(e) => setRespComprador(e.target.value)} maxLength={120}
+                            placeholder="Responsável (comprador) *" data-testid="input-resp-comprador" />
+                        </div>
+                        <ContactPickerButton onPick={({ nome, telefone }) => { if (telefone) setTelComprador(telefone); if (nome) setRespComprador(nome); }} />
+                        <p className="text-xs text-amber-900">Obrigatório para implantar o pedido. O que for informado aqui atualiza o cadastro do cliente.</p>
+                      </div>
                       <div><strong>Vendedor:</strong> {(salesCard as any).seller?.firstName} {(salesCard as any).seller?.lastName}</div>
                       <div><strong>Número do Pedido:</strong> HS-{Date.now()}</div>
                       <div><strong>Pagamento:</strong> {PAYMENT_METHOD_LABELS[paymentMethod]}</div>

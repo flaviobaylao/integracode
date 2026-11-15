@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -746,6 +747,15 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
       toast({
         title: "Telefone inválido",
         description: "Informe um número real do cliente. Números repetidos, sequências ou o telefone do próprio vendedor não são aceitos.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // 📞 nov/2026: número tem de estar no padrão (DDD válido; celular com 9 ou fixo).
+    if (!analisarTelefoneBR(customerPhone).valido) {
+      toast({
+        title: "Telefone inválido",
+        description: "Confira o DDD e o número. Celular: (DDD) 9XXXX-XXXX · Fixo: (DDD) XXXX-XXXX.",
         variant: "destructive",
       });
       return;
@@ -1653,6 +1663,7 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                     inputMode="numeric"
                     value={customerPhone}
                     onChange={(e) => setCustomerPhone(e.target.value)}
+                    onBlur={() => { const a = analisarTelefoneBR(customerPhone); if (a.situacao === 'corrigir') setCustomerPhone(a.novo); }}
                     placeholder="(DDD) 9XXXX-XXXX"
                     data-testid="input-customer-phone"
                   />
