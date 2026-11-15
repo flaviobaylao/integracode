@@ -713,7 +713,7 @@ export default function ActiveCustomers() {
         'Dia da Rota': ac.customer?.weekdays ? formatWeekdays(ac.customer.weekdays) : '',
         'Periodicidade': ac.customer?.visitPeriodicity === 'semanal' ? 'Semanal' : ac.customer?.visitPeriodicity === 'quinzenal' ? 'Quinzenal' : ac.customer?.visitPeriodicity === 'mensal' ? 'Mensal' : ac.customer?.visitPeriodicity || '',
         'Semana do mês': ac.customer ? semanaLonga((ac.customer as any)?.semanaAtendimento) : '',
-        'Positivado': ac.customer?.emQuarentena ? 'QUARENTENA' : ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO',
+        'Positivado': ac.customer?.isPositivatedThisMonth === true ? 'SIM' : 'NÃO',
         'Mês Anterior': prev > 0 ? prev.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Mês Atual': curr > 0 ? curr.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Variação': variacao,
@@ -869,7 +869,7 @@ export default function ActiveCustomers() {
       
       // Filtro de positivação
       const matchesPositivation = !selectedPositivation || 
-        (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth === false);
+        (selectedPositivation === "sim" ? ac.customer?.isPositivatedThisMonth === true : ac.customer?.isPositivatedThisMonth !== true);
       
       const matchesCity = cityMulti.length === 0 || cityMulti.includes(cityLabelOf(ac.customer?.city));
       const matchesNeighborhood = multiMatch(neighborhoodMulti, ac.customer?.neighborhood?.trim() || '');
@@ -1642,13 +1642,10 @@ export default function ActiveCustomers() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              {ac.customer?.emQuarentena ? (
-                                <span className="font-semibold text-gray-500" title="Início do fornecimento futuro: não entra na positivação até a data de início">QUARENTENA</span>
-                              ) : (
-                                <span className={`font-semibold ${ac.customer?.isPositivatedThisMonth ? 'text-green-600' : 'text-red-500'}`}>
-                                  {ac.customer?.isPositivatedThisMonth ? 'SIM' : 'NÃO'}
-                                </span>
-                              )}
+                              {/* nov/2026: cliente com início de fornecimento futuro (quarentena) mostra SIM/NÃO normalmente — a marca de quarentena fica só ao lado do nome. */}
+                              <span className={`font-semibold ${ac.customer?.isPositivatedThisMonth === true ? 'text-green-600' : 'text-red-500'}`}>
+                                {ac.customer?.isPositivatedThisMonth === true ? 'SIM' : 'NÃO'}
+                              </span>
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm">
                               {ac.previousMonthTotal 
