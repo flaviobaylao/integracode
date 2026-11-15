@@ -23,14 +23,45 @@ export function useActiveSellers() {
   const [users, setUsers] = useState<any[]>([]);
   useEffect(() => {
     let alive = true;
+    let timer: any = null;
+    let tentativa = 0;
+    let carregou = false;
     // Fonte unica da regra "ativo OU com pendencia em aberto": /api/sellers/active.
     // Esse endpoint ja remove nomes-lixo (chatgpt-ai, instagram, e-mails...),
     // unifica duplicados e mantem inativos SO se tiverem pendencia em aberto.
-    fetch("/api/sellers/active", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((d) => { if (alive) setUsers(Array.isArray(d) ? d : []); })
-      .catch(() => {});
-    return () => { alive = false; };
+    // nov/2026: a busca era feita UMA vez so. Se falhasse (servidor reiniciando no
+    // deploy, rede instavel), o filtro "Vendedor" ficava so com "Sem Vendedor" ate
+    // recarregar a pagina. Agora tenta de novo (2s, 4s, 8s... ate 30s) e tambem ao
+    // voltar para a aba, enquanto a lista estiver vazia.
+    const carregar = () => {
+      if (!alive || carregou) return;
+      if (timer) { clearTimeout(timer); timer = null; }
+      fetch("/api/sellers/active", { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((d) => {
+          if (!alive) return;
+          const lista = Array.isArray(d) ? d : [];
+          if (!lista.length) throw new Error("vazio");
+          carregou = true;
+          setUsers(lista);
+        })
+        .catch(() => {
+          if (!alive || carregou) return;
+          tentativa += 1;
+          if (tentativa > 8) return; // desiste ate a pessoa voltar para a aba
+          timer = setTimeout(carregar, Math.min(30000, 2000 * 2 ** (tentativa - 1)));
+        });
+    };
+    const aoVoltar = () => { if (!carregou && document.visibilityState === "visible") { tentativa = 0; carregar(); } };
+    carregar();
+    window.addEventListener("focus", aoVoltar);
+    document.addEventListener("visibilitychange", aoVoltar);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", aoVoltar);
+      document.removeEventListener("visibilitychange", aoVoltar);
+    };
   }, []);
   return useMemo(() => {
     const nameOf = (u: any) => String(u.name || u.id || "").trim();
