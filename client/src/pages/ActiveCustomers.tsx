@@ -67,8 +67,10 @@ import {
   MessageCircle,
   Send,
   RefreshCw,
-  History
+  History,
+  Info
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
 import {
   AlertDialog,
@@ -83,6 +85,54 @@ import {
 import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 import { format, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+/**
+ * ⓘ ao lado do título da coluna (nov/2026): substitui a antiga "Legenda das marcações".
+ * Cada coluna explica o que mostra, as regras e as cores. Abre no clique (funciona no celular)
+ * e não dispara a ordenação da coluna.
+ */
+function InfoColuna({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center justify-center h-4 w-4 rounded-full text-muted-foreground hover:text-primary align-middle shrink-0"
+          aria-label={`Sobre a coluna ${titulo}`}
+          title={`Sobre a coluna ${titulo}`}
+          data-testid={`info-coluna-${titulo.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-')}`}
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 text-xs font-normal normal-case leading-relaxed space-y-2 text-left" align="start" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-semibold text-foreground">{titulo}</div>
+        {children}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+const LinhaInfo = ({ marca, children }: { marca?: React.ReactNode; children: React.ReactNode }) => (
+  <div className="flex items-start gap-2">
+    {marca ? <span className="shrink-0 mt-0.5">{marca}</span> : null}
+    <span className="text-muted-foreground">{children}</span>
+  </div>
+);
+
+const CORES_RECENCIA = (
+  <LinhaInfo marca={
+    <span className="flex gap-0.5">
+      <span className="inline-block h-3.5 w-3.5 rounded bg-green-100 border" />
+      <span className="inline-block h-3.5 w-3.5 rounded bg-yellow-100 border" />
+      <span className="inline-block h-3.5 w-3.5 rounded bg-orange-100 border" />
+      <span className="inline-block h-3.5 w-3.5 rounded bg-red-100 border" />
+    </span>
+  }>
+    Cor pela distância até hoje: <b className="text-foreground">verde</b> até 7 dias · <b className="text-foreground">amarelo</b> até 15 · <b className="text-foreground">laranja</b> até 30 · <b className="text-foreground">vermelho</b> mais de 30 dias.
+  </LinhaInfo>
+);
 
 function getDateRecencyClass(dateString: string | null | undefined): string {
   if (!dateString) return '';
@@ -1382,62 +1432,6 @@ export default function ActiveCustomers() {
             </div>
           </div>
 
-          {/* Legenda das marcações visuais da lista */}
-          <details className="rounded-lg border bg-muted/30 px-3 py-2">
-            <summary className="cursor-pointer select-none text-sm font-semibold text-foreground">
-              Legenda das marcações
-            </summary>
-            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block h-4 w-6 rounded bg-red-100 border border-red-200"></span>
-                <span>Linha vermelha: <b className="text-foreground">sem agendamento</b> (sem visita nas próximas 3)</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap">SEM COORDENADA</span>
-                <span>Texto vermelho: <b className="text-foreground">sem coordenada</b> (não entra na rota do dia)</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="bg-green-100 text-green-800 px-2 py-0.5 rounded-md font-medium">Nome</span>
-                <span>Nome com fundo verde: <b className="text-foreground">Cliente Consumidor</b></span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4 text-green-500" />
-                <span>Status: <b className="text-foreground">encontrado</b> no sistema</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <AlertCircle className="h-4 w-4 text-orange-500" />
-                <span>Status: <b className="text-foreground">não encontrado</b> no sistema</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono text-red-600 font-semibold">(62) …</span>
-                <span>Telefone <b className="text-foreground">não confirmado</b> pelo cliente em 24h</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono">(62) … ✓</span>
-                <span>Telefone <b className="text-foreground">confirmado</b> pelo cliente</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-green-600 font-semibold">SIM</span>
-                <span className="text-red-500 font-semibold">NÃO</span>
-                <span><b className="text-foreground">Positivado</b> no mês (comprou / não comprou)</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-green-600 font-semibold">+%</span>
-                <span className="text-red-500 font-semibold">-%</span>
-                <span className="text-gray-400">–</span>
-                <span><b className="text-foreground">Variação</b> mês anterior x atual (sobe / cai / sem base)</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="flex gap-0.5">
-                  <span className="inline-block h-4 w-4 rounded bg-green-100 border" title="até 7 dias"></span>
-                  <span className="inline-block h-4 w-4 rounded bg-yellow-100 border" title="até 15 dias"></span>
-                  <span className="inline-block h-4 w-4 rounded bg-orange-100 border" title="até 30 dias"></span>
-                  <span className="inline-block h-4 w-4 rounded bg-red-100 border" title="mais de 30 dias"></span>
-                </span>
-                <span><b className="text-foreground">Última Compra / Atendimento</b> — recência: até 7d, 15d, 30d, +30d sem comprar</span>
-              </div>
-            </div>
-          </details>
 
           <Card>
             <CardContent className="p-0 relative">
@@ -1485,9 +1479,17 @@ export default function ActiveCustomers() {
                     <TableHeader className="sticky top-0 bg-background z-10" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
                       <TableRow>
                         <TableHead className="w-8"><Checkbox checked={allCustomersSelected} onCheckedChange={toggleSelectAllCustomers} aria-label="Selecionar todos" /></TableHead>
-                        <TableHead className="min-w-[60px]">Status</TableHead>
+                        <TableHead className="min-w-[60px]">
+                          <span className="inline-flex items-center gap-1">Status
+                            <InfoColuna titulo="Status">
+                              <LinhaInfo marca={<CheckCircle2 className="h-4 w-4 text-green-500" />}><b className="text-foreground">Encontrado</b>: o CPF/CNPJ da lista existe no cadastro do Integra.</LinhaInfo>
+                              <LinhaInfo marca={<AlertCircle className="h-4 w-4 text-orange-500" />}><b className="text-foreground">Não encontrado</b>: o documento da lista não tem cadastro — verifique ou cadastre o cliente.</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
                         <TableHead className="min-w-[120px]">CPF/CNPJ</TableHead>
                         <TableHead className="min-w-[180px]">
+                          <div className="flex items-center gap-1">
                           <button
                             onClick={() => handleSort('name')}
                             className="flex items-center gap-1 hover:text-primary transition-colors"
@@ -1500,15 +1502,70 @@ export default function ActiveCustomers() {
                               <ArrowUpDown className="h-4 w-4 opacity-50" />
                             )}
                           </button>
+                          <InfoColuna titulo="Nome Fantasia">
+                            <LinhaInfo>Nome fantasia; embaixo, a razão social e o bairro. Clique no título para ordenar A–Z / Z–A.</LinhaInfo>
+                            <LinhaInfo marca={<span className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded font-medium">Nome</span>}>Fundo verde: <b className="text-foreground">Cliente Consumidor</b>.</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1 py-0.5 rounded">SEM COORDENADA</span>}>Linha com <b className="text-foreground">texto vermelho</b>: cadastro sem coordenadas — <b className="text-foreground">não entra na rota do dia</b> até corrigir o endereço/coordenada.</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-[10px] text-amber-600 inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />Atend. a partir de</span>}><b className="text-foreground">Quarentena</b>: o fornecimento começa na data indicada; até lá o cliente fica fora do % de positivação.</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-[10px] font-semibold text-amber-700 border border-amber-300 bg-amber-50 px-1 py-0.5 rounded-full">DELEG →</span>}>Carteira <b className="text-foreground">delegada temporariamente</b> ao vendedor indicado; volta ao titular no fim da delegação.</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">GYN</span>}>Empresa/unidade de faturamento do cliente (ex.: GYN, BSB).</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-[10px] italic text-slate-400">colaborador</span>}>Colaborador da Honest — não entra em rota nem agenda de visitas.</LinhaInfo>
+                            <LinhaInfo marca={<History className="h-4 w-4" />}>Abre o <b className="text-foreground">histórico de alterações</b> do cadastro (quem mudou, quando e o quê). O botão ao lado copia o nome.</LinhaInfo>
+                          </InfoColuna>
+                          </div>
                         </TableHead>
-                        <TableHead className="min-w-[120px]">Telefone</TableHead>
+                        <TableHead className="min-w-[120px]">
+                          <span className="inline-flex items-center gap-1">Telefone
+                            <InfoColuna titulo="Telefone">
+                              <LinhaInfo marca={<span className="font-mono">(62) … ✓</span>}><b className="text-foreground">Confirmado</b> pelo cliente no WhatsApp (ou isento pelo admin).</LinhaInfo>
+                              <LinhaInfo marca={<span className="font-mono text-red-600 font-semibold">(62) …</span>}><b className="text-foreground">Não confirmado</b>: a confirmação foi enviada há mais de 24h e o cliente não respondeu.</LinhaInfo>
+                              <LinhaInfo marca={<span className="font-mono">(62) …</span>}>Sem cor: confirmação ainda não enviada ou enviada há menos de 24h.</LinhaInfo>
+                              <LinhaInfo marca={<span className="font-mono">-</span>}><b className="text-foreground">Sem telefone</b>: o próximo pedido só é implantado depois de preencher telefone e responsável.</LinhaInfo>
+                              <LinhaInfo>Padrão: celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX, sem +55. O nome do <b className="text-foreground">responsável</b> é obrigatório ao lado do telefone.</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
                         <TableHead>Vendedor</TableHead>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead>Dia da Rota</TableHead>
-                        <TableHead>Periodicidade</TableHead>
-                        <TableHead className="whitespace-nowrap">Semana do mês</TableHead>
-                        <TableHead>Positivado</TableHead>
+                        <TableHead>
+                          <span className="inline-flex items-center gap-1">Tipo
+                            <InfoColuna titulo="Tipo">
+                              <LinhaInfo marca={<Badge variant="outline" className="text-[10px]">Presencial</Badge>}>O vendedor visita o cliente na rota.</LinhaInfo>
+                              <LinhaInfo marca={<Badge variant="secondary" className="text-[10px]">Virtual</Badge>}>Atendido pelo atendimento virtual (WhatsApp/telefone), com <b className="text-foreground">visita presencial do ciclo</b>: semanal — 1 a cada 4 visitas; quinzenal — a 4ª visita; mensal — um mês sim, um mês não. Essa visita aparece na Rota do Dia e no reporte de não visita com o selo "Virtual – Ciclo presencial".</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
+                        <TableHead>
+                          <span className="inline-flex items-center gap-1">Dia da Rota
+                            <InfoColuna titulo="Dia da Rota">
+                              <LinhaInfo>Dia(s) da semana em que o cliente entra na rota/atendimento. "-" = sem dia definido (use o filtro Dia → "Sem dia de rota" para achar esses cadastros).</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
+                        <TableHead>
+                          <span className="inline-flex items-center gap-1">Periodicidade
+                            <InfoColuna titulo="Periodicidade">
+                              <LinhaInfo>De quanto em quanto tempo o cliente é atendido: <b className="text-foreground">Semanal</b>, <b className="text-foreground">Quinzenal</b> ou <b className="text-foreground">Mensal</b>. Junto com o Dia da Rota e a Semana do mês, gera a agenda (Próximas 3 Visitas).</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">Semana do mês
+                            <InfoColuna titulo="Semana do mês">
+                              <LinhaInfo>Em quais semanas do mês a visita acontece: Toda · 1ª e 3ª · 2ª e 4ª · 1ª, 2ª, 3ª ou 4ª · Última. Passe o mouse no valor para ver por extenso.</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
+                        <TableHead>
+                          <span className="inline-flex items-center gap-1">Positivado
+                            <InfoColuna titulo="Positivado">
+                              <LinhaInfo marca={<span className="text-green-600 font-semibold">SIM</span>}>O cliente <b className="text-foreground">comprou no mês atual</b>.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-red-500 font-semibold">NÃO</span>}>Ainda <b className="text-foreground">não comprou</b> no mês.</LinhaInfo>
+                              <LinhaInfo>Cliente em quarentena (início de fornecimento futuro) também mostra SIM/NÃO, mas fica fora do % de positivação até a data de início.</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
                         <TableHead className="text-right">
+                          <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => handleSort('previousMonth')}
                             className="flex items-center gap-1 ml-auto hover:text-primary transition-colors"
@@ -1521,8 +1578,13 @@ export default function ActiveCustomers() {
                               <ArrowUpDown className="h-4 w-4 opacity-50" />
                             )}
                           </button>
+                          <InfoColuna titulo="Mês Anterior">
+                            <LinhaInfo>Soma dos pedidos implantados (enviados ao Pipeline de Faturamento) do cliente no <b className="text-foreground">mês passado</b>. Clique no título para ordenar.</LinhaInfo>
+                          </InfoColuna>
+                          </div>
                         </TableHead>
                         <TableHead className="text-right">
+                          <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => handleSort('currentMonth')}
                             className="flex items-center gap-1 ml-auto hover:text-primary transition-colors"
@@ -1535,8 +1597,13 @@ export default function ActiveCustomers() {
                               <ArrowUpDown className="h-4 w-4 opacity-50" />
                             )}
                           </button>
+                          <InfoColuna titulo="Mês Atual">
+                            <LinhaInfo>Soma dos pedidos implantados (enviados ao Pipeline de Faturamento) do cliente <b className="text-foreground">neste mês</b>, até hoje. Clique no título para ordenar.</LinhaInfo>
+                          </InfoColuna>
+                          </div>
                         </TableHead>
                         <TableHead className="text-right">
+                          <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => handleSort('variation')}
                             className="flex items-center gap-1 ml-auto hover:text-primary transition-colors"
@@ -1549,10 +1616,39 @@ export default function ActiveCustomers() {
                               <ArrowUpDown className="h-4 w-4 opacity-50" />
                             )}
                           </button>
+                          <InfoColuna titulo="Variação">
+                            <LinhaInfo>(Mês Atual − Mês Anterior) ÷ Mês Anterior. Clique no título para ordenar.</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-green-600 font-semibold">+%</span>}>Igual ou acima do mês anterior. <b className="text-foreground">+100%</b> = não comprou no mês passado e comprou neste.</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-red-500 font-semibold">-%</span>}>Abaixo do mês anterior (−100% = ainda não comprou neste mês).</LinhaInfo>
+                            <LinhaInfo marca={<span className="text-gray-400">-</span>}>Sem compras nos dois meses.</LinhaInfo>
+                          </InfoColuna>
+                          </div>
                         </TableHead>
-                        <TableHead className="min-w-[80px]">Última Compra</TableHead>
-                        <TableHead className="min-w-[100px]">Último Atend. Virtual</TableHead>
-                        <TableHead className="min-w-[140px]">Próximas 3 Visitas</TableHead>
+                        <TableHead className="min-w-[80px]">
+                          <span className="inline-flex items-center gap-1">Última Compra
+                            <InfoColuna titulo="Última Compra">
+                              <LinhaInfo>Data da última compra faturada do cliente. "Nunca" = sem compra registrada.</LinhaInfo>
+                              {CORES_RECENCIA}
+                              <LinhaInfo>Use o filtro <b className="text-foreground">Última compra: de … até …</b> para listar quem comprou num período.</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
+                        <TableHead className="min-w-[100px]">
+                          <span className="inline-flex items-center gap-1">Último Atend. Virtual
+                            <InfoColuna titulo="Último Atend. Virtual">
+                              <LinhaInfo>Data/hora do último atendimento virtual registrado e quem atendeu. "—" = nenhum atendimento virtual registrado.</LinhaInfo>
+                              {CORES_RECENCIA}
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
+                        <TableHead className="min-w-[140px]">
+                          <span className="inline-flex items-center gap-1">Próximas 3 Visitas
+                            <InfoColuna titulo="Próximas 3 Visitas">
+                              <LinhaInfo>As 3 próximas datas (dia/mês) da agenda do cliente, geradas pelo Dia da Rota, Periodicidade e Semana do mês.</LinhaInfo>
+                              <LinhaInfo marca={<span className="inline-block h-3.5 w-6 rounded bg-red-100 border border-red-200" />}><b className="text-foreground">Linha inteira vermelha</b> = cliente <b className="text-foreground">sem agendamento</b> (nenhuma visita futura). Confira dia da rota e periodicidade ou use "Gerar Agendamentos".</LinhaInfo>
+                            </InfoColuna>
+                          </span>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
