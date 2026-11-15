@@ -30,7 +30,6 @@ import { registerCarteiraReclassificacao } from "./carteira-reclassificacao-rout
 import { registerAgendaRota } from "./agenda-rota-routes";
 import { registerRedesClientes } from "./rede-clientes-routes";
 import { registerDossieVendedor } from "./dossie-vendedor-routes";
-import { registerClientesBlindados } from "./clientes-blindados-routes";
 
 const TZ = "America/Sao_Paulo";
 
@@ -222,7 +221,7 @@ async function ensureAnotacoes(): Promise<void> {
 // ── CALCULO DA CARTEIRA (fonte unica) ───────────────────────────────────────
 // Extraido do handler GET /api/reports/gestao-carteiras para ser reusado pelo
 // snapshot diario de CLASSE (ver runSnapshotClasses). Mesma logica -> mesmos numeros.
-export async function computeCarteiraClientes(opts: { inicio: string; fim: string; restrito?: boolean; idsCarteira?: string[] }): Promise<{ clientes: any[]; meses: string[]; serieRec: any[]; serieTit: any[]; debitoTotal: number; foraRows: any[]; repescagemDesde: string | null }> {
+export async function computeCarteiraClientes(opts: { inicio: string; fim: string; restrito?: boolean; idsCarteira?: string[] }): Promise<{ clientes: any[]; meses: string[]; serieRec: any[]; serieTit: any[]; debitoTotal: number; foraRows: any[]; repescagemDesde: string | null; fatPorDoc: Map<string, { ultima: string | null; valorUltima: number; media3: number; eventos: number }> }> {
       const inicio = opts.inicio;
       const fim = opts.fim;
       const restrito = !!opts.restrito;
@@ -813,7 +812,11 @@ export async function computeCarteiraClientes(opts: { inicio: string; fim: strin
       // `excluidos` e o aviso de repescagem e a rota /api/reports/gestao-carteiras,
       // do lado de fora desta funcao. Ficando so' aqui dentro, a rota estourava
       // "foraRows is not defined" e derrubava a aba Carteira inteira.
-      return { clientes, meses, serieRec, serieTit, debitoTotal, foraRows, repescagemDesde };
+      // `fatPorDoc` sai junto (14/11/2026): é a última compra da VIDA de cada
+      // documento, já calculada aqui. Quem precisa dela para um cliente que não
+      // faturou no período — o gráfico de inativados é o caso — não teria de
+      // onde tirar, e refazer a conta lá fora seria repetir a consulta cara.
+      return { clientes, meses, serieRec, serieTit, debitoTotal, foraRows, repescagemDesde, fatPorDoc };
 }
 
 // ── SNAPSHOT DIARIO DA CLASSE (A+..D-) ──────────────────────────────────────
@@ -856,8 +859,6 @@ export function registerCarteira(app: Express) {
   registerRedesClientes(app);
   // Aba "Dossiê do vendedor" (vida de cada vendedor + clientes mês a mês).
   registerDossieVendedor(app);
-  // Aba "Clientes blindados" de Metas de Vendas (cliente que só responde ao dono da carteira).
-  registerClientesBlindados(app);
 
   // ---------------------------------------------------------------------------
   // GET /api/carteira/anotacoes — todas as anotacoes que o usuario pode ver.
@@ -950,20 +951,25 @@ export function registerCarteira(app: Express) {
         for (const c of codigos) { add(c); add(`omie-vendor-${limpaId(c)}`); }
         if (!idsCarteira.length) idsCarteira.push("__sem_carteira__");
       }
-      const { clientes, meses, serieRec } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
+      const { clientes, meses, serieRec, fatPorDoc } = await computeCarteiraClientes({ inicio, fim, restrito, idsCarteira });
 
       // `novosLista`: QUEM são os clientes novos de cada mês de conquista, com o
       // que cada um comprou no período. Serve ao tooltip do gráfico "Novos
       // clientes" (Flavio, 13/11/2026): um ponto no gráfico que diz "5 clientes"
       // e não diz QUAIS obriga a sair da tela para descobrir.
       type Novo = { nome: string; valor: number };
-      type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number; novosLista: Record<string, Novo[]> };
+      type Acc = { vendedor: string; total: number; fat: Record<string, number>; novosQtd: Record<string, number>; novosValor: Record<string, number>; novosTotal: number; novosValorTotal: number; novosLista: Record<string, Novo[]>;
+                   inativosQtd: Record<string, number>; inativosTotal: number; inativosLista: Record<string, Novo[]> };
       const porVend = new Map<string, Acc>();
       const novosTotalMes: Record<string, number> = {};
-      for (const c of clientes) {
-        const v = String(c.vendedor || "Sem vendedor");
+      const acc = (v: string): Acc => {
         let a = porVend.get(v);
-        if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0, novosLista: {} }; porVend.set(v, a); }
+        if (!a) { a = { vendedor: v, total: 0, fat: {}, novosQtd: {}, novosValor: {}, novosTotal: 0, novosValorTotal: 0, novosLista: {},
+                        inativosQtd: {}, inativosTotal: 0, inativosLista: {} }; porVend.set(v, a); }
+        return a;
+      };
+      for (const c of clientes) {
+        const a = acc(String(c.vendedor || "Sem vendedor"));
         const pm: Record<string, number> = c.porMes || {};
         for (const m of meses) {
           const val = Number(pm[m]) || 0;
@@ -982,17 +988,95 @@ export function registerCarteira(app: Express) {
           (a.novosLista[mc] = a.novosLista[mc] || []).push({ nome: String(c.nome || "(sem nome)"), valor: Math.round(noPeriodo * 100) / 100 });
         }
       }
+      // ── QUEM SAIU: inativações do período (Flavio, 15/11/2026) ────────────
+      // O gráfico só contava o que entrou. Ganhar 3 e perder 5 no mesmo mês é
+      // uma carteira encolhendo, e isso não aparecia em lugar nenhum. Aqui sai
+      // a outra metade: quantos clientes da carteira foram inativados em cada
+      // mês, quem foram e quanto cada um comprou na última compra.
+      //
+      // DUAS FONTES, porque nenhuma sozinha cobre o período:
+      //  • `customer_change_history` guarda cada inativação com data, mas a
+      //    auditoria só começou em set/2026;
+      //  • `customers.inactivated_at` guarda SÓ a inativação vigente (reativar
+      //    limpa o campo), e é o que sobra para antes disso.
+      // O UNION junta as duas e o DISTINCT evita contar a mesma duas vezes.
+      // A consulta não passa por faturamento de propósito: cliente que parou de
+      // comprar antes da janela e foi inativado dentro dela é exatamente a
+      // perda que se quer enxergar, e ele não está na lista de faturamento.
+      type Perda = { nome: string; valor: number; vendedor: string };
+      const inativosPorMes: Record<string, number> = {};
+      const inativosLista: Record<string, Perda[]> = {};
+      try {
+        const consulta = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
+        const inatRows = await consulta(`
+          WITH inativ AS (
+            SELECT DISTINCT h.customer_id::text AS cid, to_char(h.created_at,'YYYY-MM') AS mes
+            FROM customer_change_history h
+            WHERE h.field = 'isActive'
+              AND lower(COALESCE(h.new_value,'')) NOT IN ('sim','true','t','1')
+              AND to_char(h.created_at,'YYYY-MM') BETWEEN '${inicio}' AND '${fim}'
+            UNION
+            SELECT DISTINCT c0.id::text, to_char(c0.inactivated_at,'YYYY-MM')
+            FROM customers c0
+            WHERE c0.inactivated_at IS NOT NULL
+              AND to_char(c0.inactivated_at,'YYYY-MM') BETWEEN '${inicio}' AND '${fim}'
+          )
+          SELECT i.mes,
+                 c.name AS nome,
+                 NULLIF(regexp_replace(COALESCE(NULLIF(c.cnpj,''),NULLIF(c.cpf,''),''),'[^0-9]','','g'),'') AS doc,
+                 COALESCE(vend.nome,'Sem vendedor') AS vendedor
+          FROM inativ i
+          JOIN customers c ON c.id::text = i.cid
+          LEFT JOIN LATERAL (
+            SELECT NULLIF(TRIM(COALESCE(u.first_name,'') || ' ' || COALESCE(u.last_name,'')),'') AS nome
+            FROM users u
+            WHERE c.seller_id IS NOT NULL AND c.seller_id <> '' AND (
+                  u.id = c.seller_id
+               OR u.omie_vendor_code = c.seller_id
+               OR u.omie_vendor_code = REPLACE(c.seller_id,'omie-vendor-','')
+            )
+            LIMIT 1
+          ) vend ON TRUE
+          WHERE COALESCE(c.is_supplier,false) = false
+            AND COALESCE(c.is_lead,false) = false`);
+        for (const r of inatRows as any[]) {
+          const mes = String(r.mes || "");
+          if (!mes || mes < inicio || mes > fim) continue;
+          const vendedor = String(r.vendedor || "Sem vendedor");
+          // Vendedor/telemarketing só enxerga a própria carteira, igual ao resto.
+          if (restrito && !porVend.has(vendedor)) continue;
+          const ult = r.doc ? fatPorDoc.get(String(r.doc)) : undefined;
+          const perda: Perda = { nome: String(r.nome || "(sem nome)"), valor: Math.round((ult?.valorUltima || 0) * 100) / 100, vendedor };
+          inativosPorMes[mes] = (inativosPorMes[mes] || 0) + 1;
+          (inativosLista[mes] = inativosLista[mes] || []).push(perda);
+          const a = acc(vendedor);
+          a.inativosQtd[mes] = (a.inativosQtd[mes] || 0) + 1;
+          a.inativosTotal++;
+          (a.inativosLista[mes] = a.inativosLista[mes] || []).push({ nome: perda.nome, valor: perda.valor });
+        }
+      } catch (e: any) {
+        console.warn("[carteira-graficos] inativacoes indisponiveis:", e?.message || e);
+      }
+
       const recPorMes = new Map(serieRec.map((r: any) => [String(r.mes), Number(r.valor) || 0]));
+      const maiorPrimeiro = (l: Record<string, { valor: number }[]>) => {
+        for (const k of Object.keys(l)) l[k].sort((x, y) => y.valor - x.valor);
+      };
+      maiorPrimeiro(inativosLista as any);
       res.json({
         ok: true,
         periodo: { inicio, fim, meses, mesCorrente: hoje },
         escopo: { restrito },
-        total: meses.map((m) => ({ mes: m, valor: recPorMes.get(m) || 0, novos: novosTotalMes[m] || 0 })),
+        total: meses.map((m) => ({ mes: m, valor: recPorMes.get(m) || 0, novos: novosTotalMes[m] || 0, inativos: inativosPorMes[m] || 0 })),
+        // A linha ÚNICA de inativados, para quando a tela não está recortada por
+        // vendedor: ali a pergunta é da Honest inteira, não de cada carteira.
+        inativados: { porMes: inativosPorMes, lista: inativosLista, total: Object.values(inativosPorMes).reduce((x, y) => x + y, 0) },
         vendedores: Array.from(porVend.values()).map((a) => {
           // Maior comprador primeiro: num mês com 40 entradas o tooltip mostra
           // as primeiras e resume o resto, e as primeiras têm que ser as que
           // importam.
-          for (const k of Object.keys(a.novosLista)) a.novosLista[k].sort((x, y) => y.valor - x.valor);
+          maiorPrimeiro(a.novosLista);
+          maiorPrimeiro(a.inativosLista);
           return a;
         }).sort((x, y) => y.total - x.total),
       });
