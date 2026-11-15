@@ -36,6 +36,8 @@ type Vend = {
   /** mês da inativação -> quantos saíram da carteira dele. */
   inativosQtd?: Record<string, number>;
   inativosTotal?: number;
+  /** o que os clientes inativados faturaram DENTRO do período. */
+  inativosFat?: number;
   /** mês da inativação -> quem saiu, com o valor da última compra. */
   inativosLista?: Record<string, Novo[]>;
 };
@@ -44,7 +46,9 @@ type Resp = {
   periodo: { inicio: string; fim: string; meses: string[]; mesCorrente: string };
   total: Array<{ mes: string; valor: number; novos: number; inativos?: number }>;
   /** Inativações do período somando TODAS as carteiras. */
-  inativados?: { porMes: Record<string, number>; lista: Record<string, Array<Novo & { vendedor?: string }>>; total: number };
+  inativados?: { porMes: Record<string, number>; lista: Record<string, Array<Novo & { vendedor?: string }>>; total: number; fat?: number };
+  /** Quantos saíram da conta de "novos" por terem vindo de outra carteira. */
+  rezoneadosForaDosNovos?: number;
   vendedores: Vend[];
 };
 
@@ -280,9 +284,15 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
   const inatPorMes = data?.inativados?.porMes || {};
   const inatListaGeral = data?.inativados?.lista || {};
   const inatDe = (v: Vend, m: string) => (v.inativosQtd && v.inativosQtd[m]) || 0;
+  // 15/11/2026 (Flavio): em "Toda a Honest" a linha de inativados SAI do
+  // gráfico e fica só na tabela. Motivo medido na tela dele: 588 novos contra
+  // 5.003 inativados no mesmo período — a linha vermelha estica o eixo e achata
+  // todas as linhas de novos contra o zero, então o gráfico deixa de responder
+  // a pergunta que ele existe para responder. Com vendedor marcado os números
+  // ficam na mesma ordem de grandeza e a comparação volta a fazer sentido.
   const linhasInat: string[] = recortado
     ? vendedores.filter((v) => ativos.includes(v.vendedor)).map((v) => `${PREFIXO_INAT}${v.vendedor}`)
-    : (data?.inativados ? [TODOS_INAT] : []);
+    : [];
   const corInat = (k: string) => {
     if (k === TODOS_INAT) return VERMELHOS[0];
     const i = linhasInat.indexOf(k);
@@ -393,7 +403,8 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
   const tabela = vendedores
     .filter((v) => ativos.includes(v.vendedor))
     .map((v) => ({ vendedor: v.vendedor, cor: corDe(v.vendedor), valor: totalDe(v), novos: v.novosTotal, novosValor: v.novosValorTotal, carteira: v.total,
-                   inativos: v.inativosTotal || 0, saldo: v.novosTotal - (v.inativosTotal || 0) }))
+                   inativos: v.inativosTotal || 0, inativosFat: v.inativosFat || 0,
+                   saldo: v.novosTotal - (v.inativosTotal || 0), saldoFat: v.total - (v.inativosFat || 0) }))
     .sort((a, b) => b.valor - a.valor);
 
   const exportar = () => {
@@ -554,12 +565,17 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                 <div>
                   <CardTitle>Novos clientes e inativados por vendedor</CardTitle>
                   <CardDescription>
-                    Em azul, quantos clientes novos cada vendedor trouxe por mês (data de conquista: cadastro ou 1ª compra).
-                    Em <b className="text-red-700">vermelho</b>, quantos saíram da carteira no mesmo mês — ganhou alguns, perdeu outros.
-                    {recortado ? " Com vendedor marcado no topo, cada carteira tem a própria linha de inativados." : " Em \u201cToda a Honest\u201d a linha vermelha é uma só, da empresa inteira."}
-                    {" "}Passe o cursor para ver quem entrou (com o que comprou no período) e quem saiu (com o valor da última compra).
+                    Em azul, quantos clientes novos cada vendedor trouxe por mês. <b>Novo é quem foi cadastrado já na
+                    carteira dele</b> — cliente que chegou por rezoneamento não conta como conquista de quem o recebeu.
+                    {recortado
+                      ? <> Em <b className="text-red-700">vermelho</b>, quantos saíram da carteira no mesmo mês — ganhou alguns, perdeu outros.</>
+                      : " Em “Toda a Honest” os inativados ficam só na tabela abaixo: são milhares contra centenas de novos, e a linha achataria todas as outras contra o zero."}
+                    {" "}Passe o cursor para ver quem entrou (com o que comprou no período){recortado ? " e quem saiu (com o valor da última compra)" : ""}.
                     {temParcial && visao === "mensal" && " O trecho até o mês em curso é tracejado."}
-                    {" "}<span className="text-amber-700">A auditoria de inativação só começou em set/2026; antes disso só aparece a inativação que está valendo hoje no cadastro.</span>
+                    {" "}<span className="text-amber-700">
+                      A auditoria só começou em set/2026: antes disso, inativação aparece só se for a que está valendo hoje no
+                      cadastro, e rezoneamento antigo não deixou rastro — pode ter sobrado algum cliente contado como novo.
+                    </span>
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
@@ -615,7 +631,9 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                       <th className="py-1 pr-3 text-right">Faturamento da carteira</th>
                       <th className="py-1 pr-3 text-right">Clientes novos</th>
                       <th className="py-1 pr-3 text-right">Inativados</th>
-                      <th className="py-1 pr-3 text-right">Saldo</th>
+                      <th className="py-1 pr-3 text-right">Faturamento dos inativados</th>
+                      <th className="py-1 pr-3 text-right">Saldo de clientes</th>
+                      <th className="py-1 pr-3 text-right">Carteira menos inativados</th>
                       <th className="py-1 pr-3 text-right">Faturamento dos novos</th>
                     </tr>
                   </thead>
@@ -626,9 +644,11 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                         <td className="py-1 pr-3 text-right">{brl(t.carteira)}</td>
                         <td className="py-1 pr-3 text-right">{t.novos}</td>
                         <td className="py-1 pr-3 text-right text-red-700">{t.inativos || "—"}</td>
+                        <td className="py-1 pr-3 text-right text-red-700">{t.inativosFat ? brl(t.inativosFat) : "—"}</td>
                         <td className={`py-1 pr-3 text-right font-medium ${t.saldo > 0 ? "text-emerald-700" : t.saldo < 0 ? "text-red-700" : ""}`}>
                           {t.saldo > 0 ? `+${t.saldo}` : t.saldo}
                         </td>
+                        <td className="py-1 pr-3 text-right font-medium">{brl(t.saldoFat)}</td>
                         <td className="py-1 pr-3 text-right">{brl(t.novosValor)}</td>
                       </tr>
                     ))}
@@ -643,7 +663,14 @@ export default function GraficosCarteira({ periodoInicial, vendedoresFiltro }: {
                   {" "}Inativados no mesmo período:{" "}
                   <b className="text-red-700">{recortado
                     ? vendedores.reduce((s, v) => s + (v.inativosTotal || 0), 0)
-                    : (data.inativados?.total || 0)}</b>.
+                    : (data.inativados?.total || 0)}</b>
+                  {" "}(<b className="text-red-700">{brl(recortado
+                    ? vendedores.reduce((s, v) => s + (v.inativosFat || 0), 0)
+                    : (data.inativados?.fat || 0))}</b> faturados por eles no período).
+                  {!!data.rezoneadosForaDosNovos && (
+                    <> {data.rezoneadosForaDosNovos} cliente(s) ficaram de fora da conta de novos por terem
+                    chegado de outra carteira.</>
+                  )}
                 </p>
               </div>
             </CardContent>

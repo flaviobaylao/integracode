@@ -183,6 +183,7 @@ export default function DossieVendedor() {
   const [selIds, setSelIds] = useState<string[]>([]);
   const [incluirInativos, setIncluirInativos] = useState(false);
   const [redeSel, setRedeSel] = useState<string>("");        // "" = todas
+  const [tipoSel, setTipoSel] = useState<"todos" | "pj" | "pf">("todos");
   const [ord, setOrd] = useState<{ col: string; dir: "asc" | "desc" }>({ col: "total", dir: "desc" });
   const [busca, setBusca] = useState("");
   const [limite, setLimite] = useState(100);
@@ -310,10 +311,18 @@ export default function DossieVendedor() {
   }, [base]);
   useEffect(() => { if (redeSel && redeSel !== "__sem__" && !redes.some(([r]) => r === redeSel)) setRedeSel(""); }, [redes, redeSel]);
 
+  // PF x PJ sai do próprio documento: 14 dígitos é CNPJ, 11 é CPF. Cliente sem
+  // documento não é nem um nem outro e some dos dois recortes — é melhor do que
+  // chutá-lo para um lado e inflar a contagem.
+  const tipoDoc = (c: any): "pj" | "pf" | "" => {
+    const d = String(c?.doc || "").replace(/\D/g, "");
+    return d.length === 14 ? "pj" : d.length === 11 ? "pf" : "";
+  };
   const clientesTabela = useMemo(() => {
     let arr = base;
     if (redeSel === "__sem__") arr = arr.filter((c) => !c.rede);
     else if (redeSel) arr = arr.filter((c) => String(c.rede || "") === redeSel);
+    if (tipoSel !== "todos") arr = arr.filter((c) => tipoDoc(c) === tipoSel);
     if (busca.trim()) {
       const b = norm(busca);
       arr = arr.filter((c) => norm(`${c.nome} ${c.vendedor} ${c.cidade} ${c.segmento} ${c.rede || ""} ${c.doc || ""}`).includes(b));
@@ -341,7 +350,7 @@ export default function DossieVendedor() {
       if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y), "pt-BR") * dir;
       return (x - y) * dir;
     });
-  }, [base, redeSel, busca, mesFoco, mesAnt, temAnterior, ord]);
+  }, [base, redeSel, tipoSel, busca, mesFoco, mesAnt, temAnterior, ord]);
 
   const ordenar = (col: string) =>
     setOrd((o) => (o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "cliente" || col === "vendedor" || col === "rede" ? "asc" : "desc" }));
@@ -351,7 +360,7 @@ export default function DossieVendedor() {
 
   const exportarTabela = () => {
     exportToExcel(clientesTabela.map((c) => {
-      const row: any = { Cliente: c.nome, "CPF/CNPJ": c.doc || "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
+      const row: any = { Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: tipoDoc(c) === "pj" ? "PJ" : tipoDoc(c) === "pf" ? "PF" : "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
       row["Última compra"] = c.ultimaCompra || "";
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
       row["Total no período"] = c.total;
@@ -381,6 +390,9 @@ export default function DossieVendedor() {
     if (modo === "sem") return ["Sem vendedor"];   // é o nome que a API usa
     return selecionados.map((v) => String(v.nome || "")).filter(Boolean);
   }, [modo, selecionados]);
+
+  /** Restrito e sem carteira: a tela não tem o que mostrar, e precisa dizer. */
+  const semCarteira = !!data && restrito && vendedores.length === 0;
 
   const titulo = modo === "toda" ? "Toda a Honest"
     : modo === "sem" ? "Clientes sem vendedor"
@@ -538,7 +550,23 @@ export default function DossieVendedor() {
       {error && <div className="text-red-600 text-sm">Erro ao carregar: {(error as Error).message}</div>}
       {isLoading && <div className="text-muted-foreground text-sm">Montando o dossiê…</div>}
 
-      {data && (
+      {/* 15/11/2026 — Com a regra nova de escopo, quem não é admin nem
+          coordenação vê só a própria carteira. Para um usuário sem carteira
+          nenhuma (administrativo, motorista) isso dá uma tela vazia, que parece
+          sistema quebrado. Melhor dizer o que aconteceu. */}
+      {semCarteira && (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">Nenhuma carteira ligada ao seu usuário.</p>
+            <p className="mt-1">
+              Esta tela mostra a carteira de quem está logado. A visão de toda a Honest fica com administração
+              e coordenação. Se você deveria ter uma carteira aqui, fale com a coordenação.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {data && !semCarteira && (
         <>
           <Card>
             <CardHeader>
@@ -734,12 +762,25 @@ export default function DossieVendedor() {
                 <div>
                   <CardTitle>Clientes que compraram no período — mês a mês</CardTitle>
                   <CardDescription>
-                    {clientesTabela.length} clientes · {titulo} · {rotPeriodo} · faturamento em R$ por mês.
+                    {clientesTabela.length} clientes · {titulo} · {rotPeriodo} · faturamento em R$ por mês
+                    {" "}({clientesTabela.filter((c) => tipoDoc(c) === "pj").length} PJ,{" "}
+                    {clientesTabela.filter((c) => tipoDoc(c) === "pf").length} PF
+                    {clientesTabela.filter((c) => !tipoDoc(c)).length > 0
+                      ? `, ${clientesTabela.filter((c) => !tipoDoc(c)).length} sem documento`
+                      : ""}).
                     {" "}“Última compra” é a da <b>vida</b> do cliente, não do período — por isso pode ser mais
                     recente ou mais antiga do que as colunas.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Select value={tipoSel} onValueChange={(v) => { setTipoSel(v as any); setLimite(100); }}>
+                    <SelectTrigger className="w-40" data-testid="dossie-tipo"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">PJ e PF</SelectItem>
+                      <SelectItem value="pj">Só PJ (CNPJ)</SelectItem>
+                      <SelectItem value="pf">Só PF (CPF)</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {redes.length > 0 && (
                     <Select value={redeSel || "__todas__"} onValueChange={(v) => { setRedeSel(v === "__todas__" ? "" : v); setLimite(100); }}>
                       <SelectTrigger className="w-56" data-testid="dossie-rede"><SelectValue placeholder="Rede" /></SelectTrigger>
