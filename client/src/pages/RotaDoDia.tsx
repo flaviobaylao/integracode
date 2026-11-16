@@ -1401,13 +1401,18 @@ export default function RotaDoDia() {
       .filter(Boolean),
     [presentialVisits]
   );
-  // Clientes com CHECK-IN realizado = "Atendidos" (concluídos); demais = "Pendentes".
+  // Clientes com CHECK-IN realizado OU PEDIDO (venda) do dia = "Atendidos" (concluídos); demais = "Pendentes".
   // (Check-out desligado: a visita conta como atendida/concluída ao fazer o check-in.)
+  // (16/nov/2026, Flavio): pedido implantado sem check-in também conta como atendido — o card
+  // mostra um aviso discreto "Pedido sem check-in".
   const checkedOutCustomerIds = useMemo(() => {
     const s = new Set<string>();
     (route?.checkpoints || []).forEach((cp: any) => { if (cp.checkpointType === 'check_in') s.add(cp.customerId); });
+    (route?.visits || []).forEach((v: any) => {
+      if (v.customerId && !v.isVirtual && v.visitType !== 'virtual' && customerInfo?.orders?.[v.customerId]?.length) s.add(v.customerId);
+    });
     return s;
-  }, [route?.checkpoints]);
+  }, [route?.checkpoints, route?.visits, customerInfo]);
   // Aplica busca por cliente + filtro Atendidos/Pendentes
   const filteredPresentialVisits = useMemo(() => {
     const q = presentialSearch.trim().toLowerCase();
@@ -2015,7 +2020,7 @@ export default function RotaDoDia() {
                 // 📋 Cards com alteração "Efetuada" saem da contagem da rota (mas continuam visíveis).
                 const presActiveVisits = presentialVisits.filter((v: any) => !isVisitEfetuada(v));
                 const presTotal = presActiveVisits.length;
-                // Concluídas = clientes presenciais distintos com CHECK-IN feito (check-out desligado)
+                // Concluídas = clientes presenciais distintos com CHECK-IN feito ou PEDIDO do dia (check-out desligado)
                 const presConcl = presActiveVisits.filter((v: any) => v.customerId && checkedOutCustomerIds.has(v.customerId)).length;
                 const presPend = Math.max(0, presTotal - presConcl);
                 const presPct = presTotal > 0 ? Math.round((presConcl / presTotal) * 100) : 0;
@@ -3228,7 +3233,18 @@ export default function RotaDoDia() {
                                       )}
                                     </div>
                                   ) : (
-                                    <span className="text-gray-400">—</span>
+                                    <>
+                                      <span className="text-gray-400">—</span>
+                                      {hasOrderToday && !isLead && (
+                                        <span
+                                          className="ml-2 inline-flex items-center gap-1 rounded-full border border-gray-300 dark:border-gray-600 px-2 py-0.5 text-[10px] text-gray-500 dark:text-gray-400"
+                                          title="Pedido implantado sem check-in: conta como atendido, mas não há registro de presença (GPS) do vendedor no cliente."
+                                          data-testid={`pedido-sem-checkin-${visit.customerId || visit.id}`}
+                                        >
+                                          📍 Pedido sem check-in
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                               </div>
