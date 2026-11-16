@@ -87,6 +87,13 @@ function situacaoTelefone(phone: any): SituacaoTel {
   if (a.situacao === 'corrigir') return { grupo: 'invalido', selo: 'FORA DO PADRÃO', dica: `Número fora do padrão (${a.motivo}). Correto: ${a.novo}` };
   return { grupo: 'invalido', selo: 'TELEFONE INVÁLIDO', dica: `Telefone inválido (${a.motivo}) — corrija no cadastro.` };
 }
+const TEL_INVALIDO = 'Inválido';
+const TEL_SEM = 'Sem telefone';
+const TEL_SEM_CONFIRMACAO = 'Sem confirmação';
+const TEL_CONFIRMADO = 'Confirmado';
+const TEL_FIXO = 'Fixo';
+const TEL_CELULAR = 'Celular válido';
+const TEL_OPCOES = [TEL_INVALIDO, TEL_SEM, TEL_SEM_CONFIRMACAO, TEL_CONFIRMADO, TEL_FIXO, TEL_CELULAR];
 import { useAuth } from "@/hooks/useAuth";
 import {
   AlertDialog,
@@ -331,7 +338,8 @@ export default function ActiveCustomers() {
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
-  const [selectedTelefone, setSelectedTelefone] = useState<string>(""); // "", "valido", "invalido", "fixo"
+  // 📞 Filtro Telefone (múltipla escolha; casa se o cliente estiver em QUALQUER opção marcada).
+  const [telMulti, setTelMulti] = useState<string[]>([]);
   const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [neighborhoodMulti, setNeighborhoodMulti] = useState<string[]>([]);
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | 'name' | null>(null);
@@ -967,7 +975,20 @@ export default function ActiveCustomers() {
       const hasCoords = !!((ac.customer as any)?.latitude && (ac.customer as any)?.longitude);
       const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
       // Filtro de telefone: válido (celular no padrão) / inválido (vazio, inválido ou fora do padrão) / fixo
-      const matchesTelefone = !selectedTelefone || situacaoTelefone(ac.customer?.phone).grupo === selectedTelefone;
+      let matchesTelefone = true;
+      if (telMulti.length) {
+        const a = analisarTelefoneBR(ac.customer?.phone);
+        const pv = ac.customer?.id ? (phoneVerif as any)[ac.customer.id] : null;
+        const confirmado = !!(pv && pv.status === 'confirmed');
+        const tags = new Set<string>();
+        if (a.situacao === 'vazio') tags.add(TEL_SEM);
+        else if (a.situacao !== 'manter') tags.add(TEL_INVALIDO);
+        else {
+          tags.add(a.tipo === 'fixo' ? TEL_FIXO : TEL_CELULAR);
+          tags.add(confirmado ? TEL_CONFIRMADO : TEL_SEM_CONFIRMACAO);
+        }
+        matchesTelefone = telMulti.some((o) => tags.has(o));
+      }
       return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords && matchesTelefone;
     })
     .sort((a, b) => {
@@ -1376,16 +1397,7 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
-              <Select value={selectedTelefone} onValueChange={setSelectedTelefone}>
-                <SelectTrigger className="w-[150px] h-9" data-testid="select-telefone-filter">
-                  <SelectValue placeholder="Telefone" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="valido">Telefone: válido</SelectItem>
-                  <SelectItem value="invalido">Telefone: inválido</SelectItem>
-                  <SelectItem value="fixo">Telefone: fixo</SelectItem>
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Telefone" options={TEL_OPCOES} selected={telMulti} onChange={setTelMulti} testId="filter-telefone-active" />
 
               <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={(v) => { setCityMulti(v); setNeighborhoodMulti([]); }} testId="filter-city-active" />
 
@@ -1427,7 +1439,7 @@ export default function ActiveCustomers() {
                   setCompraDe("");
                   setCompraAte("");
                   setSelectedPositivation("");
-                  setSelectedTelefone("");
+                  setTelMulti([]);
                   setCityMulti([]);
                   setNeighborhoodMulti([]);
                   setSelectedPersonType("");
@@ -1559,7 +1571,7 @@ export default function ActiveCustomers() {
                               <LinhaInfo marca={<span className="font-mono">-</span>}><b className="text-foreground">Sem telefone</b>: o próximo pedido só é implantado depois de preencher telefone e responsável.</LinhaInfo>
                               <LinhaInfo marca={<span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1 py-0.5 rounded">TELEFONE INVÁLIDO</span>}>Número que não é telefone válido (DDD inexistente, tamanho errado, número de preenchimento). <b className="text-foreground">SEM TELEFONE</b> = campo vazio. <b className="text-foreground">FORA DO PADRÃO</b> = número aproveitável mas escrito errado (passe o mouse para ver o correto). Corrija no cadastro.</LinhaInfo>
                               <LinhaInfo marca={<span className="text-[10px] font-semibold text-slate-600 border border-slate-300 bg-slate-50 px-1 py-0.5 rounded">FIXO</span>}>Telefone fixo — normalmente sem WhatsApp; se possível, cadastre o celular do responsável.</LinhaInfo>
-                              <LinhaInfo>Filtro <b className="text-foreground">Telefone</b>: válido (celular no padrão) · inválido (sem telefone, inválido ou fora do padrão) · fixo.</LinhaInfo>
+                              <LinhaInfo>Filtro <b className="text-foreground">Telefone</b> (pode marcar mais de um): <b className="text-foreground">Inválido</b> (número que não serve ou fora do padrão) · <b className="text-foreground">Sem telefone</b> · <b className="text-foreground">Sem confirmação</b> (número válido que o cliente ainda não confirmou no WhatsApp) · <b className="text-foreground">Confirmado</b> · <b className="text-foreground">Fixo</b> · <b className="text-foreground">Celular válido</b>.</LinhaInfo>
                               <LinhaInfo>Padrão: celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX, sem +55. O nome do <b className="text-foreground">responsável</b> é obrigatório ao lado do telefone.</LinhaInfo>
                             </InfoColuna>
                           </span>
