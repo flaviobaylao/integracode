@@ -183,7 +183,7 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCrea
     setSalvando(true);
     try {
       const d: any = await apiRequest("POST", `/api/leads/${leadId}/amostras`, { items: itens, deliveryMode, deliveryDate, receiver, objective, returnDate, observation, cnpj, fiscal: { ...fiscal, ie } });
-      if (d?.ok) { toast({ title: `Pedido de amostra #A-${d.amostra.id} enviado`, description: "Aguardando aprovação do administrativo." }); onCreated(); }
+      if (d?.ok) { toast({ title: `Pedido de amostra #A-${d.amostra.id} enviado`, description: d.avisoPipeline ? `Atenção: ${d.avisoPipeline}` : "Já está no Pipeline (Bloqueados), aguardando aprovação do administrativo." }); onCreated(); }
       else toast({ title: "Não foi possível enviar", description: d?.message, variant: "destructive" });
     } catch (e: any) { toast({ title: "Erro ao enviar", description: e?.message, variant: "destructive" }); }
     finally { setSalvando(false); }
@@ -268,7 +268,7 @@ function FormAmostra({ leadId, leadName, leadContact, leadPhone, onClose, onCrea
           <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-2.5 text-[11px] text-amber-900 dark:text-amber-200 space-y-0.5">
             <div className="font-semibold">Como esse pedido é tratado</div>
             <div>• Gera um pedido de amostra ligado ao lead, não a um cliente.</div>
-            <div>• Na aprovação, o Integra cria um cadastro <strong>em prospecção</strong> (inativo) com o CNPJ e emite a <strong>NF de amostra grátis</strong> pelo Pipeline, igual ao cliente. Não conta comissão nem positivação.</div>
+            <div>• Ao enviar, o Integra cria um cadastro <strong>em prospecção</strong> (inativo) com o CNPJ e o pedido entra no <strong>Pipeline</strong> (coluna Bloqueados). Quando o administrativo aprova, segue para a <strong>NF de amostra grátis</strong>, igual ao cliente. Não conta comissão nem positivação.</div>
             <div>• Só 350 ml, 1 unidade de cada sabor, 1 pedido por lead. Vai para aprovação do administrativo e o lead ganha retorno agendado na data acima.</div>
           </div>
         </div>
