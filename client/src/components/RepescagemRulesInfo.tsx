@@ -95,8 +95,9 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <p className="font-semibold mb-1">Botão "Repescagem" nos reports (decisão do Admin)</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>Todo <b>report</b> (não-venda, justificativa, etc.) tem um botão <b>"Repescagem"</b> no Inbox do admin.</li>
-                <li>Ao acionar, o cliente é forçado a cair em repescagem <b>excepcionalmente no próximo dia útil</b> (decidido na sexta, cai na segunda), mesmo que pelas regras normais ele <b>não cairia</b> (ex.: foi atendido ou já comprou). É uma inclusão <b>manual, por decisão do Admin</b>.</li>
-                <li><b>Só vale para aquele dia.</b> Depois disso o cliente <b>volta a respeitar todas as regras normais</b> de repescagem — não é reinjetado nos dias seguintes (só volta a cair se a próxima visita ficar vermelha).</li>
+                <li>Ao acionar (com confirmação), o cliente entra na repescagem <b>na hora</b> — na Rota do Dia do dono da carteira e de quem recebe a carteira — e <b>também no próximo dia útil</b>, mesmo que pelas regras normais ele <b>não cairia</b>. É uma inclusão <b>manual, por decisão do Admin</b>. Só um atendimento feito <b>depois</b> do envio fecha o card.</li>
+                <li>Depois desses dois dias o cliente <b>volta a respeitar todas as regras normais</b> de repescagem.</li>
+                <li><b>Tirar da repescagem</b> (com justificativa): o cliente sai <b>na hora</b> e <b>não cai no dia seguinte</b> — é como se tivesse sido atendido neste ciclo; só volta a cair se perder a <b>próxima visita</b>. Cliente <b>capturado</b> por alguém <b>não pode ser tirado</b>.</li>
                 <li>Ao acionar, o <b>report sai de pendentes e vai para Resolvidas</b> no Inbox.</li>
                 <li>Fica registrado no <b>histórico do cliente</b>.</li>
               </ul>
