@@ -1337,17 +1337,18 @@ export default function RotaDoDia() {
   // Concluídas VIRTUAIS = SOMENTE clientes virtuais da rota com ATENDIMENTO virtual registrado (service log).
   // Antes usava virtualServiceCount (contagem bruta de service-logs), que incluía atendimentos de clientes
   // presenciais e inflava as "concluídas virtuais" (ex.: 16 em vez de 4). Restringe aos virtuais da rota.
-  // (Não usar "tem pedido" como critério: um pedido sem atendimento virtual registrado não é uma concluída virtual.)
+  // (16/nov/2026, Flavio): PEDIDO (venda) do dia também conta como concluída/atendido — mesma regra
+  // dos presenciais e do filtro Atendidos/Pendentes dos virtuais.
   const virtualConcludedIds = useMemo(() => {
     const s = new Set<string>();
     (route?.visits || []).forEach((v: any) => {
       if (!(v.isVirtual || v.visitType === 'virtual')) return;
       const cid = v.customerId;
       if (!cid) return;
-      if (attendedCustomerIds.has(cid)) s.add(String(cid));
+      if (attendedCustomerIds.has(cid) || customerInfo?.orders?.[cid]?.length) s.add(String(cid));
     });
     return s;
-  }, [route?.visits, attendedCustomerIds]);
+  }, [route?.visits, attendedCustomerIds, customerInfo]);
 
   // Métricas de PEDIDOS.
   // REGRA: qualquer PEDIDO do dia (NF emitida + venda) de um cliente que ESTÁ NA ROTA
