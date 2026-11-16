@@ -12,6 +12,7 @@
 // cancelada, transferencia...), entao os numeros fecham com a aba Carteira.
 // -----------------------------------------------------------------------------
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -1184,6 +1185,11 @@ function ModalPonto(props: { redeId: string; ponto: PontoEntrega | null; onFecha
 
   const salvar = async () => {
     setErro("");
+    // 📞 Telefone do ponto no padrão (nov/2026).
+    if (String(f.telefone || "").replace(/\D/g, "") && !analisarTelefoneBR(f.telefone).valido) {
+      setErro("Telefone do ponto inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX.");
+      return;
+    }
     // 👤 Telefone do ponto exige o responsável ao lado (nov/2026).
     if (String(f.telefone || "").replace(/\D/g, "") && String(f.contato || "").trim().length < 2) {
       setErro("Informe o contato (responsável) do telefone do ponto.");

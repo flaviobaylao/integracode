@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { hojeBR, agora, diaMaisBR, componentesBR, diaCalendario, diasEntre } from '@shared/tempo';
 import { sortSellersByType } from "@/lib/sellerOrder";
@@ -362,7 +363,7 @@ export default function LeadsManagement() {
   const invalidateLeads = () => queryClient.invalidateQueries({ queryKey: ['/api/leads'] });
 
   const converterMut = useMutation({
-    mutationFn: async () => apiRequest('POST', `/api/leads/${converterLead!.id}/convert-to-customer`, {
+    mutationFn: async () => { if (!analisarTelefoneBR(cust.phone).valido) throw new Error('Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.'); return apiRequest('POST', `/api/leads/${converterLead!.id}/convert-to-customer`, {
       name: cust.name,
       customerType: cust.customerType || 'pessoa_juridica',
       cpf: cust.cpf || null,
@@ -378,7 +379,7 @@ export default function LeadsManagement() {
       sellerId: converterLead!.assignedTo || null,
       weekdays: cust.weekdays || ['Seg'],
       visitPeriodicity: cust.visitPeriodicity || 'semanal',
-    }),
+    }); },
     onSuccess: () => {
       toast({ title: "Lead convertido!", description: "Cliente ativo criado. Registre o primeiro pedido na Rota do Dia / Pedidos." });
       setConverterLead(null); setCust({});

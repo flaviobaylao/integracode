@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { analisarTelefoneBR } from "@shared/telefone";
 import { ShoppingCart, Store, MapPin, Minus, Plus, Trash2, ArrowLeft, Check, Loader2, CreditCard, ExternalLink, Copy } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
@@ -241,6 +242,11 @@ export default function PedidoRapido() {
   const handleSubmitOrder = async () => {
     if (!customerData.name || !customerData.phone || !customerData.address) {
       toast({ title: 'Dados incompletos', description: 'Preencha todos os campos obrigatórios', variant: 'destructive' });
+      return;
+    }
+    // 📞 WhatsApp no padrão (nov/2026).
+    if (!analisarTelefoneBR(customerData.phone).valido) {
+      toast({ title: 'WhatsApp inválido', description: 'Confira o DDD e o número do seu WhatsApp (ex.: (62) 99999-1234).', variant: 'destructive' });
       return;
     }
     // 👤 Responsável pelo WhatsApp: obrigatório (nov/2026).

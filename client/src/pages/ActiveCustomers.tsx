@@ -496,6 +496,10 @@ export default function ActiveCustomers() {
       toast({ variant: "destructive", title: "Erro", description: "Digite um telefone válido" });
       return;
     }
+    if (!analisarTelefoneBR(phoneEditData.newPhone).valido) {
+      toast({ variant: "destructive", title: "Telefone inválido", description: "Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos." });
+      return;
+    }
     // 👤 Responsável pelo telefone: obrigatório (nov/2026).
     {
       const resp = String(phoneEditData.newContact || '').replace(/\s+/g, ' ').trim();
@@ -504,7 +508,7 @@ export default function ActiveCustomers() {
         return;
       }
     }
-    updatePhoneMutation.mutate({ customerId: phoneEditData.customerId, phone: phoneEditData.newPhone, contact: phoneEditData.newContact });
+    updatePhoneMutation.mutate({ customerId: phoneEditData.customerId, phone: analisarTelefoneBR(phoneEditData.newPhone).novo || phoneEditData.newPhone, contact: phoneEditData.newContact });
   };
 
   const handleRowClick = async (customerId: string) => {
