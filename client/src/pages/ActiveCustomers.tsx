@@ -1570,6 +1570,7 @@ export default function ActiveCustomers() {
                               <LinhaInfo marca={<span className="font-mono">(62) … ✓</span>}><b className="text-foreground">Confirmado</b> pelo cliente no WhatsApp (ou isento pelo admin).</LinhaInfo>
                               <LinhaInfo marca={<span className="font-mono text-red-600 font-semibold">(62) …</span>}><b className="text-foreground">Não confirmado</b>: a confirmação foi enviada há mais de 24h e o cliente não respondeu.</LinhaInfo>
                               <LinhaInfo marca={<span className="font-mono">(62) …</span>}>Sem cor: confirmação ainda não enviada ou enviada há menos de 24h.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-muted-foreground">Nome</span>}>Embaixo do número: o <b className="text-foreground">contato (responsável)</b> por esse telefone.</LinhaInfo>
                               <LinhaInfo marca={<span className="font-mono">-</span>}><b className="text-foreground">Sem telefone</b>: o próximo pedido só é implantado depois de preencher telefone e responsável.</LinhaInfo>
                               <LinhaInfo marca={<span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1 py-0.5 rounded">TELEFONE INVÁLIDO</span>}>Número que não é telefone válido (DDD inexistente, tamanho errado, número de preenchimento). <b className="text-foreground">SEM TELEFONE</b> = campo vazio. <b className="text-foreground">FORA DO PADRÃO</b> = número aproveitável mas escrito errado (passe o mouse para ver o correto). Corrija no cadastro.</LinhaInfo>
                               <LinhaInfo marca={<span className="text-[10px] font-semibold text-slate-600 border border-slate-300 bg-slate-50 px-1 py-0.5 rounded">FIXO</span>}>Telefone fixo — normalmente sem WhatsApp; se possível, cadastre o celular do responsável.</LinhaInfo>
@@ -1787,6 +1788,16 @@ export default function ActiveCustomers() {
                                   </span>
                                 );
                               })()}
+                              {/* 👤 nov/2026: nome do contato (responsável) como subtítulo discreto do telefone. */}
+                              {String((ac.customer as any)?.contact || '').trim() ? (
+                                <div
+                                  className="font-sans text-xs text-muted-foreground truncate max-w-[180px]"
+                                  title={`Contato: ${String((ac.customer as any).contact).trim()}`}
+                                  data-testid={`contato-telefone-${ac.id}`}
+                                >
+                                  {String((ac.customer as any).contact).trim()}
+                                </div>
+                              ) : null}
                               {(() => {
                                 if (!ac.customer) return null;
                                 const st = situacaoTelefone(ac.customer.phone);
