@@ -3535,6 +3535,7 @@ function FinancialAccountsTab() {
 function DRETab() {
   const [instanceId, setInstanceId] = useState('');
   const [year, setYear] = useState(new Date().getFullYear());
+  const [drill, setDrill] = useState<any>(null);
 
   const buildUrl = () => {
     const p = new URLSearchParams();
