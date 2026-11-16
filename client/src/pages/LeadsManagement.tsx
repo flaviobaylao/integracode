@@ -486,9 +486,11 @@ export default function LeadsManagement() {
         <Button size="sm" variant="outline" className="border-slate-400 text-slate-700 dark:text-slate-200 flex-1 min-w-[46%]" onClick={() => run(abrirFotoLead)} data-testid={`acao-foto-${lead.id}`}>
           <Camera className="h-4 w-4 mr-1" /> Foto
         </Button>
+        {!isVendedorExterno && (
         <Button size="sm" variant="outline" className="border-violet-400 text-violet-700 dark:text-violet-300 flex-1 min-w-[46%]" onClick={() => run((l) => setAmostraLead(l))} data-testid={`acao-amostra-${lead.id}`}>
           <FlaskConical className="h-4 w-4 mr-1" /> Amostra
         </Button>
+        )}
       </div>
     );
   };
@@ -699,6 +701,8 @@ export default function LeadsManagement() {
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'coordinator' || currentUser?.role === 'administrative';
   const isVendedor = currentUser?.role === 'vendedor';
   const isTelemarketing = currentUser?.role === 'telemarketing';
+  // Pedido de amostra para lead: só time interno. Vendedor externo (CLT/PJ/canais) não vê o botão "Amostra".
+  const isVendedorExterno = isVendedor && (currentUser as any)?.sellerType !== 'telemarketing';
   const canAct = isAdmin || isVendedor || isTelemarketing;
 
   const statusLabels: Record<string, string> = {
