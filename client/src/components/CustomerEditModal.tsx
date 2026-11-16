@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
 import { latitudeEmGrade } from "@shared/coordenadas-aproximadas";
 import HorariosPreferenciaisCliente from "@/components/HorariosPreferenciaisCliente";
@@ -341,6 +342,12 @@ export default function CustomerEditModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // 📞 Telefone no padrão (nov/2026): preenchimento/formato inválido não é salvo.
+    if (String((formData as any).phone || "").replace(/\D/g, "")) {
+      const at = analisarTelefoneBR((formData as any).phone);
+      if (!at.valido) { toast({ title: "Telefone inválido", description: "Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.", variant: "destructive" }); return; }
+      if (at.situacao === "corrigir") (formData as any).phone = at.novo;
+    }
     // 👤 RESPONSÁVEL pelo telefone: obrigatório (nov/2026) — vai para customers.contact.
     {
       const resp = String((formData as any).contact || "").replace(/\s+/g, " ").trim();

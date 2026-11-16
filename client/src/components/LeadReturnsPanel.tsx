@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useState } from "react";
 import { useQuery, useMutation } from "@/lib/queryClient";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -93,7 +94,7 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
   });
 
   const converterMut = useMutation({
-    mutationFn: async () => apiRequest("POST", `/api/leads/${converterLead!.id}/convert-to-customer`, {
+    mutationFn: async () => { if (!analisarTelefoneBR(cust.phone).valido) throw new Error("Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos."); return apiRequest("POST", `/api/leads/${converterLead!.id}/convert-to-customer`, {
       name: cust.name,
       customerType: cust.customerType || "pessoa_juridica",
       cpf: cust.cpf || null,
@@ -110,7 +111,7 @@ export default function LeadReturnsPanel({ sellerId, date, excludeIds = [] }: { 
       sellerId: converterLead!.assignedTo || sellerId,
       weekdays: cust.weekdays || ["Seg"],
       visitPeriodicity: cust.visitPeriodicity || "semanal",
-    }),
+    }); },
     onSuccess: () => {
       toast({ title: "Convertido!", description: "Lead virou cliente ativo." });
       setConverterLead(null); setCust({});

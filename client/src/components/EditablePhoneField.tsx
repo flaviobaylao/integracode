@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useState } from "react";
 import { Phone, Check, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -52,6 +53,10 @@ export default function EditablePhoneField({
       toast({ title: "Telefone não pode estar vazio", variant: "destructive" });
       return;
     }
+    if (!analisarTelefoneBR(newPhone).valido) {
+      toast({ title: "Telefone inválido", description: "Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.", variant: "destructive" });
+      return;
+    }
     if (!responsavelValido(newContact)) {
       toast({ title: "Responsável obrigatório", description: "Informe o nome do responsável por este telefone.", variant: "destructive" });
       return;
@@ -59,11 +64,12 @@ export default function EditablePhoneField({
     const resp = newContact.replace(/\s+/g, " ").trim();
     setIsLoading(true);
     try {
-      await apiRequest('PATCH', `/api/customers/${customerId}/phone`, { phone: newPhone, contact: resp });
+      const telPad = analisarTelefoneBR(newPhone).novo || newPhone;
+      await apiRequest('PATCH', `/api/customers/${customerId}/phone`, { phone: telPad, contact: resp });
       toast({ title: "Telefone e responsável atualizados!" });
       setIsEditing(false);
       setShownContact(resp);
-      onUpdate?.(newPhone, resp);
+      onUpdate?.(telPad, resp);
     } catch (error: any) {
       toast({ title: "Erro ao atualizar telefone", description: error?.message, variant: "destructive" });
       setNewPhone(phone);

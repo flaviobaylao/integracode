@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useState, useRef } from "react";
 import { useMutation } from "@/lib/queryClient";
 import { apiRequest, apiRequestMultipart, queryClient } from "@/lib/queryClient";
@@ -131,6 +132,7 @@ export default function LeadActions({ leadId, leadName, sellerId, date, onDone, 
 
   const converterMut = useMutation({
     mutationFn: async () => {
+      if (!analisarTelefoneBR(cust.phone).valido) throw new Error("Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.");
       const pos = await getPos();
       return apiRequest("POST", `/api/leads/${leadId}/convert-to-customer`, {
         name: cust.name,

@@ -1,4 +1,5 @@
 import PeriodosRecebimento from "@/components/PeriodosRecebimento";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { latitudeEmGrade } from "@shared/coordenadas-aproximadas";
 import HorariosPreferenciaisCliente from "@/components/HorariosPreferenciaisCliente";
 import { useState, useEffect } from "react";
@@ -625,6 +626,16 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
   }, [customer]);
 
   const onSubmit = async (data: InsertCustomer) => {
+    // 📞 Telefone no padrão (nov/2026): preenchimento/formato inválido não é salvo.
+    if (String((data as any).phone || '').replace(/\D/g, '')) {
+      const at = analisarTelefoneBR((data as any).phone);
+      if (!at.valido) {
+        form.setError('phone' as any, { type: 'manual', message: 'Telefone inválido' });
+        toast({ title: 'Telefone inválido', description: 'Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.', variant: 'destructive' });
+        return;
+      }
+      if (at.situacao === 'corrigir') (data as any).phone = at.novo;
+    }
     // 👤 RESPONSÁVEL pelo telefone: obrigatório (nov/2026). Vai para customers.contact.
     {
       const resp = String((data as any).contact || '').replace(/\s+/g, ' ').trim();
