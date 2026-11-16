@@ -319,6 +319,14 @@ function SeloCaptura({ r }: { r: any }) {
 // 🚫 Tirar da repescagem (10/nov/2026): só aparece quando o cliente ESTÁ em repescagem agora.
 // Pede justificativa (mín. 5 caracteres); o cliente sai de todas as listas e rotas de repescagem
 // SÓ HOJE, e quem estava com ele (atribuído/capturado) é avisado do motivo.
+// Texto do resultado do botão "Repescagem" (imediato + próximo dia útil, nov/2026).
+function textoRepescagemForcada(res: any): string {
+  const d = res?.forcedDate ? String(res.forcedDate).split("-").reverse().join("/") : "o próximo dia útil";
+  if (res?.imediato === "inserido") return `Já está na repescagem de hoje e também cai na de ${d}. Depois volta às regras normais.`;
+  if (res?.imediato === "ja_estava") return `Ele já estava na repescagem de hoje e também cai na de ${d}.`;
+  return `Hoje não tem repescagem (fim de semana); ele cai na de ${d}.`;
+}
+
 function TirarDaRepescagem({ r, compacto }: { r: any; compacto?: boolean }) {
   const { toast } = useToast();
   const { pedirMotivo, MotivoModal } = useMotivoInativacao();
@@ -326,7 +334,8 @@ function TirarDaRepescagem({ r, compacto }: { r: any; compacto?: boolean }) {
     mutationFn: async (motivo: string) => apiRequest("POST", "/api/repescagem/retirar", { customerId: r.customerId || r.entityId, motivo, reportId: r.id }),
     onSuccess: (d: any) => {
       const av = Array.isArray(d?.notificados) && d.notificados.length ? ` Avisado: ${d.notificados.map((n: any) => n.nome).join(", ")}.` : "";
-      toast({ title: "Retirado da repescagem (só hoje)", description: `Saiu das listas e rotas de repescagem de hoje; amanhã volta às regras normais.${av}` });
+      toast({ title: "Retirado da repescagem", description: `Saiu na hora das listas e rotas de repescagem e não volta neste ciclo; só cai de novo se perder a próxima visita.${av}` });
+      queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
     },
@@ -336,12 +345,12 @@ function TirarDaRepescagem({ r, compacto }: { r: any; compacto?: boolean }) {
   return (
     <>
       <Button size="sm" variant="outline" className={`border-rose-400 text-rose-700 hover:bg-rose-50${compacto ? " h-7 text-xs" : ""}`} disabled={mut.isPending}
-        title="Tira o cliente da repescagem SÓ HOJE (sai de todas as listas e rotas de repescagem do dia). Exige justificativa."
+        title="Tira o cliente da repescagem agora: sai de todas as listas e rotas e não volta neste ciclo. Cliente capturado não pode ser tirado. Exige justificativa."
         data-testid={`cr-tirar-repescagem-${r.id}`}
         onClick={async () => {
           const m = await pedirMotivo({
             titulo: `Tirar ${r.entityName || "cliente"} da repescagem`,
-            descricao: "Ele sai de todas as listas e rotas de repescagem SÓ HOJE e quem estava com ele é avisado. Amanhã volta às regras normais. Informe a justificativa (mín. 5 caracteres).",
+            descricao: "Ele sai agora de todas as listas e rotas de repescagem e não cai amanhã: é como se tivesse sido atendido neste ciclo. Só volta a cair se perder a próxima visita. Quem estava com ele é avisado. Se estiver capturado por alguém, não sai. Informe a justificativa (mín. 5 caracteres).",
             textoBotao: "Tirar da repescagem",
           });
           if (m) mut.mutate(m);
@@ -764,8 +773,7 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
       return res;
     },
     onSuccess: (res: any) => {
-      const d = res?.forcedDate ? String(res.forcedDate).split("-").reverse().join("/") : "amanhã";
-      toast({ title: "Enviado para a repescagem", description: `O cliente cai na repescagem de ${d} por decisão do Admin. O report foi para Resolvidas.` });
+      toast({ title: "Enviado para a repescagem", description: `${textoRepescagemForcada(res)} O report foi para Resolvidas.` });
       queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests"] });
       queryClient.invalidateQueries({ queryKey: ["/api/change-requests/states"] });
@@ -986,9 +994,9 @@ function PendingCard({ r, selected, onToggleSelect, onAbrirAcoes, onAbrirHistori
           <EnviarParaAgenda r={r} />
           {r.entityType === "customer" && (<>
             <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50" disabled={busy}
-              title="Envia este cliente para a repescagem no próximo dia útil (decisão do Admin). Depois ele volta a respeitar as regras normais."
+              title="Envia este cliente para a repescagem agora (hoje) e no próximo dia útil (decisão do Admin). Depois ele volta a respeitar as regras normais."
               data-testid={`cr-repescagem-${r.id}`}
-              onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE no próximo dia útil (sexta → segunda) (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
+              onClick={() => { if (window.confirm(`Enviar ${r.entityName || "este cliente"} para a repescagem?\n\nEle entra na repescagem AGORA (hoje) e também no próximo dia útil, por decisão do Admin. Depois volta a respeitar as regras normais.`)) forcarRepescagemMut.mutate(); }}>
               {forcarRepescagemMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Target className="h-4 w-4 mr-1" /> Repescagem</>}
             </Button>
             <TirarDaRepescagem r={r} />
@@ -1145,8 +1153,7 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
   const forcarRepescagemMut = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/repescagem/forcar", { customerId: r.customerId || r.entityId, reportId: r.id }),
     onSuccess: (res: any) => {
-      const d = res?.forcedDate ? String(res.forcedDate).split("-").reverse().join("/") : "amanhã";
-      toast({ title: "Enviado para a repescagem", description: `O cliente cai na repescagem de ${d} por decisão do Admin.` });
+      toast({ title: "Enviado para a repescagem", description: textoRepescagemForcada(res) });
       queryClient.invalidateQueries({ queryKey: ["/api/repescagem/assignments"] });
     },
     onError: (e: any) => toast({ title: "Erro ao enviar para repescagem", description: e?.message || "Tente novamente.", variant: "destructive" }),
@@ -1230,9 +1237,9 @@ function ResolvedCard({ r, onAbrirAcoes, onAbrirHistoricoLead }: { r: any; onAbr
           <div className="flex items-center gap-2 flex-wrap">
             {r.entityType === "customer" && (
               <Button size="sm" variant="outline" className="border-blue-400 text-blue-700 hover:bg-blue-50 h-7 text-xs" disabled={forcarRepescagemMut.isPending}
-                title="Envia este cliente para a repescagem no próximo dia útil (decisão do Admin). Depois ele volta a respeitar as regras normais."
+                title="Envia este cliente para a repescagem agora (hoje) e no próximo dia útil (decisão do Admin). Depois ele volta a respeitar as regras normais."
                 data-testid={`cr-repescagem-resolved-${r.id}`}
-                onClick={() => { if (window.confirm("Enviar este cliente para a repescagem?\n\nEle cai na repescagem EXCEPCIONALMENTE no próximo dia útil (sexta → segunda) (decisão do Admin) e depois volta a respeitar todas as regras normais.")) forcarRepescagemMut.mutate(); }}>
+                onClick={() => { if (window.confirm(`Enviar ${r.entityName || "este cliente"} para a repescagem?\n\nEle entra na repescagem AGORA (hoje) e também no próximo dia útil, por decisão do Admin. Depois volta a respeitar as regras normais.`)) forcarRepescagemMut.mutate(); }}>
                 {forcarRepescagemMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Target className="h-3.5 w-3.5 mr-1" /> Repescagem</>}
               </Button>
             )}
