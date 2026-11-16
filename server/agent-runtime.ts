@@ -112,8 +112,11 @@ const CARD_LINK_TOOL: any = {
 // Quem chega pelo Instagram nao tem telefone; sem ele fica fora de repescagem, avisos e cobranca.
 const WHATSAPP_TOOL: any = {
   name: 'salvar_whatsapp',
-  description: 'Grava o WhatsApp (celular com DDD) que o cliente informou nesta conversa do Instagram. Use assim que o cliente mandar o numero. O sistema valida o numero e guarda no cadastro; se responder que e invalido, peca de novo com DDD. Depois de salvar, confirme em poucas palavras e siga o atendimento.',
-  input_schema: { type: 'object', properties: { numero: { type: 'string', description: 'WhatsApp com DDD, como o cliente escreveu (ex.: 62 99999-1234)' } }, required: ['numero'] },
+  description: 'Grava o WhatsApp (celular com DDD) e o nome que o cliente informou nesta conversa do Instagram. Use assim que o cliente mandar o numero. O sistema valida o numero e guarda no cadastro; se responder que e invalido, peca de novo com DDD. Depois de salvar, confirme em poucas palavras e siga o atendimento.',
+  input_schema: { type: 'object', properties: {
+    numero: { type: 'string', description: 'WhatsApp com DDD, como o cliente escreveu (ex.: 62 99999-1234)' },
+    nome: { type: 'string', description: 'Nome do cliente, se ele tiver dito. Opcional.' },
+  }, required: ['numero'] },
 };
 
 // Garante a tabela de vínculo pedido<->cobrança PIX do Instagram (idempotente).
@@ -367,6 +370,33 @@ export async function limparPausa(conversationId?: string): Promise<number> {
 export async function execTool(name: string, input: any, ctx: any): Promise<string> {
   try {
     if (name === 'transferir_humano') {
+      // 📱 INSTAGRAM (nov/2026) — no Direct NAO existe caminho de volta: o ChatCenter so
+      // fala por WhatsApp. Transferir sem telefone deixava o cliente conversando sozinho
+      // com a IA pausada por 24h, enquanto o atendente escrevia mensagens que nunca saiam.
+      // Entao, no Instagram, a transferencia so conclui depois que tivermos o contato.
+      if (String(ctx?.channel || '') === 'instagram' && ctx?.conversationId) {
+        let wa: string | null = null;
+        try {
+          const { whatsappDaConversa } = await import('./ig-whatsapp');
+          wa = await whatsappDaConversa(ctx.conversationId);
+        } catch { /* sem leitura, segue pedindo o numero */ }
+        if (!wa) {
+          const fone = await (async () => {
+            try {
+              const { foneDaEquipeFormatado } = await import('./ig-whatsapp');
+              return await foneDaEquipeFormatado();
+            } catch { return '(62) 99578-2812'; }
+          })();
+          return 'AINDA NAO TRANSFERI — preciso do contato primeiro.'
+            + ' Diga ao cliente, de forma simpatica e curta, que voce vai passar para um atendente e que o'
+            + ' atendimento continua pelo WhatsApp (e por la que a equipe consegue responder, confirmar o pedido'
+            + ' e acompanhar a entrega). Peca o NOME e o WHATSAPP COM DDD.'
+            + ' Quando ele responder, chame salvar_whatsapp com numero e nome, e so entao chame transferir_humano de novo.'
+            + ' Se ele NAO quiser passar o numero, nao insista: de o WhatsApp da Honest ' + fone
+            + ' para ele chamar a equipe por la, e siga ajudando no que puder.'
+            + ' NUNCA prometa que um atendente vai responder aqui pelo Direct — ninguem consegue responder por aqui.';
+        }
+      }
       if (ctx?.conversationId) {
         // Grava o INSTANTE da transferencia (antes gravava '1' e nada limpava: a conversa e
         // unica por telefone, entao aquele cliente nunca mais era atendido pela IA).
@@ -380,7 +410,18 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
         try {
           if ((await getSetting('ia_front_line', 'off')) === 'on') {
             const { handoffParaHumano } = await import('./ia-fila');
-            const h = await handoffParaHumano(ctx.conversationId, String(ctx.phone || ''), String(input?.motivo || ''));
+            // No Instagram passamos o WHATSAPP, nao o IGSID. E o que o atendente precisa
+            // para ligar de volta, e e o que faz `donoDaCarteira` conseguir casar o cliente
+            // com a carteira dele (a busca e por DDD + 8 ultimos digitos no cadastro).
+            let _foneHandoff = String(ctx.phone || '');
+            if (String(ctx?.channel || '') === 'instagram') {
+              try {
+                const { whatsappDaConversa } = await import('./ig-whatsapp');
+                const _wa = await whatsappDaConversa(ctx.conversationId);
+                if (_wa) _foneHandoff = _wa;
+              } catch { /* sem numero, segue com o id do Instagram */ }
+            }
+            const h = await handoffParaHumano(ctx.conversationId, _foneHandoff, String(input?.motivo || ''));
             if (h?.foraExpediente) {
               return 'OK: conversa registrada, MAS hoje NAO e dia util (fim de semana ou feriado) e nao ha atendimento humano. Explique isso ao cliente de forma simpatica, diga que um atendente entra em contato ' + (h.retorno || 'no proximo dia util') + ', e se despeça. NAO prometa retorno hoje.';
             }
@@ -392,6 +433,9 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
             }
           }
         } catch (e: any) { console.error('[AGENT-RUNTIME] repasse pos-transferencia', e?.message || e); }
+      }
+      if (String(ctx?.channel || '') === 'instagram') {
+        return 'OK: conversa transferida. Confirme ao cliente, em poucas palavras, que um atendente vai chamar ele NO WHATSAPP que ele informou. NAO diga que alguem responde aqui pelo Direct. Depois pare de responder.';
       }
       return 'OK: conversa transferida para atendimento humano. Pare de responder e informe o cliente que um atendente assumirá em instantes.';
     }
@@ -441,10 +485,12 @@ export async function execTool(name: string, input: any, ctx: any): Promise<stri
       const { salvarWhatsappDaConversa } = await import('./ig-whatsapp');
       let erpId: string | null = null;
       try { erpId = await resolveCustomerId(ctx, undefined); } catch {}
-      const r = await salvarWhatsappDaConversa({ conversationId: ctx?.conversationId, numero: String(input?.numero || ''), erpCustomerId: erpId, igsid: String(ctx?.channel || '') === 'instagram' ? String(ctx?.phone || '') : null });
+      const r = await salvarWhatsappDaConversa({ conversationId: ctx?.conversationId, numero: String(input?.numero || ''), nome: input?.nome ? String(input.nome) : null, erpCustomerId: erpId, igsid: String(ctx?.channel || '') === 'instagram' ? String(ctx?.phone || '') : null });
       if (!r.ok) return 'Numero invalido: "' + String(input?.numero || '') + '". Peca de novo o WhatsApp com DDD (ex.: 62 99999-1234).';
       if (ctx) (ctx as any).whatsapp = r.numero;
-      return 'WhatsApp salvo: ' + r.numero + '. Confirme ao cliente em poucas palavras e siga o atendimento. Use esse numero no campo telefone do registrar_pedido.';
+      return 'WhatsApp salvo: ' + r.numero + (r.nomeSalvo ? ' (nome: ' + r.nomeSalvo + ')' : '')
+        + '. Confirme ao cliente em poucas palavras e siga o atendimento. Use esse numero no campo telefone do registrar_pedido.'
+        + ' Se o cliente tinha pedido para falar com um atendente, chame transferir_humano agora.';
     }
     if (name === 'registrar_pedido') return await registrarPedido(input || {}, ctx);
     if (name === 'buscar_cliente') { const { buscarCliente } = await import('./ia-cliente-cadastro'); return await buscarCliente(input || {}); }
