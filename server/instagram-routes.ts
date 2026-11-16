@@ -52,6 +52,26 @@ async function resolveUsername(igsid: string): Promise<string | null> {
 }
 
 // Envia texto para o usuario do Instagram pela Graph API (Send API).
+/**
+ * Tira a marcacao de Markdown antes de mandar para o Direct.
+ * A IA escreve `**negrito**` porque no WhatsApp isso vira negrito. O Instagram nao
+ * formata nada: o cliente estava lendo os asteriscos crus na tela ("bem-vindo ao
+ * atendimento da **Honest Sucos Naturais**"). Aqui so os MARCADORES saem; o texto fica.
+ */
+export function limparMarkdown(txt: any): string {
+  let t = String(txt ?? "");
+  t = t.replace(/```+\s*\w*\n?([\s\S]*?)```+/g, "$1");       // blocos de codigo
+  t = t.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1: $2"); // [texto](link)
+  t = t.replace(/(\*\*\*|___)(?=\S)([\s\S]*?\S)\1/g, "$2");  // ***negrito italico***
+  t = t.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "$2");     // **negrito**
+  t = t.replace(/(?<![\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, "$1"); // *italico*
+  t = t.replace(/(?<![\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, "$1");   // _italico_
+  t = t.replace(/`([^`\n]+)`/g, "$1");                       // `codigo`
+  t = t.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "");            // # titulo
+  t = t.replace(/^[ \t]{0,3}>[ \t]?/gm, "");                 // > citacao
+  return t;
+}
+
 async function igSend(igsid: string, text: string): Promise<{ success: boolean; id?: string; error?: string }> {
   try {
     const { token, base } = await credIg();
@@ -59,7 +79,7 @@ async function igSend(igsid: string, text: string): Promise<{ success: boolean; 
     const r = await fetch(`${base}/me/messages?access_token=${encodeURIComponent(token)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ recipient: { id: igsid }, message: { text: String(text || "").slice(0, 950) } }),
+      body: JSON.stringify({ recipient: { id: igsid }, message: { text: limparMarkdown(text).slice(0, 950) } }),
     });
     const j: any = await r.json().catch(() => ({}));
     if (!r.ok) return { success: false, error: `graph ${r.status}: ${JSON.stringify(j).slice(0, 200)}` };
