@@ -23381,6 +23381,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn('[MINIMO] leitura da configuracao falhou (segue sem trava):', _em?.message);
       }
 
+      // 🚚 AREA DE ENTREGA (29/set/2026) — rede de seguranca do pedido da LOJA.
+      // PIX e cartao ja sao barrados antes da cobranca; isto cobre o boleto, que cai
+      // direto aqui, e qualquer POST com a pagina em cache. A regra e determinista
+      // sobre o MESMO endereco, entao pedido que passou antes da cobranca passa aqui
+      // tambem — o PIX/cartao ja pago nunca e barrado depois do dinheiro entrar.
+      // Endereco sem cidade legivel NAO bloqueia (ver server/entrega-area.ts).
+      if (String((validatedData as any).source || '') === 'hotsite') {
+        const { barrarSeForaDaAreaDeEntrega } = await import('./entrega-area');
+        const fora = barrarSeForaDaAreaDeEntrega(validatedData.customer?.address);
+        if (fora) {
+          console.warn(`🚚 [AREA] pedido da loja recusado — ${fora.cidade}/${fora.uf} fora da area atendida`);
+          return res.status(400).json(fora);
+        }
+      }
+
     // 🎟️ CUPOM PROMOCIONAL NA LOJA (04/ago/2026) — UM desconto por pedido, nesta ordem:
     //   cupom > codigo de indicacao > recompensa automatica.  Mesma regra do pedido do
     //   vendedor (VIGIA CUPOM vendedor, acima). Aqui so VALIDAMOS; o resgate e gravado
