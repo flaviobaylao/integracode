@@ -27,7 +27,18 @@ export type Premissa = {
   pedidoMinPf?: number; pedidoMinPfLabel?: string;
   // Momento (BRT) em que o flag foi ligado/desligado — "AAAA-MM-DD HH:MM".
   ativadaEm?: string | null; desativadaEm?: string | null;
+  // Tipo de cliente que conta como novo (16/nov/2026): só nas premissas de
+  // cliente novo. Ausente = a premissa não tem esse filtro.
+  valePj?: boolean; valePf?: boolean;
 };
+
+// "Só pessoa jurídica", "PJ e PF"... para o chip das regras e a tela do vendedor.
+function textoTipoCliente(pj?: boolean, pf?: boolean): string {
+  if (pj && pf) return "Pessoa jurídica e pessoa física";
+  if (pj) return "Só pessoa jurídica (CNPJ)";
+  if (pf) return "Só pessoa física (CPF)";
+  return "Nenhum tipo de cliente marcado";
+}
 const quando = (t?: string | null) => {
   if (!t) return "";
   const [d, h] = String(t).split(" ");
@@ -203,6 +214,8 @@ export default function CampanhaOutubro() {
       // que está gravado em vez de zerar.
       ...(novo.pedidoMin === undefined ? {} : { pedidoMin: novo.pedidoMin }),
       ...(novo.pedidoMinPf === undefined ? {} : { pedidoMinPf: novo.pedidoMinPf }),
+      ...(novo.valePj === undefined ? {} : { valePj: novo.valePj }),
+      ...(novo.valePf === undefined ? {} : { valePf: novo.valePf }),
     });
     refetch();
   };
@@ -291,6 +304,39 @@ export default function CampanhaOutubro() {
                 {p.chave === "comissao_novo" ? p.descricao : p.modo === "percentual" ? <>sobre o {p.base}.</> : p.descricao}
               </div>
 
+              {/* REGRA DE TIPO DE CLIENTE (16/nov/2026): quem conta como cliente
+                  novo — pessoa jurídica (CNPJ) e/ou pessoa física (CPF). */}
+              {(p.valePj !== undefined || p.valePf !== undefined) && (
+                <div className={`mt-2 rounded-md border px-2.5 py-2 ${p.ativa ? "border-emerald-100 bg-emerald-50/60" : "border-gray-200 bg-white"}`}
+                  data-testid={`premissa-tipo-${p.chave}`}>
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Vale para cliente</div>
+                  {admin ? (
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                      <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-gray-700">
+                        <input type="checkbox" checked={!!p.valePj} className="h-3.5 w-3.5 accent-emerald-600"
+                          onChange={(e) => salvarPremissa(p, { valePj: e.target.checked })}
+                          data-testid={`premissa-pj-${p.chave}`} />
+                        Pessoa jurídica
+                      </label>
+                      <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-gray-700">
+                        <input type="checkbox" checked={!!p.valePf} className="h-3.5 w-3.5 accent-emerald-600"
+                          onChange={(e) => salvarPremissa(p, { valePf: e.target.checked })}
+                          data-testid={`premissa-pf-${p.chave}`} />
+                        Pessoa física
+                      </label>
+                    </div>
+                  ) : (
+                    <div className="mt-0.5 text-[12px] font-semibold text-gray-700">{textoTipoCliente(p.valePj, p.valePf)}</div>
+                  )}
+                  {!p.valePj && !p.valePf && (
+                    <div className="mt-1 text-[10px] text-amber-700">Nenhum marcado: nenhum cliente conta como novo neste mês.</div>
+                  )}
+                  {p.valePj && !p.valePf && (
+                    <div className="mt-1 text-[10px] text-gray-500">Cliente com CPF não conta como novo neste mês.</div>
+                  )}
+                </div>
+              )}
+
               {admin && (
                 <div className="mt-3 grid grid-cols-2 gap-2 border-t border-dashed border-gray-200 pt-3">
                   <label className={`text-[11px] text-gray-500 ${p.chave === "comissao_novo" ? "col-span-2" : ""}`}>
@@ -370,7 +416,7 @@ export default function CampanhaOutubro() {
                 <div className="mt-3 border-t border-dashed border-gray-200 pt-3">
                   <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Regras do novo cliente</div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {[`Pedido mín. ${brl(p.gatilho)}`, ...REGRAS].map((r) => (
+                    {[`Pedido mín. ${brl(p.gatilho)}`, ...(p.valePj !== undefined ? [textoTipoCliente(p.valePj, p.valePf)] : []), ...REGRAS].map((r) => (
                       <span key={r} className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] text-gray-600"><Check />{r}</span>
                     ))}
                   </div>
