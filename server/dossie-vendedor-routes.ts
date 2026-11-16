@@ -337,6 +337,11 @@ export function registerDossieVendedor(app: Express) {
           ativo: c.ativo === true, vendedorId: cad ? cad.vendedorId : null, vendedor: c.vendedor || "Sem vendedor",
           rede: c.customerId ? (redePorCliente.get(String(c.customerId)) || "") : "",
           porMes: c.porMes || {}, total: Number(c.total) || 0,
+          // `conquista` é a entrada do cliente NA HONEST: a menor data entre o
+          // cadastro e a 1ª venda de todos os tempos — a mesma régua da coluna
+          // "Data de conquista" da aba Carteira, para as duas telas não darem
+          // datas diferentes do mesmo cliente.
+          conquista: c.conquista || null,
           ultimaCompra: c.ultimaVendaData || null,
           ultimaCompraValor: Number(c.ultimaVendaValor) || 0,
           ultimoMesNoPeriodo: c.ultimaCompra || null,
