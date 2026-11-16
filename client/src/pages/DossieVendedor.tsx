@@ -165,6 +165,9 @@ const tendenciaDe = (vs: number[]): number | null => {
   return (fim - ini) / ini * 100;
 };
 
+/** Abaixo desta variação (em %, para cima ou para baixo) a linha fica cinza. */
+const FAIXA_NEUTRA = 10;
+
 /** Mini-gráfico do período, com o último ponto marcado. */
 function Evolucao({ valores, titulo }: { valores: number[]; titulo?: string }) {
   if (valores.length < 2) return <span className="text-slate-300">—</span>;
@@ -175,9 +178,10 @@ function Evolucao({ valores, titulo }: { valores: number[]; titulo?: string }) {
   const py = (v: number) => A - 3 - ((v - min) / faixa) * (A - 6);
   const d = valores.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
   const t = tendenciaDe(valores);
-  // Verde/vermelho só a partir de 5%: abaixo disso é oscilação, não tendência,
-  // e pintar oscilação de vermelho faz o olho procurar problema onde não há.
-  const cor = t === null || Math.abs(t) < 5 ? "#64748b" : t > 0 ? "#047857" : "#b91c1c";
+  // Verde/vermelho só a partir de 10% (Flavio, 16/11/2026; era 5%): abaixo
+  // disso é oscilação, não tendência, e pintar oscilação de vermelho faz o olho
+  // procurar problema onde não há.
+  const cor = t === null || Math.abs(t) < FAIXA_NEUTRA ? "#64748b" : t > 0 ? "#047857" : "#b91c1c";
   return (
     <svg width={L} height={A} className="align-middle" role="img"
       aria-label={titulo || "evolução no período"}><title>{titulo || ""}</title>
@@ -815,7 +819,7 @@ export default function DossieVendedor() {
                     1ª venda de todos os tempos —, então ela pode ser anterior ao período do filtro.
                     {" "}<b>Evolução</b> desenha o mês a mês inteiro do filtro;
                     a cor compara a média do primeiro terço do período com a do último, e fica cinza quando a
-                    diferença é menor que 5% (oscilação, não tendência).
+                    diferença é menor que 10% (oscilação, não tendência) — o “i” no cabeçalho da coluna explica.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -864,7 +868,53 @@ export default function DossieVendedor() {
                         {rotMes(m)}{m === mesCorrente ? "*" : ""}
                       </Th>
                     ))}
-                    {meses.length > 1 && <Th cod="evolucao" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Evolução</Th>}
+                    {meses.length > 1 && (
+                      <Th cod="evolucao" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">
+                        Evolução
+                        {/* stopPropagation: o <th> inteiro ordena ao clicar, e
+                            abrir a explicação não pode reordenar a tabela. */}
+                        <span onClick={(e) => e.stopPropagation()} className="inline-flex">
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button type="button" aria-label="Como a cor da evolução é definida"
+                                data-testid="dossie-i-evolucao"
+                                className="text-muted-foreground hover:text-foreground ml-0.5 align-middle">
+                                <Info className="h-3.5 w-3.5" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent align="start" className="w-[380px] text-xs space-y-2 font-normal text-foreground">
+                              <p className="font-semibold text-sm">O que a cor quer dizer</p>
+                              <p>
+                                O desenho é o faturamento mês a mês do período do filtro. A cor não olha o desenho
+                                inteiro: ela compara a <b>média do primeiro terço</b> do período com a <b>média do
+                                último terço</b>.
+                              </p>
+                              {meses.length >= 3 && (
+                                <p className="text-muted-foreground">
+                                  Neste filtro ({rotPeriodo}): média de{" "}
+                                  <b>{rotMes(meses[0])} a {rotMes(meses[Math.max(0, Math.round(meses.length / 3) - 1)])}</b>{" "}
+                                  contra a de <b>{rotMes(meses[meses.length - Math.max(1, Math.round(meses.length / 3))])} a {rotMes(meses[meses.length - 1])}</b>.
+                                </p>
+                              )}
+                              <ul className="list-disc pl-4 space-y-1">
+                                <li><span className="font-semibold" style={{ color: "#047857" }}>Verde</span> — subiu {FAIXA_NEUTRA}% ou mais.</li>
+                                <li><span className="font-semibold" style={{ color: "#b91c1c" }}>Vermelho</span> — caiu {FAIXA_NEUTRA}% ou mais.</li>
+                                <li><span className="font-semibold" style={{ color: "#64748b" }}>Cinza</span> — variou menos de {FAIXA_NEUTRA}% para qualquer lado: é oscilação de mês, não tendência.</li>
+                              </ul>
+                              <p className="text-muted-foreground">
+                                Terços em vez de primeiro mês contra último mês de propósito: um mês atípico na ponta
+                                — um pedido grande, um mês sem compra — inverteria o sinal de uma carteira estável.
+                                Os meses do meio aparecem no desenho, mas não entram na conta da cor.
+                              </p>
+                              <p className="text-muted-foreground">
+                                Cliente que começou zerado e passou a comprar conta como +100%. Com um mês só no
+                                período não há desenho nem cor. Passe o cursor no gráfico para ver a tendência em número.
+                              </p>
+                            </PopoverContent>
+                          </Popover>
+                        </span>
+                      </Th>
+                    )}
                     <Th cod="total" atual={ord} onOrdenar={ordenar} className="px-3 text-right">Total</Th>
                   </tr>
                 </thead>
