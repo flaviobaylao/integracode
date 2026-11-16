@@ -87,6 +87,12 @@ function situacaoTelefone(phone: any): SituacaoTel {
   if (a.situacao === 'corrigir') return { grupo: 'invalido', selo: 'FORA DO PADRÃO', dica: `Número fora do padrão (${a.motivo}). Correto: ${a.novo}` };
   return { grupo: 'invalido', selo: 'TELEFONE INVÁLIDO', dica: `Telefone inválido (${a.motivo}) — corrija no cadastro.` };
 }
+const SEM_PERIODICIDADE = 'Sem periodicidade';
+function rotuloPeriodicidade(p: any): string {
+  const v = String(p || '').trim();
+  if (!v) return SEM_PERIODICIDADE;
+  return v === 'semanal' ? 'Semanal' : v === 'quinzenal' ? 'Quinzenal' : v === 'mensal' ? 'Mensal' : v.charAt(0).toUpperCase() + v.slice(1);
+}
 const TEL_INVALIDO = 'Inválido';
 const TEL_SEM = 'Sem telefone';
 const TEL_SEM_CONFIRMACAO = 'Sem confirmação';
@@ -330,7 +336,8 @@ export default function ActiveCustomers() {
   const { sellerOptions, resolveSeller } = useActiveSellers();
   const [sellerMulti, setSellerMulti] = useState<string[]>([]);
   const [dayMulti, setDayMulti] = useState<string[]>([]);
-  const [selectedPeriodicity, setSelectedPeriodicity] = useState<string>("");
+  // Período (periodicidade) com múltipla escolha (nov/2026).
+  const [periodMulti, setPeriodMulti] = useState<string[]>([]);
   const [selectedSemana, setSelectedSemana] = useState<string>("");
   // nov/2026: filtro de data = PERÍODO (de/até) da ÚLTIMA COMPRA do cliente.
   const [compraDe, setCompraDe] = useState<string>("");
@@ -862,6 +869,12 @@ export default function ActiveCustomers() {
     )
   ).sort();
 
+  const periodOptions = [
+    ...['Semanal', 'Quinzenal', 'Mensal'].filter((r) => periodicities.some((p) => rotuloPeriodicidade(p) === r)),
+    ...periodicities.map(rotuloPeriodicidade).filter((r) => !['Semanal', 'Quinzenal', 'Mensal', SEM_PERIODICIDADE].includes(r)),
+    ...(activeCustomers.some((ac) => ac.customer && !ac.customer.visitPeriodicity) ? [SEM_PERIODICIDADE] : []),
+  ];
+
   // Padroniza nomes de cidade: agrupa variações (acento, caixa, sufixo " (UF)")
   // sob um único rótulo, escolhendo a melhor grafia existente entre as variações.
   // Cidade PADRONIZADA (nomenclatura unica em todo o Integra): mapeia p/ o nome oficial GO/DF.
@@ -939,7 +952,7 @@ export default function ActiveCustomers() {
         || custDays.some((d) => dayMulti.includes(d));
       
       // Filtro de periodicidade
-      const matchesPeriodicity = !selectedPeriodicity || ac.customer?.visitPeriodicity === selectedPeriodicity;
+      const matchesPeriodicity = multiMatch(periodMulti, rotuloPeriodicidade(ac.customer?.visitPeriodicity));
       const matchesSemana = !selectedSemana || (String((ac.customer as any)?.semanaAtendimento || 'toda') === selectedSemana);
       
       // Filtro de tipo (virtual/presencial)
@@ -1341,18 +1354,7 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
               
-              <Select value={selectedPeriodicity} onValueChange={setSelectedPeriodicity}>
-                <SelectTrigger className="w-[110px] h-9" data-testid="select-periodicity-filter">
-                  <SelectValue placeholder="Período" />
-                </SelectTrigger>
-                <SelectContent>
-                  {periodicities.map((period) => (
-                    <SelectItem key={period} value={period}>
-                      {period === 'semanal' ? 'Semanal' : period === 'quinzenal' ? 'Quinzenal' : period === 'mensal' ? 'Mensal' : period}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MultiSelect label="Período" options={periodOptions} selected={periodMulti} onChange={setPeriodMulti} testId="filter-periodicity-active" labelTudo="Mostrar tudo" />
 
               <Select value={selectedSemana} onValueChange={setSelectedSemana}>
                 <SelectTrigger className="w-[130px] h-9" data-testid="select-semana-filter">
@@ -1397,7 +1399,7 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
-              <MultiSelect label="Telefone" options={TEL_OPCOES} selected={telMulti} onChange={setTelMulti} testId="filter-telefone-active" />
+              <MultiSelect label="Telefone" options={TEL_OPCOES} selected={telMulti} onChange={setTelMulti} testId="filter-telefone-active" labelTudo="Mostrar tudo" />
 
               <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={(v) => { setCityMulti(v); setNeighborhoodMulti([]); }} testId="filter-city-active" />
 
@@ -1434,7 +1436,7 @@ export default function ActiveCustomers() {
                   setSelectedSeller("");
                   setDayMulti([]);
                   setSelectedVirtualType("");
-                  setSelectedPeriodicity("");
+                  setPeriodMulti([]);
                   setSelectedSemana("");
                   setCompraDe("");
                   setCompraAte("");
@@ -1472,7 +1474,7 @@ export default function ActiveCustomers() {
                   🚫 {bulkInactivateMutation.isPending ? "Inativando…" : `Inativar selecionados (${selectedCustomerIds.size})`}
                 </Button>
               )}
-              {(searchTerm || selectedSeller || dayMulti.length > 0 || selectedPeriodicity || selectedSemana || selectedVirtualType || selectedPositivation || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
+              {(searchTerm || selectedSeller || dayMulti.length > 0 || periodMulti.length > 0 || telMulti.length > 0 || selectedSemana || selectedVirtualType || selectedPositivation || cityMulti.length > 0 || neighborhoodMulti.length > 0) && (
                 <span className="text-xs text-muted-foreground">
                   {activeCustomers.length} total
                 </span>
