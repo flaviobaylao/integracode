@@ -71,6 +71,22 @@ import {
   Info
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { analisarTelefoneBR } from "@shared/telefone";
+
+// 📞 nov/2026: situação do telefone para o selo e o filtro "Telefone".
+//   valido = celular no padrão · fixo = fixo no padrão · invalido = vazio, inválido ou fora do padrão.
+type SituacaoTel = { grupo: 'valido' | 'fixo' | 'invalido'; selo: string; dica: string };
+function situacaoTelefone(phone: any): SituacaoTel {
+  const a = analisarTelefoneBR(phone);
+  if (a.situacao === 'manter') {
+    return a.tipo === 'fixo'
+      ? { grupo: 'fixo', selo: 'FIXO', dica: 'Telefone fixo — normalmente não tem WhatsApp. Se possível, cadastre o celular do responsável.' }
+      : { grupo: 'valido', selo: '', dica: '' };
+  }
+  if (a.situacao === 'vazio') return { grupo: 'invalido', selo: 'SEM TELEFONE', dica: 'Cadastro sem telefone — preencha telefone e responsável (o próximo pedido exige).' };
+  if (a.situacao === 'corrigir') return { grupo: 'invalido', selo: 'FORA DO PADRÃO', dica: `Número fora do padrão (${a.motivo}). Correto: ${a.novo}` };
+  return { grupo: 'invalido', selo: 'TELEFONE INVÁLIDO', dica: `Telefone inválido (${a.motivo}) — corrija no cadastro.` };
+}
 import { useAuth } from "@/hooks/useAuth";
 import {
   AlertDialog,
@@ -315,6 +331,7 @@ export default function ActiveCustomers() {
   const [selectedVirtualType, setSelectedVirtualType] = useState<string>("");
   const [selectedPositivation, setSelectedPositivation] = useState<string>("");
   const [selectedCoords, setSelectedCoords] = useState<string>(""); // "", "com", "sem"
+  const [selectedTelefone, setSelectedTelefone] = useState<string>(""); // "", "valido", "invalido", "fixo"
   const [cityMulti, setCityMulti] = useState<string[]>([]);
   const [neighborhoodMulti, setNeighborhoodMulti] = useState<string[]>([]);
   const [sortColumn, setSortColumn] = useState<'previousMonth' | 'currentMonth' | 'variation' | 'name' | null>(null);
@@ -759,6 +776,7 @@ export default function ActiveCustomers() {
           return (isNaN(nla) || isNaN(nlo)) ? `${la},${lo}` : `${nla.toFixed(6)},${nlo.toFixed(6)}`;
         })(),
         'Telefone': ac.customer?.phone || '',
+        'Situação do Telefone': (() => { const st = situacaoTelefone(ac.customer?.phone); return st.grupo === 'valido' ? 'Válido' : st.grupo === 'fixo' ? 'Fixo' : st.selo; })(),
         'Vendedor': ac.customer?.sellerName || '',
         'Segmento': (ac.customer as any)?.segmentoPrincipal || '',
         'Tipo': ac.customer?.virtualService ? 'Virtual' : 'Presencial',
@@ -785,7 +803,7 @@ export default function ActiveCustomers() {
       return;
     }
 
-    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Semana do mês', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Situação do Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Semana do mês', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
     const csvContent = [
       headers.join(';'),
       ...dataToExport.map(row =>
@@ -944,7 +962,9 @@ export default function ActiveCustomers() {
       // Filtro de coordenadas (com/sem lat-long no cadastro)
       const hasCoords = !!((ac.customer as any)?.latitude && (ac.customer as any)?.longitude);
       const matchesCoords = !selectedCoords || (selectedCoords === 'com' ? hasCoords : !hasCoords);
-      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords;
+      // Filtro de telefone: válido (celular no padrão) / inválido (vazio, inválido ou fora do padrão) / fixo
+      const matchesTelefone = !selectedTelefone || situacaoTelefone(ac.customer?.phone).grupo === selectedTelefone;
+      return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords && matchesTelefone;
     })
     .sort((a, b) => {
       if (!sortColumn) return 0;
@@ -1352,6 +1372,17 @@ export default function ActiveCustomers() {
                 </SelectContent>
               </Select>
 
+              <Select value={selectedTelefone} onValueChange={setSelectedTelefone}>
+                <SelectTrigger className="w-[150px] h-9" data-testid="select-telefone-filter">
+                  <SelectValue placeholder="Telefone" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="valido">Telefone: válido</SelectItem>
+                  <SelectItem value="invalido">Telefone: inválido</SelectItem>
+                  <SelectItem value="fixo">Telefone: fixo</SelectItem>
+                </SelectContent>
+              </Select>
+
               <MultiSelect label="Cidade" options={cities} selected={cityMulti} onChange={(v) => { setCityMulti(v); setNeighborhoodMulti([]); }} testId="filter-city-active" />
 
               <MultiSelect label="Bairro" options={neighborhoods} selected={neighborhoodMulti} onChange={setNeighborhoodMulti} testId="filter-neighborhood-active" />
@@ -1392,6 +1423,7 @@ export default function ActiveCustomers() {
                   setCompraDe("");
                   setCompraAte("");
                   setSelectedPositivation("");
+                  setSelectedTelefone("");
                   setCityMulti([]);
                   setNeighborhoodMulti([]);
                   setSelectedPersonType("");
@@ -1521,6 +1553,9 @@ export default function ActiveCustomers() {
                               <LinhaInfo marca={<span className="font-mono text-red-600 font-semibold">(62) …</span>}><b className="text-foreground">Não confirmado</b>: a confirmação foi enviada há mais de 24h e o cliente não respondeu.</LinhaInfo>
                               <LinhaInfo marca={<span className="font-mono">(62) …</span>}>Sem cor: confirmação ainda não enviada ou enviada há menos de 24h.</LinhaInfo>
                               <LinhaInfo marca={<span className="font-mono">-</span>}><b className="text-foreground">Sem telefone</b>: o próximo pedido só é implantado depois de preencher telefone e responsável.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1 py-0.5 rounded">TELEFONE INVÁLIDO</span>}>Número que não é telefone válido (DDD inexistente, tamanho errado, número de preenchimento). <b className="text-foreground">SEM TELEFONE</b> = campo vazio. <b className="text-foreground">FORA DO PADRÃO</b> = número aproveitável mas escrito errado (passe o mouse para ver o correto). Corrija no cadastro.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-[10px] font-semibold text-slate-600 border border-slate-300 bg-slate-50 px-1 py-0.5 rounded">FIXO</span>}>Telefone fixo — normalmente sem WhatsApp; se possível, cadastre o celular do responsável.</LinhaInfo>
+                              <LinhaInfo>Filtro <b className="text-foreground">Telefone</b>: válido (celular no padrão) · inválido (sem telefone, inválido ou fora do padrão) · fixo.</LinhaInfo>
                               <LinhaInfo>Padrão: celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX, sem +55. O nome do <b className="text-foreground">responsável</b> é obrigatório ao lado do telefone.</LinhaInfo>
                             </InfoColuna>
                           </span>
@@ -1732,6 +1767,24 @@ export default function ActiveCustomers() {
                                     {ac.customer?.phone || "-"}
                                     {_confirmed ? " ✓" : ""}
                                   </span>
+                                );
+                              })()}
+                              {(() => {
+                                if (!ac.customer) return null;
+                                const st = situacaoTelefone(ac.customer.phone);
+                                if (st.grupo === 'valido') return null;
+                                return (
+                                  <div className="mt-0.5">
+                                    <span
+                                      className={st.grupo === 'fixo'
+                                        ? "font-sans text-[10px] font-semibold text-slate-600 border border-slate-300 bg-slate-50 px-1.5 py-0.5 rounded whitespace-nowrap"
+                                        : "font-sans text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap"}
+                                      title={st.dica}
+                                      data-testid={`selo-telefone-${ac.id}`}
+                                    >
+                                      {st.selo}
+                                    </span>
+                                  </div>
                                 );
                               })()}
                             </TableCell>
