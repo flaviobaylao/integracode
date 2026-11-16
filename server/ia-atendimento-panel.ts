@@ -32,7 +32,12 @@ const KEYS: Record<string, string> = {
   ia_canal_1841: 'on',                     // liga/desliga a acao da IA no numero 1841 (HONESTAPI)
   ia_wpp_vendas: 'off',                    // "modo Instagram" no WhatsApp: registrar pedido + PIX
   ia_front_line: 'off',                    // IA atende sozinha; humano so entra quando a IA transferir
-  ia_handoff_min: '5',                     // minutos que o dono da carteira tem para responder
+  ia_handoff_min: '5',                     // minutos que a primeira linha tem para responder antes de escalar
+  // 👥 Quem atende o pedido de "falar com uma pessoa" (nov/2026). E-mail ou user_id,
+  // separados por virgula. A primeira linha recebe o aviso; passados ia_handoff_min
+  // minutos sem resposta, o caso sobe para a escalacao. Ninguem fora destas listas entra.
+  ia_handoff_equipe: 'leticia@bebahonest.com.br,joaopedro@bebahonest.com.br',
+  ia_handoff_escalacao: 'cinthiamarque90@gmail.com,flavio@bebahonest.com.br',
   ia_notifica_wa: 'on',                    // avisa o atendente por WhatsApp ao receber a conversa
   ia_trava_admin: 'off',                   // 'on' = nem admin escreve por cima da IA
   ia_carteira_padrao: '58f7ba0b-dcd1-4d0e-abc2-458cdddb2794', // Honest 1: dono do cliente novo
@@ -83,6 +88,12 @@ export function registerIaAtendimento(app: any) {
       if (value && value.length < 12) return res.status(400).json({ error: 'telefone invalido (use 55DDNNNNNNNNN)' });
     }
     if (key === 'ia_despedida') value = value.slice(0, 500);
+    // Listas de pessoas: limpa espacos e virgulas soltas. Vazio e recusado — sem equipe
+    // o pedido de atendimento humano nao vai para ninguem.
+    if (key === 'ia_handoff_equipe' || key === 'ia_handoff_escalacao') {
+      value = value.split(',').map(x => x.trim()).filter(Boolean).join(',').slice(0, 500);
+      if (!value) return res.status(400).json({ error: 'informe ao menos uma pessoa (e-mail ou user_id)' });
+    }
     await setSetting(key, value);
 
     // ⚠️ REGRAS MUTUAMENTE EXCLUSIVAS.
