@@ -52,7 +52,7 @@ async function ensureTabela() {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_lead_sample_orders_lead ON lead_sample_orders (lead_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_lead_sample_orders_status ON lead_sample_orders (status)`);
   // Dados fiscais (NF de amostra grátis): no pedido (snapshot) e no lead (reaproveitado na conversão)
-  for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal jsonb', 'customer_id varchar', 'sales_card_id varchar', 'pipeline_item_id varchar'])
+  for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal jsonb', 'customer_id varchar', 'sales_card_id varchar', 'pipeline_item_id varchar', 'blocked_order_id varchar'])
     await db.execute(sql.raw(`ALTER TABLE lead_sample_orders ADD COLUMN IF NOT EXISTS ${c}`));
   for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal_address text', 'fiscal_neighborhood varchar(120)', 'fiscal_city varchar(120)', 'fiscal_state varchar(2)', 'fiscal_zip varchar(12)', 'state_registration varchar(30)', 'email varchar(160)'])
     await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ${c}`));
@@ -85,7 +85,7 @@ function serial(r: any) {
     createdAt: r.created_at, updatedAt: r.updated_at,
     leadName: r.lead_name || null, leadPhone: r.lead_phone || null, leadContact: r.lead_contact || null, leadCity: r.lead_city || null, leadNeighborhood: r.lead_neighborhood || null,
     cnpj: r.cnpj || null, companyName: r.company_name || null, fiscal: r.fiscal || null,
-    customerId: r.customer_id || null, salesCardId: r.sales_card_id || null, pipelineItemId: r.pipeline_item_id || null,
+    customerId: r.customer_id || null, salesCardId: r.sales_card_id || null, pipelineItemId: r.pipeline_item_id || null, blockedOrderId: r.blocked_order_id || null,
   };
 }
 
@@ -155,14 +155,60 @@ async function emitirAmostraNoPipeline(a: any, user: any): Promise<{ ok: boolean
     routeDay: 'Seg', recurrenceType: 'semanal', scheduledDate: new Date(), completedDate: new Date(),
     saleValue: saleValue.toFixed(2), products: products as any, paymentMethod: 'a_vista', operationType: 'amostra', boletoDays: 0,
     customerLatitude: lead.latitude != null ? String(lead.latitude) : null, customerLongitude: lead.longitude != null ? String(lead.longitude) : null,
-    notes: `Amostra grátis para LEAD #A-${a.id} (${lead.fantasy_name}) — aprovada por ${nome(user)}`, source: 'integra',
+    notes: `Amostra grátis para LEAD #A-${a.id} (${lead.fantasy_name}) — solicitada por ${a.requested_by_name || nome(user)}`, source: 'integra',
   } as any);
+  // 16/11: a amostra ENTRA NO PIPELINE já na SOLICITAÇÃO, igual à amostra de cliente: sem skipDebtCheck,
+  // a regra do pipeline a manda para a coluna BLOQUEADOS ("Pedido de amostra requer aprovação manual").
+  // A aprovação (aqui no painel de Amostras ou no próprio Pipeline) libera para a etapa Pedido.
   const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
-  const r = await finalizarPedidoParaPipeline(card, user.email || 'system', { skipDebtCheck: true, skipHistoryGuard: true });
-  if (!r?.item) return { ok: false, message: 'A amostra não entrou no Pipeline de Faturamento (veja Pedidos Bloqueados / duplicidade).' };
-  await db.execute(sql`UPDATE lead_sample_orders SET customer_id = ${customerId}, sales_card_id = ${String(card.id)}, pipeline_item_id = ${String(r.item.id)}, updated_at = now() WHERE id = ${a.id}`);
-  console.log(`🧾 [AMOSTRA] #A-${a.id} → pipeline item ${r.item.id} (NF amostra grátis) cliente ${customerId}`);
+  const r = await finalizarPedidoParaPipeline(card, user.email || 'system', { skipHistoryGuard: true });
+  let blockedId: string | null = null;
+  try { const b: any = await db.execute(sql`SELECT id FROM blocked_orders WHERE sales_card_id = ${String(card.id)} ORDER BY blocked_at DESC LIMIT 1`); blockedId = b.rows?.[0]?.id ? String(b.rows[0].id) : null; } catch {}
+  if (!r?.item && !blockedId) return { ok: false, message: 'A amostra não entrou no Pipeline de Faturamento.' };
+  await db.execute(sql`UPDATE lead_sample_orders SET customer_id = ${customerId}, sales_card_id = ${String(card.id)}, blocked_order_id = ${blockedId},
+    pipeline_item_id = ${r?.item?.id ? String(r.item.id) : null}, updated_at = now() WHERE id = ${a.id}`);
+  console.log(`🧾 [AMOSTRA] #A-${a.id} → ${r?.item ? 'pipeline item ' + r.item.id : 'Bloqueados ' + blockedId} (amostra grátis) cliente ${customerId}`);
   return { ok: true };
+}
+
+// Aprovação: libera o pedido bloqueado para a etapa Pedido do Pipeline (mesmo efeito do "Liberar" de Bloqueados).
+async function liberarAmostraNoPipeline(a: any, user: any): Promise<{ ok: boolean; message?: string }> {
+  if (a.pipeline_item_id) return { ok: true };
+  if (!a.sales_card_id) { const r0 = await emitirAmostraNoPipeline(a, user); if (!r0.ok) return r0; const rr: any = await db.execute(sql`SELECT * FROM lead_sample_orders WHERE id = ${a.id}`); a = rr.rows[0]; if (a.pipeline_item_id) return { ok: true }; }
+  const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
+  const card: any = await storage.getSalesCard(String(a.sales_card_id));
+  if (!card) return { ok: false, message: 'Card da amostra não encontrado.' };
+  let item: any = null;
+  try { item = (await finalizarPedidoParaPipeline(card, 'system-liberacao-manual', { skipDebtCheck: true, skipHistoryGuard: true }))?.item || null; } catch (e: any) { return { ok: false, message: e?.message || 'Falha ao liberar no Pipeline.' }; }
+  if (!item) { try { const f: any = await db.execute(sql`SELECT id FROM billing_pipeline WHERE sales_card_id = ${String(a.sales_card_id)} AND stage::text <> 'lixeira' ORDER BY created_at DESC LIMIT 1`); item = f.rows?.[0] || null; } catch {} }
+  if (!item) return { ok: false, message: 'A amostra não entrou no Pipeline (continua em Bloqueados).' };
+  if (a.blocked_order_id) { try { await db.execute(sql`UPDATE blocked_orders SET status = 'released', released_at = now(), released_by = ${user.id} WHERE id = ${a.blocked_order_id} AND status = 'blocked'`); } catch {} }
+  await db.execute(sql`UPDATE lead_sample_orders SET pipeline_item_id = ${String(item.id)}, updated_at = now() WHERE id = ${a.id}`);
+  return { ok: true };
+}
+
+// Sincroniza com o Pipeline: amostra liberada/recusada direto na tela do Pipeline (Bloqueados) reflete aqui.
+async function sincronizarComPipeline(): Promise<void> {
+  try {
+    // liberada no Pipeline → aprovada aqui
+    await db.execute(sql`UPDATE lead_sample_orders a SET status = 'aprovado', approved_at = COALESCE(a.approved_at, now()),
+        approved_by_name = COALESCE(a.approved_by_name, 'Pipeline'), pipeline_item_id = bp.id, updated_at = now()
+      FROM billing_pipeline bp
+      WHERE a.status = 'solicitado' AND a.sales_card_id IS NOT NULL AND bp.sales_card_id = a.sales_card_id AND bp.stage::text <> 'lixeira'`);
+    // rejeitada no Pipeline (bloqueio apagado sem item) → recusada aqui
+    await db.execute(sql`UPDATE lead_sample_orders a SET status = 'recusado', rejected_reason = COALESCE(a.rejected_reason, 'Rejeitado na tela de Bloqueados do Pipeline'), updated_at = now()
+      WHERE a.status = 'solicitado' AND a.blocked_order_id IS NOT NULL AND a.pipeline_item_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM blocked_orders b WHERE b.id = a.blocked_order_id)
+        AND NOT EXISTS (SELECT 1 FROM billing_pipeline bp WHERE bp.sales_card_id = a.sales_card_id)`);
+    // pedidos antigos (antes desta regra) ainda sem card → entram no Pipeline agora
+    const pend: any = await db.execute(sql`SELECT * FROM lead_sample_orders WHERE status = 'solicitado' AND sales_card_id IS NULL AND cnpj IS NOT NULL LIMIT 20`);
+    for (const a of (pend.rows || []) as any[]) {
+      try {
+        const u: any = await db.execute(sql`SELECT id, email, first_name AS "firstName", last_name AS "lastName" FROM users WHERE id = ${a.requested_by} LIMIT 1`);
+        await emitirAmostraNoPipeline(a, u.rows?.[0] || { id: a.requested_by, email: 'system' });
+      } catch (e: any) { console.warn('[AMOSTRA] backfill pipeline #' + a.id, e?.message); }
+    }
+  } catch (e: any) { console.warn('[AMOSTRA] sincronizar pipeline:', e?.message); }
 }
 
 export function registerLeadAmostras(app: any, authenticateUser: any) {
@@ -185,6 +231,7 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
   app.get('/api/leads/:id/amostras', authenticateUser, async (req: Req, res: Res) => {
     try {
       await ensureTabela();
+      await sincronizarComPipeline();
       const r: any = await db.execute(sql`SELECT * FROM lead_sample_orders WHERE lead_id = ${String(req.params.id)} ORDER BY created_at DESC`);
       res.json({ ok: true, amostras: (r.rows || []).map(serial) });
     } catch (e: any) { res.status(500).json({ ok: false, message: e?.message }); }
@@ -252,7 +299,14 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
       }
       await registrarVisitaLead(leadId, `Pedido de amostra #A-${row.id}: ${totalUnits} un. (${items.map((i: any) => `${i.qty}× ${i.name}`).join(', ')}) — aguardando aprovação`, user);
       console.log(`🧃 [AMOSTRA] #${row.id} lead ${lead.fantasy_name} · ${totalUnits} un. · por ${nome(user)}`);
-      res.json({ ok: true, amostra: serial(row) });
+      // Entra no Pipeline JÁ NA SOLICITAÇÃO (coluna Bloqueados, aguardando liberação), como amostra de cliente.
+      let pipelineMsg = '';
+      try {
+        const r2 = await emitirAmostraNoPipeline(row, user);
+        if (!r2.ok) pipelineMsg = r2.message || 'não entrou no Pipeline';
+      } catch (e: any) { pipelineMsg = e?.message || 'falha ao enviar ao Pipeline'; console.error('[amostra] pipeline', e); }
+      const fin: any = await db.execute(sql`SELECT * FROM lead_sample_orders WHERE id = ${row.id}`);
+      res.json({ ok: true, amostra: serial(fin.rows?.[0] || row), ...(pipelineMsg ? { avisoPipeline: pipelineMsg } : {}) });
     } catch (e: any) { console.error('[amostra] criar', e); res.status(500).json({ ok: false, message: e?.message }); }
   });
 
@@ -280,8 +334,12 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
       if (ordem[novo] != null && ordem[a.status] != null && ordem[novo] < ordem[a.status]) return res.status(400).json({ ok: false, message: `Pedido já está em "${rotulo[a.status]}".` });
       // APROVAÇÃO → NF de amostra grátis pelo mesmo caminho do cliente (cadastro em prospecção + card 'amostra' + pipeline)
       if (novo === 'aprovado' && !a.pipeline_item_id) {
-        const r2 = await emitirAmostraNoPipeline(a, user);
+        const r2 = await liberarAmostraNoPipeline(a, user);
         if (!r2.ok) return res.status(400).json({ ok: false, message: r2.message });
+      }
+      // Recusa/cancelamento: tira o pedido de Bloqueados (o card da amostra fica sem pedido)
+      if ((novo === 'recusado' || novo === 'cancelado') && a.blocked_order_id && !a.pipeline_item_id) {
+        try { await db.execute(sql`DELETE FROM blocked_orders WHERE id = ${a.blocked_order_id} AND status = 'blocked'`); } catch {}
       }
       const up: any = await db.execute(sql`UPDATE lead_sample_orders SET status = ${novo}, updated_at = now(),
           approved_by = CASE WHEN ${novo} = 'aprovado' THEN ${user.id} ELSE approved_by END,
@@ -323,6 +381,7 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
     try {
       await ensureTabela();
       if (!ADMIN.includes(req.currentUser?.role)) return res.status(403).json({ ok: false, message: 'Acesso restrito ao administrativo.' });
+      await sincronizarComPipeline();
       const st = String(req.query.status || '');
       const r: any = await db.execute(sql`
         SELECT a.*, l.fantasy_name AS lead_name, l.phone AS lead_phone, l.contact AS lead_contact, l.city AS lead_city, l.neighborhood AS lead_neighborhood,
