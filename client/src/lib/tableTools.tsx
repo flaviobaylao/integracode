@@ -128,8 +128,10 @@ export function MultiSelect(props: {
   groups?: { label: string; options: string[] }[];
   /** Mostra um campo de busca dentro do dropdown (para listas longas, ex.: bairros). */
   searchable?: boolean;
+  /** Texto da opção que marca/desmarca tudo (padrão "Selecionar Tudo"; ex.: "Mostrar tudo"). */
+  labelTudo?: string;
 }) {
-  const { label, options, selected, onChange, testId, groups, searchable } = props;
+  const { label, options, selected, onChange, testId, groups, searchable, labelTudo } = props;
   const [open, setOpen] = useState(false);
   const [busca, setBusca] = useState("");
   const casa = (o: string) => !searchable || !busca.trim() || o.toLowerCase().includes(busca.trim().toLowerCase());
@@ -172,7 +174,7 @@ export function MultiSelect(props: {
                 checked={selected.length === options.length}
                 onChange={() => onChange(selected.length === options.length ? [] : [...options])}
               />
-              Selecionar Tudo
+              {labelTudo || "Selecionar Tudo"}
             </label>
             {searchable && (
               <input
