@@ -21,7 +21,7 @@ import { computeCycles, evaluateRepescagem, cyclesToShow, parseDows as parseDows
 import { whatsappService } from './whatsapp-service';
 import { storage } from './storage';
 import { logCustomerChanges, logCustomerNote } from './customerAudit';
-import { retiradosHoje, registerRepescagemRetirar } from './repescagem-retirar';
+import { retiradosHoje, retiradosNoCiclo, registerRepescagemRetirar } from './repescagem-retirar';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -241,7 +241,10 @@ async function computeRedCandidates(opts: { startDate: string; endDate: string }
     const cands = await __computeRedCandidatesRaw(opts, skipOut);
     // 10/nov/2026 — Retirados da repescagem HOJE pelo Admin (Inbox) não entram em nada hoje.
     const fora = await retiradosHoje();
-    return fora.size ? cands.filter((c: any) => !fora.has(String(c.customerId))) : cands;
+    // Tirados pelo Admin num ciclo (nov/2026): não voltam enquanto a âncora (visita perdida) for a mesma.
+    const ciclo = await retiradosNoCiclo();
+    if (!fora.size && !ciclo.size) return cands;
+    return cands.filter((c: any) => !fora.has(String(c.customerId)) && !ciclo.has(`${c.customerId}|${c.lastRedDate}`));
   } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
 }
 
@@ -1731,6 +1734,13 @@ async function ensureRepescagemForcedTable(): Promise<void> {
   __ensuredForcedTable = true;
 }
 
+let __ensuredForcedAtCol = false;
+async function ensureForcedAtCol(): Promise<void> {
+  if (__ensuredForcedAtCol) return;
+  await db.execute(sql.raw("ALTER TABLE repescagem_assignments ADD COLUMN IF NOT EXISTS forced_at timestamp"));
+  __ensuredForcedAtCol = true;
+}
+
 // Zera travas de dias anteriores (destrava automática na virada do dia). Idempotente.
 async function resetStaleLocks(today: string): Promise<void> {
   try {
@@ -1773,32 +1783,48 @@ export async function closeAndExpireRepescagem(date: string): Promise<any> {
     const arr = cids.join(',');
     // Quem atendeu (attendantId/sellerId) por cliente — prioriza o primeiro sinal.
     const attendedBy = new Map<string, string | null>();
-    const mark = (cid: string, who: any) => { if (cid && !attendedBy.has(cid)) attendedBy.set(cid, who || null); };
+    // Momento do atendimento mais recente por cliente (para a repescagem IMEDIATA do Admin, que só
+    // fecha com atendimento DEPOIS de o cliente ter sido enviado — nov/2026).
+    const lastAt = new Map<string, number>();
+    const mark = (cid: string, who: any, at?: any) => {
+      if (!cid) return;
+      if (!attendedBy.has(cid)) attendedBy.set(cid, who || null);
+      const t = at ? new Date(at).getTime() : NaN;
+      if (Number.isFinite(t) && t > (lastAt.get(cid) || 0)) lastAt.set(cid, t);
+    };
 
     // Registro de atendimento (virtual): virtual_service_logs (inclui 'não venda').
     const vlogs = await db.execute(sql`
-      SELECT customer_id, attendant_id FROM virtual_service_logs
+      SELECT customer_id, attendant_id, created_at FROM virtual_service_logs
       WHERE (attendance_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = ${date}::date
         AND customer_id = ANY(string_to_array(${arr}, ','))
         -- Contato automático da IA da repescagem NÃO fecha o card (nov/2026): o cliente segue na
         -- rota até um humano registrar o atendimento ou sair um pedido.
         AND NOT (attendant_id = 'ia' AND COALESCE(service_type, '') = 'repescagem_ia')`);
-    for (const r of vlogs.rows as any[]) mark(r.customer_id, r.attendant_id);
+    for (const r of vlogs.rows as any[]) mark(r.customer_id, r.attendant_id, r.created_at);
 
     // Registro de atendimento (presencial): check-in de rota.
     const cps = await db.execute(sql`
-      SELECT customer_id, seller_id FROM route_checkpoints
+      SELECT customer_id, seller_id, checkpoint_time FROM route_checkpoints
       WHERE checkpoint_type = 'check_in' AND (checkpoint_time AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = ${date}::date
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
-    for (const r of cps.rows as any[]) mark(r.customer_id, r.seller_id);
+    for (const r of cps.rows as any[]) mark(r.customer_id, r.seller_id, r.checkpoint_time);
 
     // Pedido: billing_pipeline no dia.
     const orders = await db.execute(sql`
-      SELECT customer_id FROM billing_pipeline
+      SELECT customer_id, created_at FROM billing_pipeline
       WHERE COALESCE(scheduled_billing_date::date,
                      (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date) = ${date}::date
         AND customer_id = ANY(string_to_array(${arr}, ','))`);
-    for (const r of orders.rows as any[]) mark(r.customer_id, null);
+    for (const r of orders.rows as any[]) mark(r.customer_id, null, r.created_at);
+    // Alocações de repescagem IMEDIATA (botão do Admin): forced_at = quando entrou.
+    const forcedAtById = new Map<string, number>();
+    try {
+      await ensureForcedAtCol();
+      const fr: any = await db.execute(sql`SELECT id, forced_at FROM repescagem_assignments
+        WHERE draw_date = ${date} AND status = 'in_route' AND forced_at IS NOT NULL`);
+      for (const r of ((fr.rows || []) as any[])) forcedAtById.set(String(r.id), new Date(r.forced_at).getTime());
+    } catch (e) { console.warn('[repescagem][forced_at]', (e as any)?.message); }
 
     // PEDIDO IMPLANTADO (venda) por vendedor no dia — usado SÓ para a migração de carteira.
     // "implantado" = billing_pipeline com operation_type='venda'; o pedido é de QUEM implantou
@@ -1823,6 +1849,9 @@ export async function closeAndExpireRepescagem(date: string): Promise<any> {
 
     for (const a of inRoute) {
       if (!attendedBy.has(a.customerId)) continue;
+      // Repescagem imediata: o atendimento que gerou o report (antes do envio) não fecha o card.
+      const fAt = forcedAtById.get(String(a.id));
+      if (fAt && !((lastAt.get(a.customerId) || 0) > fAt)) continue;
       const by = attendedBy.get(a.customerId) || a.assignedUserId; // venda de quem atendeu
       // Este fechamento veio de um PEDIDO IMPLANTADO pelo vendedor da alocação?
       const hadOrder = orderBySeller.has(`${a.customerId}|${a.assignedUserId}`);
@@ -1989,17 +2018,51 @@ export function registerRepescagemRoutes(app: Express, opts: {
         INSERT INTO repescagem_forced (customer_id, forced_date, source_report_id, created_by)
         VALUES (${customerId}, ${forcedDate}, ${sourceReportId}, ${(req.currentUser?.id || null)})
         ON CONFLICT (customer_id, forced_date) DO NOTHING`);
+      // A decisão mais recente do Admin vale: se ele tinha sido TIRADO da repescagem, isso é desfeito.
+      try { await db.execute(sql`DELETE FROM repescagem_retirados WHERE customer_id = ${customerId}`); } catch { /* tabela pode não existir */ }
+
+      // REPESCAGEM IMEDIATA (nov/2026, decisão do Flavio): além do próximo dia útil, o cliente entra
+      // AGORA na repescagem de hoje (dia útil), na carteira do dono — aparece na Rota do Dia do dono e
+      // de quem recebe a carteira no painel. Só um atendimento DEPOIS do envio fecha o card.
+      const hoje = brTodayStr();
+      let imediato: 'inserido' | 'ja_estava' | 'fim_de_semana' = 'fim_de_semana';
+      if (isDiaUtilRep(hoje)) {
+        await ensureRepescagemLockCol();
+        await ensureForcedAtCol();
+        const ja: any = await db.execute(sql`SELECT 1 FROM repescagem_assignments
+          WHERE customer_id = ${customerId} AND draw_date = ${hoje} AND status = 'in_route' LIMIT 1`);
+        if (((ja.rows || []) as any[]).length) imediato = 'ja_estava';
+        else {
+          const own: any = await db.execute(sql`SELECT c.seller_id, u.role FROM customers c LEFT JOIN users u ON u.id = c.seller_id WHERE c.id = ${customerId} LIMIT 1`);
+          const ownerId = (own.rows || [])[0]?.seller_id || null;
+          const phase = String((own.rows || [])[0]?.role || '') === 'vendedor' ? 'external' : 'telemarketing';
+          const ins: any = await db.execute(sql`
+            INSERT INTO repescagem_assignments (id, customer_id, last_red_date, assigned_user_id, status, phase, carteira_seller_id, draw_date, assigned_at, updated_at, locked, forced_at)
+            VALUES (gen_random_uuid(), ${customerId}, ${hoje}, ${ownerId || req.currentUser?.id || 'admin'}, 'in_route', ${phase}, ${ownerId}, ${hoje}, now(), now(), false, now())
+            RETURNING id`);
+          const newId = (ins.rows || [])[0]?.id;
+          if (newId) {
+            try {
+              await db.insert(repescagemAssignmentHistory).values({
+                assignmentId: newId, customerId, fromUserId: null, toUserId: ownerId,
+                action: 'assigned', reason: 'Repescagem imediata (decisão do Admin)',
+              });
+            } catch { /* histórico best-effort */ }
+          }
+          imediato = 'inserido';
+        }
+      }
 
       try {
         await logCustomerNote({
           customerId, label: 'Repescagem (decisão do Admin)',
-          text: `Cliente enviado manualmente para a repescagem de ${forcedDate.split('-').reverse().join('/')} (decisão do Admin a partir de um report). Depois desse dia volta a respeitar as regras normais.`,
+          text: `Cliente enviado manualmente para a repescagem${imediato === 'fim_de_semana' ? '' : ' de hoje (imediato) e'} de ${forcedDate.split('-').reverse().join('/')} (decisão do Admin a partir de um report). Depois disso volta a respeitar as regras normais.`,
           actor: { id: req.currentUser?.id || 'admin', name: req.currentUser?.name || 'Admin' } as any,
           source: 'repescagem',
         });
       } catch (_e: any) { console.warn('[REPESCAGEM-FORÇADO] nota:', _e?.message); }
 
-      res.json({ ok: true, customerId, forcedDate });
+      res.json({ ok: true, customerId, forcedDate, hoje, imediato });
     } catch (e: any) {
       console.error('POST /api/repescagem/forcar', e);
       res.status(500).json({ message: e?.message || 'erro' });
