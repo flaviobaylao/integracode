@@ -4422,6 +4422,21 @@ export function registerChatRoutes(app: Express): void {
         return res.status(400).json({ error: "Conversa não encontrada" });
       }
 
+      // 🚫 INSTAGRAM (nov/2026) — o Direct nao tem caminho de volta pelo ChatCenter: a
+      // Central so fala por WhatsApp (Umbler), e o "telefone" de uma conversa do Instagram
+      // e `ig:<IGSID>`. Antes desta trava a mensagem era mandada para a Umbler com os
+      // digitos do IGSID no lugar do celular; a Umbler aceitava e devolvia protocolo, e o
+      // atendente via visto verde numa mensagem que o cliente nunca recebeu. Recusar aqui,
+      // com o motivo na tela, e melhor do que deixar o atendente falar sozinho.
+      if (/^ig:/i.test(String((conversation as any).customerPhone || ''))) {
+        return res.status(409).json({
+          code: 'INSTAGRAM_SEM_RETORNO',
+          error: 'Esta conversa veio pelo Direct do Instagram e o ChatCenter nao consegue responder por la. '
+            + 'O atendimento humano continua pelo WhatsApp: quando a IA transferir, ela pede o numero do cliente. '
+            + 'Se ainda nao houver numero, chame o cliente pelo proprio Direct ou aguarde ele escrever no WhatsApp.',
+        });
+      }
+
       // 🤖 IA NA FRENTE: enquanto a IA esta atendendo, nenhum atendente interrompe.
       // Depois do transferir_humano, se a conversa foi reservada para o dono da carteira,
       // so ele escreve ate o prazo (ia_handoff_min) vencer.
