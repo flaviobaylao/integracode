@@ -103,6 +103,7 @@ export default function AmostrasLeads() {
                 <span>Pedido em {dBR(a.createdAt)} por {a.requestedByName || "—"}</span>
                 {a.approvedByName && <span>Aprovado por {a.approvedByName}</span>}
               </div>
+              {(a as any).pipelineErro && !(a as any).blockedOrderId && !(a as any).pipelineItemId && <div className="text-xs text-red-700">Não entrou no Pipeline: {(a as any).pipelineErro}</div>}
               {a.observation && <div className="text-xs italic text-muted-foreground">“{a.observation}”</div>}
               {a.rejectedReason && <div className="text-xs text-red-700">Recusa: {a.rejectedReason}</div>}
               {a.tastingNotes && <div className="text-xs text-violet-800 dark:text-violet-300">Degustação: {a.tastingNotes}</div>}
