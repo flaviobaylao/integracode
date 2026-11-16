@@ -22,7 +22,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
-import { clientesNovosDesde, premissasDoMes, achaPremissa, PRIMEIRO_MES_COMISSAO_NOVO } from "./campanha-outubro";
+import { clientesNovosDesde, premissasDoMes, achaPremissa, PRIMEIRO_MES_COMISSAO_NOVO, docValeNaPremissa } from "./campanha-outubro";
 import { nfVendaFrom, nfData } from "./faturamento-oficial";
 
 const q = async (text: string) => (await db.execute(sql.raw(text))).rows as any[];
@@ -71,8 +71,8 @@ async function historico(customerId: string, antes: string | null, depois: strin
 // Períodos (por dia, inclusive) em que a premissa "comissao_novo" esteve ligada.
 // Ligada sem carimbo = o mês todo; ligada com carimbo = do dia em que ligou ao fim
 // do mês; desligada depois de ter valido = do dia em que ligou ao dia em que desligou.
-async function janelasComissao(): Promise<Array<{ ini: string; fim: string; pct: number; meses: number }>> {
-  const out: Array<{ ini: string; fim: string; pct: number; meses: number }> = [];
+async function janelasComissao(): Promise<Array<{ ini: string; fim: string; pct: number; meses: number; valePj?: boolean; valePf?: boolean }>> {
+  const out: Array<{ ini: string; fim: string; pct: number; meses: number; valePj?: boolean; valePf?: boolean }> = [];
   const hoje = hojeBR();
   let ym = PRIMEIRO_MES_COMISSAO_NOVO;
   while (ym <= hoje.slice(0, 7)) {
@@ -82,8 +82,10 @@ async function janelasComissao(): Promise<Array<{ ini: string; fim: string; pct:
     if (p) {
       const ligou = p.ativadaEm ? p.ativadaEm.slice(0, 10) : null;
       const pct = Number(p.valor) || PERCENTUAL, meses = Number(p.gatilho) || MESES;
-      if (p.ativa) out.push({ ini: ligou && ligou > inicioMes ? ligou : inicioMes, fim: fimMes, pct, meses });
-      else if (ligou && p.desativadaEm) out.push({ ini: ligou > inicioMes ? ligou : inicioMes, fim: p.desativadaEm.slice(0, 10), pct, meses });
+      // PJ/PF do mês (16/nov/2026): só o tipo marcado conquista os 12%.
+      const tipo = { valePj: p.valePj, valePf: p.valePf };
+      if (p.ativa) out.push({ ini: ligou && ligou > inicioMes ? ligou : inicioMes, fim: fimMes, pct, meses, ...tipo });
+      else if (ligou && p.desativadaEm) out.push({ ini: ligou > inicioMes ? ligou : inicioMes, fim: p.desativadaEm.slice(0, 10), pct, meses, ...tipo });
     }
     const [a, m] = ym.split("-").map(Number);
     ym = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, "0")}`;
@@ -111,6 +113,7 @@ export async function sincronizarComissaoNovos(forcar = false): Promise<void> {
           if (ja.has(n.customerId)) continue;
           const jan = janelas.find((j) => n.primeiraCompra >= j.ini && n.primeiraCompra <= j.fim);
           if (!jan) continue;
+          if (!docValeNaPremissa(jan, n.doc)) continue; // tipo de cliente (PJ/PF) fora da regra do mês
           if (r30.has(n.primeiraCompra.slice(0, 7) + "|" + n.doc)) continue;
           const fim = (await q(`SELECT (DATE '${esc(n.primeiraCompra)}' + INTERVAL '${Math.round(jan.meses)} months')::date::text AS f`))[0].f;
           await q(`INSERT INTO comissao_cliente_novo (customer_id, doc, customer_name, seller_user_id, seller_name, percentual, percentual_base, inicio, fim, primeiro_pedido)

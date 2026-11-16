@@ -58,16 +58,22 @@ type Premissa = {
   // Momento (BRT, "AAAA-MM-DD HH:MM") em que o flag foi ligado/desligado na tela.
   // Desligar no meio do mês não apaga o que já valeu até ali.
   ativadaEm?: string | null; desativadaEm?: string | null;
+  // Tipo de cliente que conta como NOVO (16/nov/2026, Flavio): dois flags, PJ
+  // (CNPJ) e PF (CPF). Só nas premissas de cliente novo ("novos" e
+  // "comissao_novo"). Padrão a partir de novembro/2026: só PJ.
+  valePj?: boolean; valePf?: boolean;
 };
-const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho" | "pedidoMin" | "pedidoMinPf"> & {
+const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gatilho" | "pedidoMin" | "pedidoMinPf" | "valePj" | "valePf"> & {
   ativaPadrao: boolean; modoPadrao: ModoPremissa; valorPadrao: number; gatilhoPadrao: number;
   pedidoMinPadrao?: number; pedidoMinPfPadrao?: number;
+  tipoCliente?: boolean; // premissa de cliente novo: tem os flags PJ / PF
 }> = [
   {
     chave: "novos", label: "por novo cliente", descricao: "Venda faturada dentro do raio logístico.",
     gatilhoLabel: "Pedido mínimo", gatilhoSufixo: "R$",
     base: "valor do 1º pedido de cada novo cliente apto",
     ativaPadrao: true, modoPadrao: "valor", valorPadrao: 30, gatilhoPadrao: 300,
+    tipoCliente: true,
   },
   {
     chave: "positivacao", label: "positivação da carteira", descricao: "Parte da carteira positivada no mês.",
@@ -95,6 +101,7 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     gatilhoLabel: "Duração", gatilhoSufixo: "meses",
     base: "vendas do cliente novo (em vez dos 8% normais)",
     ativaPadrao: false, modoPadrao: "percentual", valorPadrao: 12, gatilhoPadrao: 6,
+    tipoCliente: true,
   },
 ];
 
@@ -115,6 +122,8 @@ async function ensurePremissas(): Promise<void> {
   await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS pedido_min_pf numeric`);
   await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS ativada_em timestamptz`);
   await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS desativada_em timestamptz`);
+  await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS vale_pj boolean`);
+  await db.execute(sql`ALTER TABLE campanha_premissas ADD COLUMN IF NOT EXISTS vale_pf boolean`);
 
   // CONGELAMENTO DE OUTUBRO (04/nov/2026). Outubro rodou SEM linha gravada: as
   // premissas vinham todas do catálogo. Como o catálogo passa a trazer pedido
@@ -149,7 +158,7 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
   const gravadas: Record<string, any> = {};
   try {
     const r: any = await db.execute(sql`
-      SELECT chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf,
+      SELECT chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf, vale_pj, vale_pf,
              to_char(ativada_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI') AS ativada_em,
              to_char(desativada_em AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI') AS desativada_em
       FROM campanha_premissas WHERE ym = ${ym}`);
@@ -180,6 +189,12 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
         pedidoMin: g && g.pedido_min !== null && g.pedido_min !== undefined
           ? num(g.pedido_min, c.pedidoMinPadrao) : c.pedidoMinPadrao,
       }),
+      // PJ/PF do cliente novo. NULL = nunca definido: até outubro/2026 PF contava
+      // (mês apurado não muda); de novembro em diante o padrão é só PJ.
+      ...(!c.tipoCliente ? {} : {
+        valePj: g && g.vale_pj !== null && g.vale_pj !== undefined ? g.vale_pj === true : true,
+        valePf: g && g.vale_pf !== null && g.vale_pf !== undefined ? g.vale_pf === true : ym < "2026-11",
+      }),
       ...(c.pedidoMinPfPadrao === undefined ? {} : {
         pedidoMinPfLabel: c.pedidoMinPfLabel,
         pedidoMinPf: g && g.pedido_min_pf !== null && g.pedido_min_pf !== undefined
@@ -190,6 +205,22 @@ export async function premissasDoMes(ym: string): Promise<Premissa[]> {
 }
 const achaPremissa = (ps: Premissa[], chave: string) => ps.find((p) => p.chave === chave);
 export { achaPremissa };
+
+/** O documento (só dígitos) entra como cliente novo pela premissa? CNPJ (14)
+ *  conta se valePj; CPF (11) conta se valePf. Premissa sem os flags: conta. */
+export function docValeNaPremissa(p: { valePj?: boolean; valePf?: boolean } | undefined, doc: string): boolean {
+  if (!p || (p.valePj === undefined && p.valePf === undefined)) return true;
+  const d = String(doc || "").replace(/\D/g, "");
+  return d.length === 11 ? p.valePf !== false : p.valePj !== false;
+}
+/** Filtro SQL equivalente sobre uma coluna de documento (só dígitos). */
+function filtroTipoDocSql(p: { valePj?: boolean; valePf?: boolean } | undefined, col: string): string {
+  if (!p) return "";
+  const pj = p.valePj !== false, pf = p.valePf !== false;
+  if (pj && pf) return "";
+  if (!pj && !pf) return " AND false";
+  return pj ? " AND length(" + col + ") <> 11" : " AND length(" + col + ") = 11";
+}
 
 /** Até que dia (inclusive, AAAA-MM-DD) o R$ por novo cliente vale no mês.
  *  null = vale o mês todo; "" = não vale no mês (desligado sem nunca ter valido). */
@@ -494,7 +525,8 @@ export async function detectNovos(ym: string): Promise<number> {
   const corte = corteNovos(pNovos);
   if (corte === "") return 0;
   const novos = firsts.filter((r) => String(r.first_d).slice(0, 7) === ym && (Number(r.dayv) || 0) >= pedidoMin
-    && (corte === null || String(r.first_d).slice(0, 10) <= corte));
+    && (corte === null || String(r.first_d).slice(0, 10) <= corte)
+    && docValeNaPremissa(pNovos, String(r.doc)));
   if (!novos.length) return 0;
   // Dados do cliente (nome, regiao, id) e vendedor da carteira.
   const custs = await rawq(
@@ -646,6 +678,8 @@ export async function computeCampaign(only?: string, ym: string = CAMPAIGN_YM): 
     " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
     " WHERE cnc.campaign_ym = '" + ym + "'" +
     (corteN ? " AND (cnc.first_order_date IS NULL OR cnc.first_order_date <= '" + corteN + "'::date)" : "") +
+    // PJ / PF da premissa: quem não é do tipo marcado não conta (nem apto, nem em validação).
+    filtroTipoDocSql(achaPremissa(premissas, "novos"), "regexp_replace(COALESCE(cnc.doc,''),'[^0-9]','','g')") +
     " GROUP BY 1, 2"
   );
   for (const r of crows) {
@@ -729,6 +763,7 @@ export async function listNovos(seller: string, ym: string = CAMPAIGN_YM): Promi
     "SELECT cnc.customer_name, cnc.region, cnc.order_value, cnc.first_order_date::text AS first_order_date, cnc.status" +
     " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
     " WHERE cnc.campaign_ym = '" + ym + "' AND " + NOME_VENDEDOR + " = '" + s + "' AND cnc.status = 'aprovado'" +
+    filtroTipoDocSql(achaPremissa(await premissasDoMes(ym), "novos"), "regexp_replace(COALESCE(cnc.doc,''),'[^0-9]','','g')") +
     " ORDER BY cnc.first_order_date NULLS LAST, cnc.customer_name"
   );
   return rows.map((r) => ({ cliente: r.customer_name, regiao: r.region, pedido: Number(r.order_value) || 0, data: r.first_order_date || "", status: r.status }));
@@ -740,7 +775,10 @@ export async function inboxPendentes(ym: string = CAMPAIGN_YM): Promise<any[]> {
     "SELECT cnc.id, cnc.customer_name, " + NOME_VENDEDOR + " AS seller_name, cnc.region, cnc.order_value," +
     " cnc.first_order_date::text AS first_order_date, cnc.status, cnc.justification" +
     " FROM campaign_new_clients cnc LEFT JOIN users u ON u.id = cnc.seller_user_id" +
-    " WHERE cnc.campaign_ym = '" + ym + "' ORDER BY (cnc.status='pendente') DESC, cnc.first_order_date DESC NULLS LAST"
+    " WHERE cnc.campaign_ym = '" + ym + "'" +
+    // Tipo de cliente fora da regra do mês (ex.: PF quando só PJ vale) não vai para aprovação.
+    filtroTipoDocSql(achaPremissa(await premissasDoMes(ym), "novos"), "regexp_replace(COALESCE(cnc.doc,''),'[^0-9]','','g')") +
+    " ORDER BY (cnc.status='pendente') DESC, cnc.first_order_date DESC NULLS LAST"
   );
   return rows.map((r) => ({ id: String(r.id), cliente: r.customer_name, vendedor: r.seller_name, regiao: r.region, pedido: Number(r.order_value) || 0, data: r.first_order_date || "", status: r.status, justificativa: r.justification || "" })).filter((x) => !excluido(x.vendedor));
 }
@@ -838,15 +876,21 @@ export function registerCampanhaRoutes(app: Express): void {
       const pedidoMinPf = temMinPf ? num(b.pedidoMinPf) : null;
       const antes = achaPremissa(await premissasDoMes(ym), chave);
       const ativaNova = b.ativa !== false;
+      // PJ/PF ausente no corpo mantém o que está gravado (NULL não sobrescreve).
+      const temTipo = !!CATALOGO_PREMISSAS.find((c) => c.chave === chave)?.tipoCliente;
+      const valePj = temTipo && typeof b.valePj === "boolean" ? b.valePj : null;
+      const valePf = temTipo && typeof b.valePf === "boolean" ? b.valePf : null;
       await db.execute(sql`
-        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf, updated_by, updated_at)
+        INSERT INTO campanha_premissas (ym, chave, ativa, modo, valor, gatilho, pedido_min, pedido_min_pf, vale_pj, vale_pf, updated_by, updated_at)
         VALUES (${ym}, ${chave}, ${b.ativa !== false}, ${modo}, ${num(b.valor)}, ${num(b.gatilho)},
-                ${pedidoMin}, ${pedidoMinPf}, ${String((req as any)?.session?.userId || "") || null}, now())
+                ${pedidoMin}, ${pedidoMinPf}, ${valePj}, ${valePf}, ${String((req as any)?.session?.userId || "") || null}, now())
         ON CONFLICT (ym, chave) DO UPDATE SET
           ativa = EXCLUDED.ativa, modo = EXCLUDED.modo, valor = EXCLUDED.valor,
           gatilho = EXCLUDED.gatilho,
           pedido_min = COALESCE(EXCLUDED.pedido_min, campanha_premissas.pedido_min),
           pedido_min_pf = COALESCE(EXCLUDED.pedido_min_pf, campanha_premissas.pedido_min_pf),
+          vale_pj = COALESCE(EXCLUDED.vale_pj, campanha_premissas.vale_pj),
+          vale_pf = COALESCE(EXCLUDED.vale_pf, campanha_premissas.vale_pf),
           updated_by = EXCLUDED.updated_by, updated_at = now()`);
       // Carimbo do momento em que o flag mudou: daqui em diante vale (ou deixa de valer).
       if (antes && antes.ativa !== ativaNova) {
