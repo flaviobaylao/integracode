@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { analisarTelefoneBR } from "@shared/telefone";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Customer } from "@shared/schema";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -114,13 +115,18 @@ export function CustomerSearchModal({ isOpen, onClose, onSelectCustomer }: Custo
       return;
     }
 
+    if (!analisarTelefoneBR(detectedPhone).valido) {
+      toast({ title: "Telefone inválido", description: "Telefone inválido. Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.", variant: "destructive" });
+      return;
+    }
+
     if (customerContact.trim().length < 2) {
       toast({ title: "Erro", description: "Informe o nome do responsável por este telefone", variant: "destructive" });
       return;
     }
     createCustomerMutation.mutate({
       name: customerName.trim(),
-      phone: detectedPhone!,
+      phone: analisarTelefoneBR(detectedPhone).novo || detectedPhone!,
       contact: customerContact.trim(),
     });
   };
