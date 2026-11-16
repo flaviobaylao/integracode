@@ -52,7 +52,7 @@ async function ensureTabela() {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_lead_sample_orders_lead ON lead_sample_orders (lead_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_lead_sample_orders_status ON lead_sample_orders (status)`);
   // Dados fiscais (NF de amostra grátis): no pedido (snapshot) e no lead (reaproveitado na conversão)
-  for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal jsonb', 'customer_id varchar', 'sales_card_id varchar', 'pipeline_item_id varchar', 'blocked_order_id varchar'])
+  for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal jsonb', 'customer_id varchar', 'sales_card_id varchar', 'pipeline_item_id varchar', 'blocked_order_id varchar', 'pipeline_erro text'])
     await db.execute(sql.raw(`ALTER TABLE lead_sample_orders ADD COLUMN IF NOT EXISTS ${c}`));
   for (const c of ['cnpj varchar(20)', 'company_name varchar(200)', 'fiscal_address text', 'fiscal_neighborhood varchar(120)', 'fiscal_city varchar(120)', 'fiscal_state varchar(2)', 'fiscal_zip varchar(12)', 'state_registration varchar(30)', 'email varchar(160)'])
     await db.execute(sql.raw(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS ${c}`));
@@ -85,7 +85,7 @@ function serial(r: any) {
     createdAt: r.created_at, updatedAt: r.updated_at,
     leadName: r.lead_name || null, leadPhone: r.lead_phone || null, leadContact: r.lead_contact || null, leadCity: r.lead_city || null, leadNeighborhood: r.lead_neighborhood || null,
     cnpj: r.cnpj || null, companyName: r.company_name || null, fiscal: r.fiscal || null,
-    customerId: r.customer_id || null, salesCardId: r.sales_card_id || null, pipelineItemId: r.pipeline_item_id || null, blockedOrderId: r.blocked_order_id || null,
+    customerId: r.customer_id || null, salesCardId: r.sales_card_id || null, pipelineItemId: r.pipeline_item_id || null, blockedOrderId: r.blocked_order_id || null, pipelineErro: r.pipeline_erro || null,
   };
 }
 
@@ -130,6 +130,7 @@ async function emitirAmostraNoPipeline(a: any, user: any): Promise<{ ok: boolean
       visitPeriodicity: 'semanal',
       latitude: lead.latitude != null ? String(lead.latitude) : null,
       longitude: lead.longitude != null ? String(lead.longitude) : null,
+      inactivatedAt: new Date(), // CHECK do banco: inativo exige inactivated_at
       isActive: false,   // em prospecção: não é cliente ativo, não entra em agenda/positivação/comissão
       isLead: true,
     } as any);
@@ -157,6 +158,8 @@ async function emitirAmostraNoPipeline(a: any, user: any): Promise<{ ok: boolean
     customerLatitude: lead.latitude != null ? String(lead.latitude) : null, customerLongitude: lead.longitude != null ? String(lead.longitude) : null,
     notes: `Amostra grátis para LEAD #A-${a.id} (${lead.fantasy_name}) — solicitada por ${a.requested_by_name || nome(user)}`, source: 'integra',
   } as any);
+  // grava o card já (evita card duplicado se o envio ao Pipeline falhar e houver nova tentativa)
+  await db.execute(sql`UPDATE lead_sample_orders SET customer_id = ${customerId}, sales_card_id = ${String(card.id)}, pipeline_erro = NULL, updated_at = now() WHERE id = ${a.id}`);
   // 16/11: a amostra ENTRA NO PIPELINE já na SOLICITAÇÃO, igual à amostra de cliente: sem skipDebtCheck,
   // a regra do pipeline a manda para a coluna BLOQUEADOS ("Pedido de amostra requer aprovação manual").
   // A aprovação (aqui no painel de Amostras ou no próprio Pipeline) libera para a etapa Pedido.
@@ -205,8 +208,12 @@ async function sincronizarComPipeline(): Promise<void> {
     for (const a of (pend.rows || []) as any[]) {
       try {
         const u: any = await db.execute(sql`SELECT id, email, first_name AS "firstName", last_name AS "lastName" FROM users WHERE id = ${a.requested_by} LIMIT 1`);
-        await emitirAmostraNoPipeline(a, u.rows?.[0] || { id: a.requested_by, email: 'system' });
-      } catch (e: any) { console.warn('[AMOSTRA] backfill pipeline #' + a.id, e?.message); }
+        const r1 = await emitirAmostraNoPipeline(a, u.rows?.[0] || { id: a.requested_by, email: 'system' });
+        if (!r1.ok) await db.execute(sql`UPDATE lead_sample_orders SET pipeline_erro = ${r1.message || 'falha'} WHERE id = ${a.id}`);
+      } catch (e: any) {
+        console.warn('[AMOSTRA] backfill pipeline #' + a.id, e?.message);
+        try { await db.execute(sql`UPDATE lead_sample_orders SET pipeline_erro = ${String(e?.message || 'falha').slice(0, 500)} WHERE id = ${a.id}`); } catch {}
+      }
     }
   } catch (e: any) { console.warn('[AMOSTRA] sincronizar pipeline:', e?.message); }
 }
@@ -305,6 +312,7 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
         const r2 = await emitirAmostraNoPipeline(row, user);
         if (!r2.ok) pipelineMsg = r2.message || 'não entrou no Pipeline';
       } catch (e: any) { pipelineMsg = e?.message || 'falha ao enviar ao Pipeline'; console.error('[amostra] pipeline', e); }
+      if (pipelineMsg) { try { await db.execute(sql`UPDATE lead_sample_orders SET pipeline_erro = ${String(pipelineMsg).slice(0, 500)} WHERE id = ${row.id}`); } catch {} }
       const fin: any = await db.execute(sql`SELECT * FROM lead_sample_orders WHERE id = ${row.id}`);
       res.json({ ok: true, amostra: serial(fin.rows?.[0] || row), ...(pipelineMsg ? { avisoPipeline: pipelineMsg } : {}) });
     } catch (e: any) { console.error('[amostra] criar', e); res.status(500).json({ ok: false, message: e?.message }); }
