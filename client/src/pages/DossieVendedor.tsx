@@ -380,7 +380,7 @@ export default function DossieVendedor() {
       if (ord.col === "rede") return txt(c.rede);
       if (ord.col === "total") return Number(c.total) || 0;
       if (ord.col === "situacao") return c.ativo ? "Ativo" : "Inativo";
-      if (ord.col === "ultima") return txt(c.ultimaCompra);
+      if (ord.col === "conquista") return txt(c.conquista);
       if (ord.col === "evolucao") {
         const v = tendenciaDe(meses.map((m) => noMes(c, m)));
         return v === null ? -Infinity : v;
@@ -403,7 +403,7 @@ export default function DossieVendedor() {
   const exportarTabela = () => {
     exportToExcel(clientesTabela.map((c) => {
       const row: any = { Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: tipoDoc(c) === "pj" ? "PJ" : tipoDoc(c) === "pf" ? "PF" : "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
-      row["Última compra"] = c.ultimaCompra || "";
+      row["Data da conquista"] = c.conquista || "";
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
       row["Total no período"] = c.total;
       // O desenho não cabe numa planilha; vai a medida que ele representa.
@@ -811,8 +811,9 @@ export default function DossieVendedor() {
                     {clientesTabela.filter((c) => !tipoDoc(c)).length > 0
                       ? `, ${clientesTabela.filter((c) => !tipoDoc(c)).length} sem documento`
                       : ""}).
-                    {" "}“Última compra” é a da <b>vida</b> do cliente, não do período — por isso pode ser mais
-                    recente ou mais antiga do que as colunas. <b>Evolução</b> desenha o mês a mês inteiro do filtro;
+                    {" "}<b>Data da conquista</b> é a entrada do cliente na Honest — a menor data entre o cadastro e a
+                    1ª venda de todos os tempos —, então ela pode ser anterior ao período do filtro.
+                    {" "}<b>Evolução</b> desenha o mês a mês inteiro do filtro;
                     a cor compara a média do primeiro terço do período com a do último, e fica cinza quando a
                     diferença é menor que 5% (oscilação, não tendência).
                   </CardDescription>
@@ -856,7 +857,7 @@ export default function DossieVendedor() {
                     {temColunaVendedor ? <Th cod="vendedor" atual={ord} onOrdenar={ordenar} className={`top-0 ${CONGELA.vendedor} bg-white z-30`}>Vendedor</Th> : null}
                     {redes.length > 0 && <Th cod="rede" atual={ord} onOrdenar={ordenar}>Rede</Th>}
                     <Th cod="situacao" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Situação</Th>
-                    <Th cod="ultima" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Última compra</Th>
+                    <Th cod="conquista" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Data da conquista</Th>
                     {meses.map((m) => (
                       <Th key={m} cod={m} atual={ord} onOrdenar={ordenar}
                         className={`text-right whitespace-nowrap ${m === mesFoco ? "bg-amber-50 text-amber-900 font-semibold" : ""}`}>
@@ -882,7 +883,7 @@ export default function DossieVendedor() {
                           {c.ativo ? "Ativo" : "Inativo"}
                         </span>
                       </td>
-                      <td className="px-2 text-sm whitespace-nowrap">{c.ultimaCompra ? dataBR(c.ultimaCompra) : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-2 text-sm whitespace-nowrap">{c.conquista ? dataBR(c.conquista) : <span className="text-slate-300">—</span>}</td>
                       {meses.map((m, i) => {
                         const v = noMes(c, m);
                         const ant = i > 0 ? noMes(c, meses[i - 1]) : null;
