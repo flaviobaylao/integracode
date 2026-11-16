@@ -56,7 +56,7 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
   const { toast } = useToast();
   const [lista, setLista] = useState<Amostra[]>([]);
   const [carregando, setCarregando] = useState(true);
-  const [cfg, setCfg] = useState<{ maxPedidosLead: number }>({ maxPedidosLead: 1 });
+  const [cfg, setCfg] = useState<{ maxPedidosLead: number; podeSolicitar?: boolean }>({ maxPedidosLead: 1, podeSolicitar: false });
   const [formOpen, setFormOpen] = useState(false);
   const [degustDe, setDegustDe] = useState<Amostra | null>(null);
 
@@ -81,6 +81,10 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
       else toast({ title: "Não foi possível", description: d?.message, variant: "destructive" });
     } catch (e: any) { toast({ title: "Erro", description: e?.message, variant: "destructive" }); }
   };
+
+  // Vendedor externo: sem botão de pedir; só vê (e registra entrega/degustação de) amostras que o time interno pediu.
+  const podeSolicitar = cfg.podeSolicitar === true;
+  if (!podeSolicitar && !carregando && lista.length === 0) return null;
 
   return (
     <div className={`rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/20 ${compact ? "p-2" : "p-3"} space-y-2`} data-testid={`amostras-lead-${leadId}`} onClick={(e) => e.stopPropagation()}>
@@ -114,12 +118,14 @@ export default function LeadAmostras({ leadId, leadName, leadContact, leadPhone,
         </div>
       ))}
 
+      {podeSolicitar && <>
       <Button size="sm" className="w-full h-10 bg-violet-600 hover:bg-violet-700 text-white" disabled={!podePedir || carregando} onClick={() => setFormOpen(true)} data-testid={`button-pedir-amostra-${leadId}`}>
         <Plus className="h-4 w-4 mr-1" /> Pedir amostra
       </Button>
       <p className="text-[10px] text-muted-foreground text-center">{motivoBloqueio || "1 un. de cada sabor, só 350 ml · 1 por lead · aprovado pelo administrativo"}</p>
+      </>}
 
-      {formOpen && (
+      {podeSolicitar && formOpen && (
         <FormAmostra leadId={leadId} leadName={leadName} leadContact={leadContact} leadPhone={leadPhone}
           onClose={() => setFormOpen(false)} onCreated={() => { setFormOpen(false); carregar(); onChanged?.(); queryClient.invalidateQueries({ queryKey: ["/api/leads"] }); }} />
       )}
