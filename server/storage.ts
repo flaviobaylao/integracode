@@ -181,6 +181,15 @@ import { agora, hojeBR, diaBR, dataCalendario, instanteBR } from '@shared/tempo'
 
 // 📷 Coluna aditiva com a foto do check-in de LEAD na própria parada da rota (criada sob demanda).
 let __leadPhotoColReady: Promise<void> | null = null;
+import { analisarTelefoneBR as __analisarTelefoneBR } from "../shared/telefone";
+/** Telefone no padrão do Integra: correto fica igual, fora do padrão é corrigido, inválido vira ''. */
+function telefoneNoPadrao(v: any): string {
+  try {
+    const a = __analisarTelefoneBR(v);
+    return a.valido ? a.novo : '';
+  } catch { return String(v ?? ''); }
+}
+
 export function ensureLeadPhotoColumn(): Promise<void> {
   if (!__leadPhotoColReady) {
     __leadPhotoColReady = db.execute(sql`ALTER TABLE route_checkpoints ADD COLUMN IF NOT EXISTS lead_photo text`)
@@ -1037,6 +1046,9 @@ export class DatabaseStorage implements IStorage {
         console.warn('[CUSTOMER] nao resolveu a GYN para filial padrao:', e?.message);
       }
     }
+    // 📞 nov/2026: rede de segurança do padrão de telefone para QUALQUER caminho que crie cliente
+    // (telas já recusam com 400 antes; aqui sync/IA/integrações: corrige o formato ou deixa vazio).
+    if ((customer as any).phone != null) customer = { ...(customer as any), phone: telefoneNoPadrao((customer as any).phone) };
     const [newCustomer] = await db.insert(customers).values(customer as any).returning();
     return newCustomer;
   }
@@ -1052,6 +1064,8 @@ export class DatabaseStorage implements IStorage {
     // (E2-E, 06/set/2026) Invariante: inativo sempre com inactivated_at (CHECK no banco);
     // reativado limpa a data. Vale para qualquer caminho que passe por aqui (PATCH/PUT/IA).
     const extra: any = {};
+    // 📞 nov/2026: mesma rede de segurança do telefone na atualização.
+    if ((customer as any).phone != null) extra.phone = telefoneNoPadrao((customer as any).phone);
     if ((customer as any).isActive === false && !(customer as any).inactivatedAt) extra.inactivatedAt = agora();
     if ((customer as any).isActive === true) extra.inactivatedAt = null;
 

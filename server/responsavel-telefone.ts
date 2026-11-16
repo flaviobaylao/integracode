@@ -12,6 +12,28 @@
 // -----------------------------------------------------------------------------
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { analisarTelefoneBR } from "../shared/telefone";
+
+/**
+ * 📞 nov/2026 — trava de telefone no CADASTRO: número de preenchimento ou fora do formato
+ * não é salvo. Quando o payload traz telefone:
+ *   • vazio → passa (o pedido é que exige telefone);
+ *   • válido mas escrito fora do padrão (+55, sem o 9) → corrige no próprio payload;
+ *   • inválido → devolve a mensagem de erro (a rota responde 400 TELEFONE_INVALIDO).
+ */
+export function validarTelefoneCadastro(body: any, key: string = "phone"): string | null {
+  try {
+    if (!body || !Object.prototype.hasOwnProperty.call(body, key)) return null;
+    const v = body[key];
+    if (v == null || !String(v).replace(/\D/g, "")) return null;
+    const a = analisarTelefoneBR(v);
+    if (a.situacao === "corrigir") { body[key] = a.novo; return null; }
+    if (a.valido) return null;
+    return `Telefone inválido (${a.motivo}). Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX — números de preenchimento como 99999-9999 não são aceitos.`;
+  } catch {
+    return null;
+  }
+}
 
 export const MSG_RESPONSAVEL_OBRIGATORIO =
   "Informe o nome do responsável pelo telefone (campo obrigatório ao lado do telefone).";

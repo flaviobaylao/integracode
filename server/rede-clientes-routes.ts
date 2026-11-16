@@ -18,6 +18,7 @@
 // -----------------------------------------------------------------------------
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
+import { analisarTelefoneBR } from "../shared/telefone";
 import { sql } from "drizzle-orm";
 import { nfVendaWhere } from "./faturamento-oficial";
 import { cteFaturamento, descricaoFonte } from "./faturamento-carteira";
@@ -291,6 +292,12 @@ function validaPonto(b: any): any {
   const lat = num(b.latitude), lng = num(b.longitude);
   if (lat !== null && (lat < -34 || lat > 6)) return { erro: "Latitude fora do Brasil — confira o valor." };
   if (lng !== null && (lng < -74 || lng > -33)) return { erro: "Longitude fora do Brasil — confira o valor." };
+  // 📞 nov/2026: telefone do ponto no padrão (vazio pode; inválido/preenchimento não; fora do padrão é corrigido).
+  if (String(b.telefone ?? "").replace(/\D/g, "")) {
+    const at = analisarTelefoneBR(b.telefone);
+    if (!at.valido) return { erro: `Telefone do ponto inválido (${at.motivo}). Use celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX.` };
+    b = { ...b, telefone: at.novo };
+  }
   return {
     nome, endereco, cidade, uf,
     numero: txt(b.numero, 10),

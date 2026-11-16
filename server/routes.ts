@@ -2909,6 +2909,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
       // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      // 📞 TELEFONE: número de preenchimento/formato inválido não é salvo; fora do padrão é corrigido (nov/2026).
+      { const { validarTelefoneCadastro } = await import('./responsavel-telefone'); const __errTel = validarTelefoneCadastro(req.body, 'phone'); if (__errTel) return res.status(400).json({ message: __errTel, code: 'TELEFONE_INVALIDO' }); }
       { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
       const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
@@ -3427,6 +3429,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/customers', authenticateUser, requirePermission("Clientes / Carteira", "criar"), async (req: any, res) => {
     try {
       // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      // 📞 TELEFONE: número de preenchimento/formato inválido não é salvo; fora do padrão é corrigido (nov/2026).
+      { const { validarTelefoneCadastro } = await import('./responsavel-telefone'); const __errTel = validarTelefoneCadastro(req.body, 'phone'); if (__errTel) return res.status(400).json({ message: __errTel, code: 'TELEFONE_INVALIDO' }); }
       { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, null); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🔍 LOG 1: Payload recebido do frontend
       console.log('📝 [CREATE CUSTOMER] Payload recebido:', {
@@ -3741,6 +3745,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const _motivoStatus = String(req.body?.motivo || '').trim();
       delete req.body.motivo;
       // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      // 📞 TELEFONE: número de preenchimento/formato inválido não é salvo; fora do padrão é corrigido (nov/2026).
+      { const { validarTelefoneCadastro } = await import('./responsavel-telefone'); const __errTel = validarTelefoneCadastro(req.body, 'phone'); if (__errTel) return res.status(400).json({ message: __errTel, code: 'TELEFONE_INVALIDO' }); }
       { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       // 🏢 VISITA PRESENCIAL MENSAL: captura/persiste à parte (fora do schema) e valida permissão.
       const _pmRes = await __applyPresentialMonthly(req, String(id), user, _isManager, _isAdmin);
@@ -4091,9 +4097,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Telefone é obrigatório" });
       }
       // 👤 RESPONSÁVEL PELO TELEFONE obrigatório quando o payload grava telefone (nov/2026).
+      // 📞 TELEFONE: número de preenchimento/formato inválido não é salvo; fora do padrão é corrigido (nov/2026).
+      { const { validarTelefoneCadastro } = await import('./responsavel-telefone'); const __errTel = validarTelefoneCadastro(req.body, 'phone'); if (__errTel) return res.status(400).json({ message: __errTel, code: 'TELEFONE_INVALIDO' }); }
       { const { validarResponsavel } = await import('./responsavel-telefone'); const __errResp = await validarResponsavel(req.body, String(id)); if (__errResp) return res.status(400).json({ message: __errResp, code: 'RESPONSAVEL_OBRIGATORIO' }); }
       
-      const updateData: { phone: string; contact?: string } = { phone };
+      const updateData: { phone: string; contact?: string } = { phone: req.body.phone };
       if (contact !== undefined) {
         updateData.contact = contact;
       }
@@ -23197,6 +23205,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (_je: any) { console.warn('[PUBLIC-ORDER] journal indisponivel (segue):', _je?.message); }
 
     try {
+      // 📞 nov/2026: telefone do cliente no padrão — inválido/preenchimento é recusado; fora do padrão é corrigido.
+      try {
+        const { validarTelefoneCadastro } = await import('./responsavel-telefone');
+        const __errTelPub = req.body && req.body.customer ? validarTelefoneCadastro(req.body.customer, 'phone') : null;
+        if (__errTelPub) return res.status(400).json({ message: 'Telefone inválido: confira o DDD e o número do seu WhatsApp (ex.: (62) 99999-1234).', code: 'TELEFONE_INVALIDO' });
+      } catch (_eTelPub) { /* segue para a validação normal */ }
       const orderSchema = z.object({
         customer: z.object({
           name: z.string().min(1, 'Nome é obrigatório'),
@@ -27190,6 +27204,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: 'Nome, tipo de cliente, telefone e endereço são obrigatórios'
         });
       }
+      // 📞 Telefone no padrão (nov/2026): inválido não vira cliente; fora do padrão é corrigido.
+      { const { validarTelefoneCadastro } = await import('./responsavel-telefone'); const __errTel = validarTelefoneCadastro(req.body, 'phone'); if (__errTel) return res.status(400).json({ message: __errTel, code: 'TELEFONE_INVALIDO' }); }
       // 👤 Responsável pelo telefone (nov/2026): o informado na conversão, senão o contato do lead.
       const { limparResponsavel: __limpResp, MSG_RESPONSAVEL_OBRIGATORIO: __msgResp } = await import('./responsavel-telefone');
       const __contato = __limpResp(req.body?.contact) || __limpResp((lead as any)?.contact);
@@ -27230,7 +27246,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         companyName: companyName || null,
         stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
-        phone,
+        phone: req.body.phone,
         contact: __contato,
         email: email || null,
         address,
@@ -27253,7 +27269,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         companyName: companyName || null,
         stateRegistration: stateRegistration,
         fantasyName: lead.fantasyName,
-        phone,
+        phone: req.body.phone,
         contact: __contato,
         email: email || null,
         address,

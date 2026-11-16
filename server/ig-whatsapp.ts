@@ -93,8 +93,12 @@ export async function salvarWhatsappDaConversa(opts: {
       const r: any = await db.execute(sql`SELECT phone FROM customers WHERE id = ${String(opts.erpCustomerId)} LIMIT 1`);
       const atual = r.rows?.[0]?.phone;
       if (r.rows?.length && telefoneInutil(atual, opts.igsid)) {
-        await db.execute(sql`UPDATE customers SET phone = ${numero}, updated_at = now() WHERE id = ${String(opts.erpCustomerId)}`);
-        erpAtualizado = true;
+        const { analisarTelefoneBR } = await import('../shared/telefone');
+        const __pad = analisarTelefoneBR(numero);
+        if (__pad.valido) {
+          await db.execute(sql`UPDATE customers SET phone = ${__pad.novo}, updated_at = now() WHERE id = ${String(opts.erpCustomerId)}`);
+          erpAtualizado = true;
+        }
       }
     } catch (e: any) {
       console.error("[IG-WA] gravar no cadastro:", e?.message || e);

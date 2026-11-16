@@ -171,7 +171,10 @@ export async function respostaDaConfirmacao(phone: string, texto: string): Promi
         try {
           const c: any = await db.execute(sql`SELECT phone FROM customers WHERE id = ${cid} LIMIT 1`);
           const antigo = String(c.rows?.[0]?.phone || '');
-          await db.execute(sql`UPDATE customers SET phone = ${novo}, notes = concat_ws(E'\n', NULLIF(notes,''), ${'Telefone anterior ' + antigo + ' trocado pelo cliente em ' + hojeBR() + ' (confirmacao WhatsApp)'}), updated_at = now() WHERE id = ${cid}`);
+          const { analisarTelefoneBR } = await import('../shared/telefone');
+          const __novoPad = analisarTelefoneBR(novo);
+          if (!__novoPad.valido) throw new Error('numero novo fora do padrao: ' + novo);
+          await db.execute(sql`UPDATE customers SET phone = ${__novoPad.novo}, notes = concat_ws(E'\n', NULLIF(notes,''), ${'Telefone anterior ' + antigo + ' trocado pelo cliente em ' + hojeBR() + ' (confirmacao WhatsApp)'}), updated_at = now() WHERE id = ${cid}`);
           await db.execute(sql`DELETE FROM system_settings WHERE key = ${'confirmacao_aguarda_num:' + d.slice(-8)}`);
           // Confirmação para o número novo (template; se não der, link).
           try {
