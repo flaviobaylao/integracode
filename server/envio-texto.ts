@@ -70,6 +70,19 @@ export function explicaFalha(erro: string, canal: string): string {
  * havendo outro numero capaz de entregar. Nunca lanca: devolve o resultado e o caminho.
  */
 export async function enviarTexto(conversationId: string, toPhone: string, texto: string): Promise<Envio> {
+  // 🚫 INSTAGRAM (nov/2026) — conversa do Direct tem `ig:<IGSID>` no lugar do telefone.
+  // Sem esta trava o `so()` abaixo apagava o "ig:" e mandava os digitos do IGSID para a
+  // Umbler como se fossem um celular. A Umbler aceitava, devolvia 200 e um protocolo, e a
+  // mensagem morria ali — com visto verde na tela do atendente. Em 90 dias foram 24
+  // mensagens escritas por atendentes que nenhum cliente recebeu. Enquanto a Central nao
+  // souber responder pela API da Meta, e melhor recusar e dizer o porque.
+  if (/^ig:/i.test(String(toPhone || '').trim())) {
+    return {
+      success: false,
+      error: 'Esta conversa veio pelo Direct do Instagram e nao tem WhatsApp. O envio pelo ChatCenter nao chega ao cliente. '
+        + 'Peca o WhatsApp dele pela conversa (a IA faz isso ao transferir) e continue o atendimento por la.',
+    };
+  }
   const destino = so(toPhone);
   if (!destino) return { success: false, error: 'Telefone do cliente vazio' };
   if (!texto || !texto.trim()) return { success: false, error: 'Mensagem vazia' };
