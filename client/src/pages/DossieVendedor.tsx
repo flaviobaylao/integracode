@@ -141,6 +141,52 @@ function Kpi({ titulo, valor, sub, cor = "text-slate-900", variacaoPct }: {
   );
 }
 
+// ── EVOLUÇÃO: o mês a mês inteiro numa célula (Flavio, 16/11/2026) ──────────
+// A coluna de variação comparava só os dois últimos meses do período. Num
+// recorte de 11 meses isso joga fora quase tudo: cliente que caiu de 10 mil
+// para 3 mil ao longo do ano e empatou nos dois últimos aparecia como "0%".
+// O desenho mostra a série toda, que é a pergunta de verdade — está subindo ou
+// está morrendo.
+//
+// A TENDÊNCIA (que dá a cor e a ordenação) compara a média do PRIMEIRO TERÇO
+// do período com a do ÚLTIMO TERÇO, não o primeiro mês com o último: um único
+// mês atípico na ponta — e eles existem, um pedido grande, um mês sem compra —
+// inverteria o sinal de uma carteira que na média está estável.
+// Devolve PORCENTAGEM, na mesma unidade de `variacao` acima — as duas sao lidas
+// pelo mesmo `pct`, e misturar razao com porcentagem aqui imprime "-1%" onde a
+// queda foi de 74%.
+const tendenciaDe = (vs: number[]): number | null => {
+  if (vs.length < 2) return null;
+  const n = Math.max(1, Math.round(vs.length / 3));
+  const media = (a: number[]) => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+  const ini = media(vs.slice(0, n));
+  const fim = media(vs.slice(-n));
+  if (ini <= 0) return fim > 0 ? 100 : null;
+  return (fim - ini) / ini * 100;
+};
+
+/** Mini-gráfico do período, com o último ponto marcado. */
+function Evolucao({ valores, titulo }: { valores: number[]; titulo?: string }) {
+  if (valores.length < 2) return <span className="text-slate-300">—</span>;
+  const L = 104, A = 26;
+  const max = Math.max(...valores), min = Math.min(...valores);
+  const faixa = max - min || 1;
+  const px = (i: number) => 2 + (i / (valores.length - 1)) * (L - 4);
+  const py = (v: number) => A - 3 - ((v - min) / faixa) * (A - 6);
+  const d = valores.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+  const t = tendenciaDe(valores);
+  // Verde/vermelho só a partir de 5%: abaixo disso é oscilação, não tendência,
+  // e pintar oscilação de vermelho faz o olho procurar problema onde não há.
+  const cor = t === null || Math.abs(t) < 5 ? "#64748b" : t > 0 ? "#047857" : "#b91c1c";
+  return (
+    <svg width={L} height={A} className="align-middle" role="img"
+      aria-label={titulo || "evolução no período"}><title>{titulo || ""}</title>
+      <path d={d} fill="none" stroke={cor} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={px(valores.length - 1)} cy={py(valores[valores.length - 1])} r={2.2} fill={cor} />
+    </svg>
+  );
+}
+
 /** Cabeçalho que ordena. A setinha só aparece na coluna em uso — nas outras
  *  fica cinza no hover, para a grade não virar um painel de setas. */
 function Th({ cod, atual, onOrdenar, children, className = "" }: {
@@ -282,14 +328,10 @@ export default function DossieVendedor() {
     };
   }, [modo, selecionados, semVendedor, data]);
 
-  // ── os dois últimos meses do período ──────────────────────────────────────
-  // A coluna de variação compara o ÚLTIMO mês do período com o anterior a ele.
-  // Antes dependia de escolher um mês no filtro; agora que o filtro é uma
-  // faixa, o "mês da pergunta" é naturalmente o último — e com um mês só no
-  // período não há o que comparar.
+  // O último mês do período é o "mês da pergunta": é ele que a tabela destaca
+  // em âmbar, para o olho achar a coluna mais recente sem contar cabeçalhos.
   const mesFoco = meses.length ? meses[meses.length - 1] : "";
-  const mesAnt = meses.length > 1 ? meses[meses.length - 2] : "";
-  const temAnterior = !!mesAnt;
+
   const noMes = (c: any, m: string) => Number(c?.porMes?.[m]) || 0;
 
   // ── tabela anual de clientes mês a mês ─────────────────────────────────────
@@ -339,8 +381,8 @@ export default function DossieVendedor() {
       if (ord.col === "total") return Number(c.total) || 0;
       if (ord.col === "situacao") return c.ativo ? "Ativo" : "Inativo";
       if (ord.col === "ultima") return txt(c.ultimaCompra);
-      if (ord.col === "var") {
-        const v = temAnterior ? variacao(noMes(c, mesFoco), noMes(c, mesAnt)) : null;
+      if (ord.col === "evolucao") {
+        const v = tendenciaDe(meses.map((m) => noMes(c, m)));
         return v === null ? -Infinity : v;
       }
       return noMes(c, ord.col); // uma coluna de mês
@@ -350,7 +392,7 @@ export default function DossieVendedor() {
       if (typeof x === "string" || typeof y === "string") return String(x).localeCompare(String(y), "pt-BR") * dir;
       return (x - y) * dir;
     });
-  }, [base, redeSel, tipoSel, busca, mesFoco, mesAnt, temAnterior, ord]);
+  }, [base, redeSel, tipoSel, busca, meses, mesFoco, ord]);
 
   const ordenar = (col: string) =>
     setOrd((o) => (o.col === col ? { col, dir: o.dir === "asc" ? "desc" : "asc" } : { col, dir: col === "cliente" || col === "vendedor" || col === "rede" ? "asc" : "desc" }));
@@ -364,7 +406,8 @@ export default function DossieVendedor() {
       row["Última compra"] = c.ultimaCompra || "";
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
       row["Total no período"] = c.total;
-      if (temAnterior) row[`Variação ${rotMes(mesFoco)} vs ${rotMes(mesAnt)}`] = pct(variacao(noMes(c, mesFoco), noMes(c, mesAnt)));
+      // O desenho não cabe numa planilha; vai a medida que ele representa.
+      row["Tendência no período (%)"] = pct(tendenciaDe(meses.map((m) => noMes(c, m))));
       return row;
     }), `clientes-${ini}_a_${fim}-${modo === "sel" ? (umSo?.nome || `${selecionados.length}-vendedores`) : modo === "sem" ? "sem-vendedor" : "honest"}`);
   };
@@ -769,7 +812,9 @@ export default function DossieVendedor() {
                       ? `, ${clientesTabela.filter((c) => !tipoDoc(c)).length} sem documento`
                       : ""}).
                     {" "}“Última compra” é a da <b>vida</b> do cliente, não do período — por isso pode ser mais
-                    recente ou mais antiga do que as colunas.
+                    recente ou mais antiga do que as colunas. <b>Evolução</b> desenha o mês a mês inteiro do filtro;
+                    a cor compara a média do primeiro terço do período com a do último, e fica cinza quando a
+                    diferença é menor que 5% (oscilação, não tendência).
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -818,7 +863,7 @@ export default function DossieVendedor() {
                         {rotMes(m)}{m === mesCorrente ? "*" : ""}
                       </Th>
                     ))}
-                    {temAnterior && <Th cod="var" atual={ord} onOrdenar={ordenar} className="text-right whitespace-nowrap">{rotMes(mesFoco)} vs {rotMes(mesAnt)}</Th>}
+                    {meses.length > 1 && <Th cod="evolucao" atual={ord} onOrdenar={ordenar} className="whitespace-nowrap">Evolução</Th>}
                     <Th cod="total" atual={ord} onOrdenar={ordenar} className="px-3 text-right">Total</Th>
                   </tr>
                 </thead>
@@ -848,10 +893,10 @@ export default function DossieVendedor() {
                           </td>
                         );
                       })}
-                      {temAnterior && (
-                        <td className={`px-2 text-right whitespace-nowrap font-medium ${
-                          (variacao(noMes(c, mesFoco), noMes(c, mesAnt)) ?? 0) >= 0 ? "text-emerald-700" : "text-red-700"}`}>
-                          {pct(variacao(noMes(c, mesFoco), noMes(c, mesAnt)))}
+                      {meses.length > 1 && (
+                        <td className="px-2 whitespace-nowrap">
+                          <Evolucao valores={meses.map((m) => noMes(c, m))}
+                            titulo={`${rotMes(meses[0])} a ${rotMes(meses[meses.length - 1])} · tendência ${pct(tendenciaDe(meses.map((m) => noMes(c, m))))}`} />
                         </td>
                       )}
                       <td className="px-3 text-right font-semibold whitespace-nowrap">{brl(c.total)}</td>
@@ -874,7 +919,12 @@ export default function DossieVendedor() {
                         </td>
                       );
                     })}
-                    {temAnterior && <td className="px-2 text-right">{pct(variacao(totalMes(mesFoco), totalMes(mesAnt)))}</td>}
+                    {meses.length > 1 && (
+                      <td className="px-2 whitespace-nowrap">
+                        <Evolucao valores={meses.map((m) => totalMes(m))}
+                          titulo={`Total · tendência ${pct(tendenciaDe(meses.map((m) => totalMes(m))))}`} />
+                      </td>
+                    )}
                     <td className="px-3 text-right whitespace-nowrap">{brl(totalGeral)}</td>
                   </tr>
                 </tbody>
