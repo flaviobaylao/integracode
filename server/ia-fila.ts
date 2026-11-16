@@ -175,6 +175,72 @@ async function agentDoUsuario(userId: string): Promise<{ agent_id: string; name:
 }
 
 // ---------------------------------------------------------------------------
+// Equipe de atendimento (nov/2026)
+// ---------------------------------------------------------------------------
+// Decisao do Flavio: o pedido de "falar com uma pessoa" NAO vai para quem estiver
+// online nem para o dono da carteira. Vai sempre para a PRIMEIRA LINHA (Leticia e
+// Joao Pedro). Se em `ia_handoff_min` minutos nenhum dos dois atender, o caso sobe
+// para a ESCALACAO (Cinthia e Flavio). Ninguem mais entra nesse fluxo — pedido de
+// atendimento nao e assunto de administrativo nem de vendedor de carteira.
+//
+// As duas listas sao configuraveis sem deploy (aceitam e-mail ou user_id, separados
+// por virgula): `ia_handoff_equipe` e `ia_handoff_escalacao`.
+const EQUIPE_PADRAO = 'leticia@bebahonest.com.br,joaopedro@bebahonest.com.br';
+const ESCALACAO_PADRAO = 'cinthiamarque90@gmail.com,flavio@bebahonest.com.br';
+
+export type MembroEquipe = { user_id: string; agent_id: string | null; name: string; phone: string | null; online: boolean };
+
+/**
+ * Resolve uma lista de e-mails/ids em pessoas com chat_agent e telefone.
+ * Ordena por quem atendeu ha mais tempo (rodizio natural) e marca quem esta online.
+ * Quem nao for encontrado e simplesmente ignorado — a lista nunca derruba o handoff.
+ */
+async function resolverEquipe(chave: string, padrao: string): Promise<MembroEquipe[]> {
+  const bruto = String(await getSetting(chave, padrao) || padrao);
+  const itens = bruto.split(',').map(x => x.trim()).filter(Boolean);
+  const out: MembroEquipe[] = [];
+  for (const item of itens) {
+    try {
+      const u: any = item.includes('@')
+        ? await db.execute(sql`SELECT id FROM users WHERE lower(email) = ${item.toLowerCase()} AND coalesce(is_active, true) = true LIMIT 1`)
+        : await db.execute(sql`SELECT id FROM users WHERE id = ${item} AND coalesce(is_active, true) = true LIMIT 1`);
+      const userId = u.rows?.[0]?.id ? String(u.rows[0].id) : null;
+      if (!userId) { console.warn(`[IA-FILA] ${chave}: "${item}" nao encontrado ou inativo`); continue; }
+      if (out.some(m => m.user_id === userId)) continue;
+      const a = await agentDoUsuario(userId);
+      let phone = a?.phone || null;
+      let name = a?.name || '';
+      if (!phone || !name) {
+        try {
+          const uu: any = await db.execute(sql`SELECT coalesce(first_name,'') || ' ' || coalesce(last_name,'') AS n, phone, email FROM users WHERE id = ${userId} LIMIT 1`);
+          name = name || String(uu.rows?.[0]?.n || '').trim() || String(uu.rows?.[0]?.email || '');
+          phone = phone || uu.rows?.[0]?.phone || null;
+        } catch { /* sem dados extras, segue com o que tem */ }
+      }
+      out.push({ user_id: userId, agent_id: a?.agent_id ? String(a.agent_id) : null, name: name || item, phone, online: await usuarioOnline(userId) });
+    } catch (e: any) { console.error(`[IA-FILA] ${chave} "${item}":`, e?.message || e); }
+  }
+  // Quem esta online primeiro; depois quem atendeu ha mais tempo.
+  try {
+    for (const m of out) {
+      if (!m.agent_id) { (m as any)._ult = null; continue; }
+      const t: any = await db.execute(sql`SELECT max(last_attended_at) AS ult FROM chat_conversations WHERE assigned_agent_id = ${m.agent_id}`);
+      (m as any)._ult = t.rows?.[0]?.ult || null;
+    }
+    out.sort((a: any, b: any) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      if (!a._ult) return -1;
+      if (!b._ult) return 1;
+      return new Date(a._ult).getTime() - new Date(b._ult).getTime();
+    });
+  } catch { /* sem ordenacao, mantem a ordem da configuracao */ }
+  return out;
+}
+
+export async function primeiraLinha(): Promise<MembroEquipe[]> { return resolverEquipe('ia_handoff_equipe', EQUIPE_PADRAO); }
+export async function escalacao(): Promise<MembroEquipe[]> { return resolverEquipe('ia_handoff_escalacao', ESCALACAO_PADRAO); }
+
+// ---------------------------------------------------------------------------
 // Carteira
 // ---------------------------------------------------------------------------
 
@@ -345,16 +411,49 @@ export async function lembreteTick(): Promise<{ ran: boolean; lembradas: number;
 // Notificacao
 // ---------------------------------------------------------------------------
 
-async function avisarAtendente(phone: string | null, nome: string, clienteNome: string, exclusivo: boolean): Promise<void> {
+/**
+ * Telefone para o atendente CHAMAR o cliente, ja formatado. Prefere o que veio no handoff;
+ * se ali estiver um id do Instagram (`ig:` ou digitos demais), busca o WhatsApp que o
+ * cliente informou na conversa. Devolve null quando nao existe contato nenhum — e nesse
+ * caso o aviso sai sem a linha, em vez de mandar o atendente ligar para um id.
+ */
+async function contatoParaAtendente(conversationId: string, phone: string): Promise<string | null> {
+  const { normalizarWhatsappBR, formatarFoneBR, whatsappDaConversa } = await import('./ig-whatsapp');
+  const direto = normalizarWhatsappBR(String(phone || '').replace(/^ig:/i, ''));
+  if (direto) return formatarFoneBR(direto);
+  try {
+    const wa = await whatsappDaConversa(conversationId);
+    if (wa) return formatarFoneBR(wa);
+  } catch { /* sem numero, o aviso vai sem a linha de contato */ }
+  return null;
+}
+
+async function avisarAtendente(phone: string | null, nome: string, clienteNome: string, exclusivo: boolean, contatoCliente?: string | null): Promise<void> {
   if (!phone) return;
   if ((await getSetting('ia_notifica_wa', 'on')) !== 'on') return;
+  // O contato vai NO AVISO (nov/2026). Antes o atendente recebia so o nome e tinha de
+  // caçar o telefone na tela — e numa conversa vinda do Instagram nao havia telefone
+  // nenhum para achar. Agora o numero que o cliente informou viaja junto.
+  const comoFalar = contatoCliente ? `\n📱 Chame no WhatsApp: ${contatoCliente}` : '';
   const msg = exclusivo
-    ? `🔔 ${nome}, o cliente *${clienteNome}* pediu para falar com uma pessoa e a conversa é SUA (carteira). Ela está aguardando atendimento no ChatCenter.`
-    : `🔔 ${nome}, o cliente *${clienteNome}* pediu para falar com uma pessoa. A conversa está aguardando atendimento no ChatCenter.`;
+    ? `🔔 ${nome}, o cliente *${clienteNome}* pediu para falar com uma pessoa e a conversa é SUA (carteira). Ela está aguardando atendimento no ChatCenter.${comoFalar}`
+    : `🔔 ${nome}, o cliente *${clienteNome}* pediu para falar com uma pessoa. A conversa está aguardando atendimento no ChatCenter.${comoFalar}`;
   try {
     const { sendUmblerTalkText } = await import('./chat-routes');
     await sendUmblerTalkText(phone, msg);
   } catch (e: any) { console.error('[IA-FILA] aviso', e?.message || e); }
+}
+
+/** Aviso da ESCALACAO: a primeira linha nao respondeu no prazo. */
+async function avisarEscalacao(phone: string | null, nome: string, clienteNome: string, minutos: number, contatoCliente?: string | null): Promise<void> {
+  if (!phone) return;
+  if ((await getSetting('ia_notifica_wa', 'on')) !== 'on') return;
+  const comoFalar = contatoCliente ? `\n📱 Chame no WhatsApp: ${contatoCliente}` : '';
+  const msg = `⏫ ${nome}, o cliente *${clienteNome}* pediu para falar com uma pessoa e ninguem da primeira linha respondeu em ${minutos} min. A conversa está no ChatCenter.${comoFalar}`;
+  try {
+    const { sendUmblerTalkText } = await import('./chat-routes');
+    await sendUmblerTalkText(phone, msg);
+  } catch (e: any) { console.error('[IA-FILA] aviso escalacao', e?.message || e); }
 }
 
 async function nomeDoCliente(conversationId: string): Promise<string> {
@@ -390,6 +489,8 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
     await ensureFilaTable();
     const minutos = Math.max(1, parseInt(await getSetting('ia_handoff_min', '5'), 10) || 5);
     const cliente = await nomeDoCliente(conversationId);
+    // Contato para o atendente chamar. Vem formatado no aviso; `ig:` nunca e contato.
+    const contato = await contatoParaAtendente(conversationId, phone);
 
     const owner = await donoDaCarteira(phone);
 
@@ -418,27 +519,34 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
     let alvoAgent: { agent_id: string; name: string; phone: string | null } | null = null;
     let exclusivo = false;
 
-    if (owner && (await usuarioOnline(owner))) {
-      const a = await agentDoUsuario(owner);
-      if (a) { alvoUserId = owner; alvoAgent = a; exclusivo = true; }
+    // 👥 PRIMEIRA LINHA — Leticia e Joao Pedro. A conversa fica com um deles (o que
+    // atendeu ha mais tempo, preferindo quem esta online), mas AMBOS sao avisados e
+    // qualquer um dos dois pode responder: por isso `exclusivo = false`. O dono da
+    // carteira nao entra aqui, nem quem estiver online por acaso.
+    const equipe = await primeiraLinha();
+    if (equipe.length) {
+      const escolhido = equipe.find(m => m.agent_id) || equipe[0];
+      alvoUserId = escolhido.user_id;
+      if (escolhido.agent_id) alvoAgent = { agent_id: escolhido.agent_id, name: escolhido.name, phone: escolhido.phone };
     }
 
-    // Excecao: cliente SEM dono de carteira -> vai para o atendente padrao (Leticia N) se online.
-    if (!owner && !alvoAgent) {
-      const fbId = await atendenteSemDonoUserId();
-      if (fbId && (await usuarioOnline(fbId))) {
-        const a = await agentDoUsuario(fbId);
-        if (a) { alvoUserId = fbId; alvoAgent = a; exclusivo = false; }
-      }
-    }
-
+    // Rede de seguranca: se a lista estiver vazia ou mal configurada (ninguem com
+    // cadastro valido), volta ao comportamento antigo em vez de deixar o cliente sem
+    // ninguem — melhor atender fora da regra do que nao atender.
     if (!alvoAgent) {
-      const lista = await agentesDisponiveis();
-      if (lista.length) {
-        const esc = lista[0];
-        alvoUserId = esc.user_id ? String(esc.user_id) : null;
-        alvoAgent = { agent_id: String(esc.agent_id), name: esc.name, phone: esc.phone };
+      if (owner && (await usuarioOnline(owner))) {
+        const a = await agentDoUsuario(owner);
+        if (a) { alvoUserId = owner; alvoAgent = a; exclusivo = true; }
       }
+      if (!alvoAgent) {
+        const lista = await agentesDisponiveis();
+        if (lista.length) {
+          const esc = lista[0];
+          alvoUserId = esc.user_id ? String(esc.user_id) : null;
+          alvoAgent = { agent_id: String(esc.agent_id), name: esc.name, phone: esc.phone };
+        }
+      }
+      if (alvoAgent) console.warn('[IA-FILA] primeira linha indisponivel — caiu na regra antiga');
     }
 
     // Ninguem online em dia util: a conversa fica reservada ao DONO da carteira e ele
@@ -469,7 +577,7 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
       await marcarTransferida(conversationId);
       await marcarAguardando(conversationId,
         `[IA] ${cliente} pediu para falar com uma pessoa e nao havia nenhum atendente online. O cliente foi avisado que sera atendido em breve.${nomeDono ? ' Carteira: ' + nomeDono + '.' : ''} Entrar em contato.`);
-      await avisarAtendente(foneDono, nomeDono || 'atendente', cliente, false);
+      await avisarAtendente(foneDono, nomeDono || 'atendente', cliente, false, contato);
       console.log(`[IA-FILA] conv=${conversationId} sem atendente online (dono=${nomeDono || '-'})`);
       return { ok: true, semAtendente: true, alvo: nomeDono || undefined };
     }
@@ -483,13 +591,19 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
         answered_at = NULL, updated_at = now()`);
 
     await marcarTransferida(conversationId);
+    const nomesEquipe = equipe.length ? equipe.map(m => m.name).join(' e ') : alvoAgent.name;
     await msgSistema(conversationId, exclusivo
       ? `[IA] Aguardando atendimento de ${alvoAgent.name} (dono da carteira).`
-      : `[IA] Aguardando atendimento de ${alvoAgent.name}.`);
-    await avisarAtendente(alvoAgent.phone, alvoAgent.name, cliente, exclusivo);
+      : `[IA] Aguardando atendimento de ${nomesEquipe}. Sem resposta em ${minutos} min, sobe para a coordenacao.`);
+    // Avisa TODO MUNDO da primeira linha: os dois podem responder, quem pegar primeiro atende.
+    if (equipe.length) {
+      for (const m of equipe) await avisarAtendente(m.phone, m.name, cliente, false, contato);
+    } else {
+      await avisarAtendente(alvoAgent.phone, alvoAgent.name, cliente, exclusivo, contato);
+    }
 
-    console.log(`[IA-FILA] conv=${conversationId} -> ${alvoAgent.name} exclusivo=${exclusivo} prazo=${minutos}min`);
-    return { ok: true, alvo: alvoAgent.name, exclusivo };
+    console.log(`[IA-FILA] conv=${conversationId} -> ${nomesEquipe} (atribuida a ${alvoAgent.name}) prazo=${minutos}min`);
+    return { ok: true, alvo: nomesEquipe, exclusivo };
   } catch (e: any) {
     console.error('[IA-FILA] handoff', e?.message || e);
     return { ok: false, erro: e?.message || String(e) };
@@ -586,7 +700,7 @@ export async function marcarAtendida(conversationId: string, userId?: string): P
   try {
     await db.execute(sql`UPDATE ia_handoff SET status = 'answered', answered_at = now(), updated_at = now(),
       target_user_id = coalesce(${userId || null}, target_user_id)
-      WHERE conversation_id = ${conversationId} AND status = 'waiting'`);
+      WHERE conversation_id = ${conversationId} AND status IN ('waiting', 'escalado')`);
   } catch {}
 }
 
@@ -600,22 +714,27 @@ export async function filaTick(): Promise<{ ran: boolean; repassadas: number; de
   try {
     if ((await getSetting('ia_front_line', 'off')) !== 'on') return { ran: false, repassadas: 0, detalhes };
     await ensureFilaTable();
+    // ⏫ ESCALACAO (nov/2026) — a primeira linha teve `ia_handoff_min` minutos e ninguem
+    // atendeu. O caso sobe para a coordenacao (Cinthia e Flavio). A conversa NAO muda de
+    // dono: continua aberta para a primeira linha, so que agora com a coordenacao sabendo.
     const r: any = await db.execute(sql`SELECT conversation_id, target_agent_id, target_user_id, customer_phone
-      FROM ia_handoff WHERE status = 'waiting' AND exclusivo = true AND deadline_at IS NOT NULL AND deadline_at < now()
+      FROM ia_handoff WHERE status = 'waiting' AND deadline_at IS NOT NULL AND deadline_at < now()
       ORDER BY deadline_at ASC LIMIT 20`);
+    const chefes = (r.rows || []).length ? await escalacao() : [];
+    const minutosPrazo = Math.max(1, parseInt(await getSetting('ia_handoff_min', '5'), 10) || 5);
     for (const h of (r.rows || []) as any[]) {
-      const lista = await agentesDisponiveis(String(h.target_agent_id || ''));
-      if (!lista.length) { detalhes.push({ conv: h.conversation_id, resultado: 'sem_outro_online' }); continue; }
-      const novo = lista[0];
-      await atribuir(String(h.conversation_id), String(novo.agent_id));
-      await db.execute(sql`UPDATE ia_handoff SET target_user_id = ${novo.user_id ? String(novo.user_id) : null},
-        target_agent_id = ${String(novo.agent_id)}, exclusivo = false, notified_at = now(),
+      const cli = await nomeDoCliente(String(h.conversation_id));
+      const contatoCli = await contatoParaAtendente(String(h.conversation_id), String(h.customer_phone || ''));
+      await db.execute(sql`UPDATE ia_handoff SET status = 'escalado', notified_at = now(),
         deadline_at = NULL, updated_at = now() WHERE conversation_id = ${h.conversation_id}`);
-      await msgSistema(String(h.conversation_id), `[IA] Sem resposta do dono da carteira no prazo — conversa repassada para ${novo.name}.`);
-      await avisarAtendente(novo.phone, novo.name, await nomeDoCliente(String(h.conversation_id)), false);
+      await msgSistema(String(h.conversation_id),
+        `[IA] Sem resposta em ${minutosPrazo} min — avisei ${chefes.length ? chefes.map(c => c.name).join(' e ') : 'a coordenacao'}.`);
+      for (const c of chefes) {
+        await avisarEscalacao(c.phone, c.name, cli, minutosPrazo, contatoCli);
+      }
       repassadas++;
-      detalhes.push({ conv: h.conversation_id, para: novo.name });
-      console.log(`[IA-FILA] repasse por timeout conv=${h.conversation_id} -> ${novo.name}`);
+      detalhes.push({ conv: h.conversation_id, escalado_para: chefes.map(c => c.name) });
+      console.log(`[IA-FILA] escalado conv=${h.conversation_id} -> ${chefes.map(c => c.name).join(', ') || 'ninguem configurado'}`);
     }
 
     // Conversas que ficaram SEM atendente (ninguem online no handoff): assim que alguem fica
@@ -624,19 +743,30 @@ export async function filaTick(): Promise<{ ran: boolean; repassadas: number; de
     const semAt: any = await db.execute(sql`SELECT conversation_id, owner_user_id, customer_phone
       FROM ia_handoff WHERE status = 'sem_atendente' ORDER BY updated_at ASC LIMIT 20`);
     for (const h of (semAt.rows || []) as any[]) {
-      const ownerU = h.owner_user_id ? String(h.owner_user_id) : null;
+      // Tambem pela PRIMEIRA LINHA: uma conversa que ficou sem atendente nao pode cair
+      // em quem estiver online por acaso. So Leticia e Joao Pedro assumem.
       let alvo: { agent_id: string; name: string; phone: string | null } | null = null;
       let alvoUser: string | null = null;
-      if (ownerU && (await usuarioOnline(ownerU))) { const a = await agentDoUsuario(ownerU); if (a) { alvo = a; alvoUser = ownerU; } }
-      if (!alvo && !ownerU) { const fbId = await atendenteSemDonoUserId(); if (fbId && (await usuarioOnline(fbId))) { const a = await agentDoUsuario(fbId); if (a) { alvo = a; alvoUser = fbId; } } }
+      const eq = await primeiraLinha();
+      const comAgente = eq.filter(m => m.agent_id);
+      if (comAgente.length) {
+        const m = comAgente[0];
+        alvo = { agent_id: String(m.agent_id), name: m.name, phone: m.phone };
+        alvoUser = m.user_id;
+      }
       if (!alvo) { const lista = await agentesDisponiveis(); if (lista.length) { const n = lista[0]; alvo = { agent_id: String(n.agent_id), name: n.name, phone: n.phone }; alvoUser = n.user_id ? String(n.user_id) : null; } }
       if (!alvo) continue;
       await atribuir(String(h.conversation_id), alvo.agent_id);
       await db.execute(sql`UPDATE ia_handoff SET target_user_id = ${alvoUser}, target_agent_id = ${alvo.agent_id},
         exclusivo = false, status = 'waiting', notified_at = now(), deadline_at = NULL, updated_at = now()
         WHERE conversation_id = ${h.conversation_id}`);
-      await msgSistema(String(h.conversation_id), `[IA] Um atendente ficou online — conversa atribuida a ${alvo.name}.`);
-      await avisarAtendente(alvo.phone, alvo.name, await nomeDoCliente(String(h.conversation_id)), false);
+      await msgSistema(String(h.conversation_id), `[IA] Conversa atribuida a ${alvo.name}.`);
+      {
+        const cli2 = await nomeDoCliente(String(h.conversation_id));
+        const ct2 = await contatoParaAtendente(String(h.conversation_id), String(h.customer_phone || ''));
+        if (comAgente.length) { for (const m of eq) await avisarAtendente(m.phone, m.name, cli2, false, ct2); }
+        else await avisarAtendente(alvo.phone, alvo.name, cli2, false, ct2);
+      }
       repassadas++;
       detalhes.push({ conv: h.conversation_id, para: alvo.name, origem: 'sem_atendente' });
       console.log(`[IA-FILA] sem_atendente atribuido conv=${h.conversation_id} -> ${alvo.name}`);
