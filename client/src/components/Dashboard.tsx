@@ -651,6 +651,10 @@ export default function Dashboard() {
                         const day = monthWeeks[wi].days[di];
                         const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.map[x.sellerId]?.[day.iso] || 0) : 0;
                         const showFc = fc > 0 && (v == null || v === 0);
+                        // Hoje: Faturado em verde (NF-e de hoje) e Pedidos em amarelo (pedidos de hoje); dias anteriores em cinza.
+                        if (cmpAba !== "mix" && day && day.iso === bounds.today) {
+                          return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold " + (cmpAba === "ped" ? "text-amber-700 " : "text-green-700 ") + (di === 0 ? "border-l" : "")} title={cmpAba === "ped" ? "Pedidos implantados hoje" : "NF-e faturadas hoje"}>{v ? nfmt(v) : ""}</td>);
+                        }
                         if (cmpAba === "mix" && day && day.inMonth) {
                           const pend = pendMes.porVend[x.sellerId]?.dias[day.iso] || 0;
                           if (v || pend) return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums font-semibold " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700" title="Faturado (NF-e)">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700" title="Pedidos deste dia ainda a faturar">{nfmt(pend)}</div> : null}</td>);
@@ -680,6 +684,9 @@ export default function Dashboard() {
                       const day = monthWeeks[wi].days[di];
                       const fc = (showForecast && day && day.inMonth && day.iso > bounds.today) ? (forecast.byDate[day.iso] || 0) : 0;
                       const showFc = fc > 0 && !v;
+                      if (cmpAba !== "mix" && day && day.iso === bounds.today) {
+                        return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (cmpAba === "ped" ? "text-amber-700 " : "text-green-700 ") + (di === 0 ? "border-l" : "")}>{v ? nfmt(v) : ""}</td>);
+                      }
                       if (cmpAba === "mix" && day && day.inMonth) {
                         const pend = pendMes.porDia[day.iso] || 0;
                         if (v || pend) return (<td key={wi + "d" + di} className={"py-1 px-1 text-right tabular-nums " + (di === 0 ? "border-l" : "")}>{v ? <div className="text-green-700">{nfmt(v)}</div> : null}{pend ? <div className="text-amber-700">{nfmt(pend)}</div> : null}</td>);
@@ -704,9 +711,9 @@ export default function Dashboard() {
               <span className="text-green-700 font-semibold">Verde: faturado (NF-e), no dia da nota</span>
               <span className="text-amber-700 font-semibold">Amarelo: pedidos ainda a faturar, no dia em que entraram</span>
             </>) : cmpAba === "ped" ? (
-              <span className="text-gray-700">Pedidos implantados, no dia em que entraram</span>
+              <><span className="text-gray-700">Cinza: pedidos implantados em dias anteriores</span><span className="text-amber-700 font-semibold">Amarelo: pedidos implantados hoje</span></>
             ) : (
-              <span className="text-gray-700">NF-e faturadas, no dia da nota</span>
+              <><span className="text-gray-700">Cinza: faturado em dias anteriores</span><span className="text-green-700 font-semibold">Verde: NF-e faturadas hoje</span></>
             )}
             <span className="text-indigo-400 italic">Lilás: previsão por histórico</span>
           </div>
