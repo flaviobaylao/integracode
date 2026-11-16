@@ -218,10 +218,19 @@ async function sincronizarComPipeline(): Promise<void> {
   } catch (e: any) { console.warn('[AMOSTRA] sincronizar pipeline:', e?.message); }
 }
 
+// 16/11 (Flavio): pedir amostra para lead é só para o time INTERNO (telemarketing, administrativo, admin).
+// Vendedor EXTERNO (perfil vendedor que não é telemarketing: CLT, PJ, canais) não vê o botão nem consegue pedir.
+function ehVendedorExterno(user: any): boolean {
+  const tipo = String(user?.sellerType ?? user?.seller_type ?? '');
+  return user?.role === 'vendedor' && tipo !== 'telemarketing';
+}
+
 export function registerLeadAmostras(app: any, authenticateUser: any) {
   // Config visível ao app (limites)
-  app.get('/api/amostras/config', authenticateUser, async (_req: Req, res: Res) => {
-    res.json({ maxUnidades: 0, maxPorSabor: 1, somente350: true, maxPedidosLead: await setting('amostra_max_pedidos_lead', 1) });
+  app.get('/api/amostras/config', authenticateUser, async (req: Req, res: Res) => {
+    const u = req.currentUser;
+    res.json({ maxUnidades: 0, maxPorSabor: 1, somente350: true, maxPedidosLead: await setting('amostra_max_pedidos_lead', 1),
+      podeSolicitar: PODE_PEDIR.includes(u?.role) && !ehVendedorExterno(u) });
   });
 
   // Dados fiscais já conhecidos do lead (pré-preenche o CNPJ no formulário)
@@ -250,6 +259,7 @@ export function registerLeadAmostras(app: any, authenticateUser: any) {
       await ensureTabela();
       const user = req.currentUser;
       if (!PODE_PEDIR.includes(user?.role)) return res.status(403).json({ ok: false, message: 'Sem permissão para pedir amostra.' });
+      if (ehVendedorExterno(user)) return res.status(403).json({ ok: false, message: 'Pedido de amostra para lead é feito só pelo time interno.' });
       const leadId = String(req.params.id);
       const lr: any = await db.execute(sql`SELECT id, fantasy_name, assigned_to, status FROM leads WHERE id = ${leadId} LIMIT 1`);
       const lead = lr.rows?.[0];
