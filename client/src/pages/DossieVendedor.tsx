@@ -148,25 +148,59 @@ function Kpi({ titulo, valor, sub, cor = "text-slate-900", variacaoPct }: {
 // O desenho mostra a série toda, que é a pergunta de verdade — está subindo ou
 // está morrendo.
 //
-// A TENDÊNCIA (que dá a cor e a ordenação) compara a média do PRIMEIRO TERÇO
-// do período com a do ÚLTIMO TERÇO, não o primeiro mês com o último: um único
-// mês atípico na ponta — e eles existem, um pedido grande, um mês sem compra —
-// inverteria o sinal de uma carteira que na média está estável.
-// Devolve PORCENTAGEM, na mesma unidade de `variacao` acima — as duas sao lidas
-// pelo mesmo `pct`, e misturar razao com porcentagem aqui imprime "-1%" onde a
-// queda foi de 74%.
-const tendenciaDe = (vs: number[]): number | null => {
-  if (vs.length < 2) return null;
-  const n = Math.max(1, Math.round(vs.length / 3));
-  const media = (a: number[]) => a.reduce((s, x) => s + x, 0) / (a.length || 1);
-  const ini = media(vs.slice(0, n));
-  const fim = media(vs.slice(-n));
-  if (ini <= 0) return fim > 0 ? 100 : null;
-  return (fim - ini) / ini * 100;
-};
-
-/** Abaixo desta variação (em %, para cima ou para baixo) a linha fica cinza. */
+// A COR SAI DA METADE MAIS RECENTE (Flavio, 16/11/2026; antes era média do
+// primeiro terço contra a do último). Num período de 11 meses, a metade são os
+// 6 meses mais recentes. Dentro dela, cada mês é comparado com o mês anterior e
+// classificado em três: ALTA (subiu 10% ou mais), QUEDA (caiu 10% ou mais) ou
+// REGULAR (variou menos que isso para qualquer lado — oscilação, não notícia).
+//
+// Ganha quem tem mais meses: mais altas que quedas pinta de verde, mais quedas
+// que altas pinta de vermelho. Empatado no número de meses, decide o TAMANHO:
+// quanto de R$ as altas somaram contra quanto as quedas tiraram — três altas de
+// R$ 100 e três quedas de R$ 5.000 é uma carteira caindo, e contar só os meses
+// diria que está empatada. Sem nenhuma alta nem queda, tudo regular, fica cinza.
+//
+// Por que a metade e não o período inteiro: o que importa é para onde ele está
+// indo agora, não o que ele fez em janeiro. E por que contar mês a mês em vez
+// de comparar duas médias: a média esconde o caminho — cair todo mês e dar um
+// pico no fim dá a mesma média de subir todo mês.
 const FAIXA_NEUTRA = 10;
+
+type Leitura = { altas: number; quedas: number; liquido: number; meses: number; score: number; cor: string };
+
+function lerEvolucao(vs: number[]): Leitura | null {
+  if (vs.length < 2) return null;
+  const meses = Math.ceil(vs.length / 2);          // 11 meses -> os 6 mais recentes
+  const primeiro = Math.max(1, vs.length - meses); // cada um comparado com o mês de antes
+  let altas = 0, quedas = 0, somaAltas = 0, somaQuedas = 0;
+  for (let i = primeiro; i < vs.length; i++) {
+    const ant = vs[i - 1], atual = vs[i];
+    const delta = atual - ant;
+    // Mês anterior zerado não tem percentual: qualquer compra depois do zero é
+    // alta, e continuar em zero não é queda — é parado.
+    const variacao = ant > 0 ? (delta / ant) * 100 : (atual > 0 ? 100 : 0);
+    if (variacao >= FAIXA_NEUTRA) { altas++; somaAltas += delta; }
+    else if (variacao <= -FAIXA_NEUTRA) { quedas++; somaQuedas += -delta; }
+  }
+  const liquido = somaAltas - somaQuedas;
+  const movimento = somaAltas + somaQuedas;
+  // `score` ordena a coluna: o número de meses manda (daí o ×2, que separa um
+  // degrau inteiro), e a fração do líquido, sempre entre -1 e 1, desempata.
+  const fracao = movimento > 0 ? liquido / movimento : 0;
+  const score = (altas - quedas) * 2 + fracao;
+  const cor = altas > quedas ? "#047857"
+    : quedas > altas ? "#b91c1c"
+    : movimento > 0 && liquido > 0 ? "#047857"
+    : movimento > 0 && liquido < 0 ? "#b91c1c"
+    : "#64748b";
+  return { altas, quedas, liquido, meses, score, cor };
+}
+
+/** Como a leitura se escreve no tooltip e no Excel. */
+const resumoEvolucao = (l: Leitura | null) =>
+  !l ? "—"
+  : `${l.meses} meses mais recentes: ${l.altas} de alta, ${l.quedas} de queda` +
+    (l.liquido !== 0 ? ` · líquido ${l.liquido > 0 ? "+" : "−"}${brl(Math.abs(l.liquido))}` : "");
 
 /** Mini-gráfico do período, com o último ponto marcado. */
 function Evolucao({ valores, titulo }: { valores: number[]; titulo?: string }) {
@@ -177,11 +211,7 @@ function Evolucao({ valores, titulo }: { valores: number[]; titulo?: string }) {
   const px = (i: number) => 2 + (i / (valores.length - 1)) * (L - 4);
   const py = (v: number) => A - 3 - ((v - min) / faixa) * (A - 6);
   const d = valores.map((v, i) => `${i ? "L" : "M"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
-  const t = tendenciaDe(valores);
-  // Verde/vermelho só a partir de 10% (Flavio, 16/11/2026; era 5%): abaixo
-  // disso é oscilação, não tendência, e pintar oscilação de vermelho faz o olho
-  // procurar problema onde não há.
-  const cor = t === null || Math.abs(t) < FAIXA_NEUTRA ? "#64748b" : t > 0 ? "#047857" : "#b91c1c";
+  const cor = lerEvolucao(valores)?.cor || "#64748b";
   return (
     <svg width={L} height={A} className="align-middle" role="img"
       aria-label={titulo || "evolução no período"}><title>{titulo || ""}</title>
@@ -386,8 +416,8 @@ export default function DossieVendedor() {
       if (ord.col === "situacao") return c.ativo ? "Ativo" : "Inativo";
       if (ord.col === "conquista") return txt(c.conquista);
       if (ord.col === "evolucao") {
-        const v = tendenciaDe(meses.map((m) => noMes(c, m)));
-        return v === null ? -Infinity : v;
+        const l = lerEvolucao(meses.map((m) => noMes(c, m)));
+        return l === null ? -Infinity : l.score;
       }
       return noMes(c, ord.col); // uma coluna de mês
     };
@@ -410,8 +440,11 @@ export default function DossieVendedor() {
       row["Data da conquista"] = c.conquista || "";
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
       row["Total no período"] = c.total;
-      // O desenho não cabe numa planilha; vai a medida que ele representa.
-      row["Tendência no período (%)"] = pct(tendenciaDe(meses.map((m) => noMes(c, m))));
+      // O desenho não cabe numa planilha; vão os números que ele representa.
+      const le = lerEvolucao(meses.map((m) => noMes(c, m)));
+      row["Meses de alta (metade recente)"] = le ? le.altas : "";
+      row["Meses de queda (metade recente)"] = le ? le.quedas : "";
+      row["Variação líquida da metade recente (R$)"] = le ? Number(le.liquido.toFixed(2)) : "";
       return row;
     }), `clientes-${ini}_a_${fim}-${modo === "sel" ? (umSo?.nome || `${selecionados.length}-vendedores`) : modo === "sem" ? "sem-vendedor" : "honest"}`);
   };
@@ -818,8 +851,8 @@ export default function DossieVendedor() {
                     {" "}<b>Data da conquista</b> é a entrada do cliente na Honest — a menor data entre o cadastro e a
                     1ª venda de todos os tempos —, então ela pode ser anterior ao período do filtro.
                     {" "}<b>Evolução</b> desenha o mês a mês inteiro do filtro;
-                    a cor compara a média do primeiro terço do período com a do último, e fica cinza quando a
-                    diferença é menor que 10% (oscilação, não tendência) — o “i” no cabeçalho da coluna explica.
+                    a cor conta, na metade mais recente, quantos meses subiram e quantos caíram ao menos 10% sobre o
+                    mês anterior — o “i” no cabeçalho da coluna explica.
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -885,30 +918,34 @@ export default function DossieVendedor() {
                             <PopoverContent align="start" className="w-[380px] text-xs space-y-2 font-normal text-foreground">
                               <p className="font-semibold text-sm">O que a cor quer dizer</p>
                               <p>
-                                O desenho é o faturamento mês a mês do período do filtro. A cor não olha o desenho
-                                inteiro: ela compara a <b>média do primeiro terço</b> do período com a <b>média do
-                                último terço</b>.
+                                O desenho é o faturamento mês a mês do período inteiro do filtro. A cor olha só a{" "}
+                                <b>metade mais recente</b>: o que importa é para onde o cliente está indo agora.
                               </p>
-                              {meses.length >= 3 && (
+                              {meses.length > 1 && (
                                 <p className="text-muted-foreground">
-                                  Neste filtro ({rotPeriodo}): média de{" "}
-                                  <b>{rotMes(meses[0])} a {rotMes(meses[Math.max(0, Math.round(meses.length / 3) - 1)])}</b>{" "}
-                                  contra a de <b>{rotMes(meses[meses.length - Math.max(1, Math.round(meses.length / 3))])} a {rotMes(meses[meses.length - 1])}</b>.
+                                  Neste filtro ({rotPeriodo}), a metade recente são os {Math.ceil(meses.length / 2)} meses de{" "}
+                                  <b>{rotMes(meses[meses.length - Math.ceil(meses.length / 2)])} a {rotMes(meses[meses.length - 1])}</b>.
                                 </p>
                               )}
+                              <p>
+                                Dentro dela, <b>cada mês é comparado com o mês anterior</b> e vira um de três:
+                                alta (subiu {FAIXA_NEUTRA}% ou mais), queda (caiu {FAIXA_NEUTRA}% ou mais) ou
+                                regular (variou menos que isso — oscilação, não notícia).
+                              </p>
                               <ul className="list-disc pl-4 space-y-1">
-                                <li><span className="font-semibold" style={{ color: "#047857" }}>Verde</span> — subiu {FAIXA_NEUTRA}% ou mais.</li>
-                                <li><span className="font-semibold" style={{ color: "#b91c1c" }}>Vermelho</span> — caiu {FAIXA_NEUTRA}% ou mais.</li>
-                                <li><span className="font-semibold" style={{ color: "#64748b" }}>Cinza</span> — variou menos de {FAIXA_NEUTRA}% para qualquer lado: é oscilação de mês, não tendência.</li>
+                                <li><span className="font-semibold" style={{ color: "#047857" }}>Verde</span> — mais meses de alta do que de queda.</li>
+                                <li><span className="font-semibold" style={{ color: "#b91c1c" }}>Vermelho</span> — mais meses de queda do que de alta.</li>
+                                <li><span className="font-semibold" style={{ color: "#64748b" }}>Cinza</span> — todos os meses regulares, ou altas e quedas que se anulam.</li>
                               </ul>
                               <p className="text-muted-foreground">
-                                Terços em vez de primeiro mês contra último mês de propósito: um mês atípico na ponta
-                                — um pedido grande, um mês sem compra — inverteria o sinal de uma carteira estável.
-                                Os meses do meio aparecem no desenho, mas não entram na conta da cor.
+                                Empatado no número de meses, decide o <b>tamanho</b>: quanto as altas somaram em R$
+                                contra quanto as quedas tiraram. Três altas de R$ 100 contra três quedas de
+                                R$ 5.000 é uma carteira caindo, e contar só os meses diria que está empatada.
                               </p>
                               <p className="text-muted-foreground">
-                                Cliente que começou zerado e passou a comprar conta como +100%. Com um mês só no
-                                período não há desenho nem cor. Passe o cursor no gráfico para ver a tendência em número.
+                                Mês anterior zerado: qualquer compra depois do zero conta como alta, e continuar em
+                                zero não é queda — é parado. Com um mês só no período não há desenho nem cor.
+                                Passe o cursor no gráfico para ver a contagem daquele cliente.
                               </p>
                             </PopoverContent>
                           </Popover>
@@ -947,7 +984,7 @@ export default function DossieVendedor() {
                       {meses.length > 1 && (
                         <td className="px-2 whitespace-nowrap">
                           <Evolucao valores={meses.map((m) => noMes(c, m))}
-                            titulo={`${rotMes(meses[0])} a ${rotMes(meses[meses.length - 1])} · tendência ${pct(tendenciaDe(meses.map((m) => noMes(c, m))))}`} />
+                            titulo={`${rotMes(meses[0])} a ${rotMes(meses[meses.length - 1])} · ${resumoEvolucao(lerEvolucao(meses.map((m) => noMes(c, m))))}`} />
                         </td>
                       )}
                       <td className="px-3 text-right font-semibold whitespace-nowrap">{brl(c.total)}</td>
@@ -973,7 +1010,7 @@ export default function DossieVendedor() {
                     {meses.length > 1 && (
                       <td className="px-2 whitespace-nowrap">
                         <Evolucao valores={meses.map((m) => totalMes(m))}
-                          titulo={`Total · tendência ${pct(tendenciaDe(meses.map((m) => totalMes(m))))}`} />
+                          titulo={`Total · ${resumoEvolucao(lerEvolucao(meses.map((m) => totalMes(m))))}`} />
                       </td>
                     )}
                     <td className="px-3 text-right whitespace-nowrap">{brl(totalGeral)}</td>
