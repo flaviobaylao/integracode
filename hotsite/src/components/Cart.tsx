@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { CartItem } from '../types';
 import { useCustomerType } from '../contexts/CustomerTypeContext';
 import { TEXTO_AREA_ATENDIDA } from '../utils/entrega';
+// 📦 Pack fechado para CNPJ — MESMA regra do servidor (shared/pack-pj.ts).
+import { itensForaDoPack, textoSugestao } from '../../../shared/pack-pj';
 import { identificar, imagemDoProduto, brl } from '../utils/garrafas';
 
 // 🔒 Pedido mínimo do consumidor — valores padrão iguais aos da configuração no
@@ -60,6 +62,22 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
     }
     return 70; // Fallback geral
   };
+
+  // 📦 PACK FECHADO PARA CNPJ (nov/2026) — revendedor compra em pack ou meio pack.
+  // Na loja, PJ e exatamente o fluxo Revendedor (o consumidor informa CPF e segue
+  // como pessoa fisica). Mostrar aqui, no carrinho, evita o cliente montar o pedido
+  // todo para ser recusado no checkout. O servidor repete a regra, que e a de verdade.
+  const ehPJ = category === 'reseller';
+  // Nome amigavel, o MESMO que aparece na lista de itens acima ("Maracujá 350 ml"),
+  // em vez do nome cru do cadastro — o cliente procura o item pelo que esta vendo.
+  const nomeAmigavel = (nome: string) => {
+    const { sabor, tamanho } = identificar(nome);
+    return sabor && tamanho ? `${sabor.nome} ${tamanho} ml` : nome;
+  };
+  const foraDoPack = ehPJ
+    ? itensForaDoPack(items.map((i) => ({ nome: nomeAmigavel(i.name), quantidade: i.quantity, unidadesPorFardo: i.unidadesPorFardo })))
+    : [];
+  const packOk = foraDoPack.length === 0;
 
   const minimumOrder = getMinimumOrder();
   // ✅ CORREÇÃO: Usar subtotal ao invés de total para validar pedido mínimo
@@ -167,6 +185,30 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
               </p>
             </div>
 
+            {/* 📦 Pack fechado — só para CNPJ (fluxo Revendedor) */}
+            {ehPJ && !packOk && (
+              <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-2xl" data-testid="aviso-pack-pj">
+                <p className="text-sm font-bold text-amber-700">
+                  📦 Revenda é vendida em pack fechado
+                </p>
+                <p className="text-xs text-amber-700/90 mt-1">
+                  Cada sabor precisa fechar em pack ou meio pack. Ajuste:
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {foraDoPack.map((f) => (
+                    <li key={f.nome} className="text-xs text-amber-800 flex items-start gap-2">
+                      <span className="shrink-0 mt-px">•</span>
+                      <span>
+                        <strong>{f.nome}</strong>: você escolheu {f.quantidade} un.
+                        {' '}Use <strong>{textoSugestao(f)}</strong>
+                        {' '}<span className="text-amber-700/70">(pack {f.pack} · meio pack {f.meioPack})</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {/* Aviso de Pedido Mínimo */}
             {!meetsMinimum && (
               <div className="mb-3 p-3 bg-amber-50 rounded-2xl">
@@ -208,15 +250,17 @@ export default function Cart({ items, onUpdateQuantity, onRemoveItem, onCheckout
               
               <button
                 onClick={onCheckout}
-                disabled={!meetsMinimum}
+                disabled={!meetsMinimum || !packOk}
                 className={`w-full py-3 rounded-full font-bold transition-all ${
-                  meetsMinimum
+                  meetsMinimum && packOk
                     ? 'btn-primary'
                     : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 }`}
                 data-testid="btn-checkout"
               >
-                {meetsMinimum ? 'Finalizar pedido' : `Pedido mínimo: ${brl(minimumOrder)}`}
+                {!meetsMinimum
+                  ? `Pedido mínimo: ${brl(minimumOrder)}`
+                  : packOk ? 'Finalizar pedido' : 'Ajuste as quantidades'}
               </button>
             </div>
           </div>
