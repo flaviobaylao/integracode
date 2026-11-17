@@ -29,6 +29,8 @@ import { agora, hojeBR, diaBR, dataCalendario, instanteBR, paredeBR } from '@sha
 import { idsEmRepescagem } from './repescagem-ativa';
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from '@shared/comissao-entrega';
 import { parseJanelas, slotsDoDia, janelasDoDia, janelasRoteirizacao } from '@shared/janelas-entrega';
+// Regra de pack para CNPJ (nov/2026) — mesma logica usada pela loja e pela IA.
+import { unidadesPorFardo } from '@shared/pack-pj';
 import OpenAI from 'openai';
 import {
   insertCustomerSchema,
@@ -22994,7 +22996,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stock: product.stock,
         // Disponibilidade de venda: a loja MOSTRA o produto e desabilita o botao
         // ("Ainda não disponível"). Por isso ele continua na lista, e nao e filtrado.
-        availableForSale: (product as any).availableForSale !== false
+        availableForSale: (product as any).availableForSale !== false,
+        // Tamanho do pack (fardo_filas × fardo_por_fila). A loja usa para exigir que
+        // CNPJ feche em pack ou meio pack — ver shared/pack-pj.ts. 0/null = sem regra.
+        unidadesPorFardo: unidadesPorFardo((product as any).fardoFilas, (product as any).fardoPorFila) || null
       }));
       
       res.json(formattedProducts);
@@ -23394,6 +23399,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.warn(`🚚 [AREA] pedido da loja recusado — ${fora.cidade}/${fora.uf} fora da area atendida`);
           return res.status(400).json(fora);
         }
+      }
+
+      // 📦 PACK FECHADO PARA CNPJ (nov/2026) — pessoa juridica nao leva unidade
+      // quebrada: cada sabor fecha em pack ou meio pack (350ml 6/12/18…, 900ml
+      // 3/6/9…). O tamanho vem do cadastro (fardo_filas × fardo_por_fila), nao do
+      // nome do produto. Vale para a LOJA; pedido de vendedor e de outros canais
+      // segue como antes. Pessoa fisica nao muda em nada.
+      if (String((validatedData as any).source || '') === 'hotsite') {
+        const { barrarPackPJDoPedido } = await import('./pack-pj-pedido');
+        const _pack = await barrarPackPJDoPedido(
+          validatedData.customer?.cpfCnpj, (validatedData.customer as any)?.customerType, validatedData.items as any);
+        if (_pack) return res.status(400).json(_pack);
       }
 
     // 🎟️ CUPOM PROMOCIONAL NA LOJA (04/ago/2026) — UM desconto por pedido, nesta ordem:
