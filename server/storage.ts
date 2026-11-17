@@ -7788,10 +7788,18 @@ export class DatabaseStorage implements IStorage {
           AND COALESCE(c.is_lead,false)=false AND COALESCE(c.is_supplier,false)=false AND COALESCE(c.virtual_service,false)=false
           AND NOT EXISTS (SELECT 1 FROM active_customers a WHERE a.is_active=true
                           AND (a.customer_id=c.id OR regexp_replace(COALESCE(a.document,''),'[^0-9]','','g')=regexp_replace(COALESCE(c.cnpj,c.cpf,''),'[^0-9]','','g')))
-      ), religa AS (
-        UPDATE active_customers a SET is_active=true, deactivated_at=NULL, updated_at=now(), match_status='matched', customer_id=x.id
+      ), escolha AS (
+        -- nov/2026: religa UMA linha por cliente (antes religava todas as inativas do mesmo
+        -- cliente/documento e a lista ficava com o cliente duplicado).
+        SELECT DISTINCT ON (x.id) a2.id AS ac_id, x.id AS cid
         FROM ativos x
-        WHERE a.is_active=false AND (a.customer_id=x.id OR (x.doc<>'' AND regexp_replace(COALESCE(a.document,''),'[^0-9]','','g')=x.doc))
+        JOIN active_customers a2 ON a2.is_active=false
+          AND (a2.customer_id=x.id OR (x.doc<>'' AND regexp_replace(COALESCE(a2.document,''),'[^0-9]','','g')=x.doc))
+        ORDER BY x.id, COALESCE(a2.customer_id=x.id, false) DESC, a2.created_at ASC
+      ), religa AS (
+        UPDATE active_customers a SET is_active=true, deactivated_at=NULL, updated_at=now(), match_status='matched', customer_id=e.cid
+        FROM escolha e
+        WHERE a.id=e.ac_id AND a.is_active=false
         RETURNING a.customer_id
       ), cria AS (
         INSERT INTO active_customers (document, document_type, fantasy_name_imported, customer_id, omie_instance_id, upload_id, match_status, is_active, latitude, longitude)

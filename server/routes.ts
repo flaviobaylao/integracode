@@ -27625,14 +27625,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Multi-tenant: obter instância Omie do cliente
       const omieInstanceId = customer.omieInstanceId || null;
 
+      // nov/2026: procura PRIMEIRO pela linha do próprio cliente (qualquer documento) — buscar só
+      // pelo documento criava uma 2ª linha para o mesmo cliente quando o CPF/CNPJ tinha sido corrigido.
+      let existing: any = null;
+      try {
+        const _porCliente: any = await db.execute(sql`SELECT id, is_active FROM active_customers WHERE customer_id = ${customerId} ORDER BY is_active DESC, created_at ASC LIMIT 1`);
+        const _r = ((_porCliente.rows || _porCliente) as any[])[0];
+        if (_r) existing = { id: String(_r.id), isActive: _r.is_active === true };
+      } catch (_e) { /* cai na busca por documento */ }
       // Verificar se já existe na lista ativa (busca por documento, qualquer instância)
-      const existing = await storage.getActiveCustomerByDocument(document);
+      if (!existing) existing = await storage.getActiveCustomerByDocument(document);
       
       if (existing) {
         // Sempre atualizar com dados corretos (corrige registros antigos com customerId errado)
         const updated = await storage.updateActiveCustomer(existing.id, {
           isActive: true,
           customerId: customerId,
+          document,
+          documentType: customer.cpf ? 'cpf' : 'cnpj',
           matchStatus: 'matched',
           fantasyNameImported: customer.fantasyName || customer.name,
           omieInstanceId: omieInstanceId,

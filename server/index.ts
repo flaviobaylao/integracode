@@ -431,6 +431,7 @@ run();
   try { const { registerInativacaoTrilha } = await import('./inativacao-trilha'); registerInativacaoTrilha(app); } catch (e) { console.error('[inativacao-trilha]', e); }
   try { const { registerContatosBusca } = await import('./contatos-busca'); registerContatosBusca(app); } catch (e) { console.error('[contatos-busca]', e); }
   try { const { registerTelefonePadronizacao } = await import('./telefone-padronizacao'); registerTelefonePadronizacao(app); } catch (e) { console.error('[telefone-padronizacao]', e); }
+  try { const { registerAtivosDuplicados } = await import('./ativos-duplicados'); registerAtivosDuplicados(app); } catch (e) { console.error('[ativos-duplicados]', e); }
   try { registerDashboardHistoryRoutes(app); } catch (e) { console.error('[dashboard-history]', e); }
   // Ficha técnica do produto (PDF) — anexo no catálogo + fonte para os agentes de IA.
   try { registerProductDatasheetRoutes(app); } catch (e) { console.error('[ficha-tecnica]', e); }
