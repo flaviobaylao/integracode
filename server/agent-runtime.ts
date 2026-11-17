@@ -658,7 +658,7 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
     // Catálogo ativo + matcher por tokens (mesma lógica do consultar_produto).
     const _norm = (x: any) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const _stop = new Set(['de', 'da', 'do', 'com', 'e', 'a', 'o', 'os', 'as', 'para', 'por', 'sabor', 'ml', 'l', 'un', 'und', 'suco', 'sucos']);
-    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock, available_for_sale FROM products WHERE is_active=true AND internal_only = false ORDER BY name`);
+    const _all: any = await db.execute(sql`SELECT name, price, retail_price, wholesale_price, resale_goiania_price, resale_interior_price, resale_brasilia_price, stock, available_for_sale, fardo_filas, fardo_por_fila FROM products WHERE is_active=true AND internal_only = false ORDER BY name`);
     const catalog: any[] = _all.rows || [];
     const matchP = (termo: string) => {
       const toks = _norm(termo).split(/[^0-9a-z]+/).filter((t: string) => t.length >= 2 && !_stop.has(t));
@@ -699,6 +699,26 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
       return 'NÃO registrei o pedido: ' + indisponiveis.join(' e ') + (indisponiveis.length > 1 ? ' estão' : ' está')
         + ' AINDA NÃO DISPONÍVEL para venda. Avise o cliente com simpatia, ofereça outro sabor do catálogo'
         + ' e só chame registrar_pedido de novo quando o pedido não tiver mais esse item.';
+    }
+
+    // 📦 PACK FECHADO PARA CNPJ (nov/2026) — pessoa juridica nao leva unidade quebrada:
+    // cada sabor fecha em pack ou meio pack (350ml 6/12/18…, 900ml 3/6/9…). O tamanho
+    // vem do cadastro, nao do nome. Pessoa fisica nao muda em nada.
+    // So no INSTAGRAM: a regra pedida foi para o Instagram e a loja. A venda por
+    // WhatsApp da IA (ia_wpp_vendas) e o pedido do vendedor seguem como antes.
+    if (String(ctx?.channel || '') === 'instagram') {
+      const { barrarPackPJ, unidadesPorFardo } = await import('@shared/pack-pj');
+      const _pack = barrarPackPJ(inp.documento, null, resolved.map((r) => ({
+        nome: String(r.p?.name || ''),
+        quantidade: r.qtd,
+        unidadesPorFardo: unidadesPorFardo(r.p?.fardo_filas, r.p?.fardo_por_fila),
+      })));
+      if (_pack) {
+        return 'NÃO registrei o pedido: este cliente é CNPJ e cada sabor precisa fechar em pack ou meio pack. '
+          + _pack.itens.map((i) => `${i.nome}: ele pediu ${i.quantidade}, válidos ${i.abaixo > 0 ? i.abaixo + ' ou ' : ''}${i.acima}`).join('; ')
+          + '. Explique isso ao cliente de forma simpatica e curta, pergunte qual das quantidades ele prefere,'
+          + ' e só chame registrar_pedido de novo com a quantidade ajustada.';
+      }
     }
 
     if (naoEnc.length) return 'Não encontrei no catálogo: ' + naoEnc.join('; ') + '. Confirme o nome exato com o cliente (use consultar_produto) e tente de novo.';
@@ -1360,6 +1380,12 @@ export async function generateAgentReply(agentId: string, messages: Array<{ role
         if (w) (ctx as any).whatsapp = w;
         _igwa = blocoPromptWhatsappIG(w || null);
       } catch (e: any) { console.error('[IG-WA] bloco prompt:', e?.message || e); }
+      // Regra de pack do CNPJ: a IA precisa saber ANTES de montar o pedido, senao
+      // ela oferece 10 unidades e so descobre o problema quando registrar_pedido recusa.
+      try {
+        const { blocoPromptPackPJ } = await import('@shared/pack-pj');
+        _igwa = (_igwa ? _igwa + '\n\n' : '') + blocoPromptPackPJ();
+      } catch (e: any) { console.error('[PACK-PJ] bloco prompt:', e?.message || e); }
     }
     const systemPrompt = _tempo + '\n\n'
       + (_igwa ? _igwa + '\n\n' : '')
