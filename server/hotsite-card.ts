@@ -454,6 +454,15 @@ export function registerHotsiteCard(app: Express): void {
           return res.status(400).json(fora);
         }
       }
+      // 📦 PACK FECHADO PARA CNPJ — antes de autorizar o cartao (mesma regra do PIX).
+      {
+        const { barrarPackPJDoPedido } = await import('./pack-pj-pedido');
+        const pack = await barrarPackPJDoPedido(order?.customer?.cpfCnpj, order?.customer?.customerType, order?.items);
+        if (pack) {
+          console.warn('📦 [LOJA-CARTAO] cobranca recusada — pack incompleto (CNPJ)');
+          return res.status(400).json(pack);
+        }
+      }
       if (totals.total <= 0) return res.status(400).json({ message: 'Total inválido' });
 
       const installments = Math.max(1, Math.min(cfg.maxInstallments, parseInt(body.installments, 10) || 1));
@@ -575,6 +584,16 @@ export function registerHotsiteCard(app: Express): void {
         if (fora) {
           console.warn('🚚 [LOJA-GPAY] cobranca recusada — fora da area de entrega:', fora.cidade + '/' + fora.uf);
           return res.status(400).json(fora);
+        }
+      }
+
+      // 📦 PACK FECHADO PARA CNPJ — antes de autorizar o Google Pay.
+      {
+        const { barrarPackPJDoPedido } = await import('./pack-pj-pedido');
+        const pack = await barrarPackPJDoPedido(order?.customer?.cpfCnpj, order?.customer?.customerType, order?.items);
+        if (pack) {
+          console.warn('📦 [LOJA-GPAY] cobranca recusada — pack incompleto (CNPJ)');
+          return res.status(400).json(pack);
         }
       }
 
