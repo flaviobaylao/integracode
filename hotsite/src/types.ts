@@ -16,6 +16,9 @@ export interface Product {
   // porém sem poder ser adicionado ao carrinho ("ainda não disponível"). Opcional
   // porque respostas de deploys antigos não trazem o campo — ausente = disponível.
   availableForSale?: boolean;
+  // Tamanho do pack (fardo_filas × fardo_por_fila do cadastro). Usado para exigir
+  // que CNPJ feche em pack ou meio pack — ver shared/pack-pj.ts. Ausente/0 = sem regra.
+  unidadesPorFardo?: number | null;
 }
 
 export interface CartItem extends Product {
