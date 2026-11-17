@@ -651,6 +651,36 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
           }
         } catch (e: any) { /* tolerante: falha na checagem nao bloqueia a baixa */ }
       }
+      // DESCONTO DE COBRANCA DO CADASTRO concedido PELO BANCO (17/11/2026). Boletos
+      // registrados antes do abatimento no titulo (out/2026) foram ao BB pelo valor
+      // CHEIO com a instrucao "desconto ate o vencimento". O cliente paga com o
+      // desconto (ex.: Hiper Moreira, 6%) e o BB liquida o boleto - mas aqui a
+      // diferenca virava pagamento parcial e o titulo ficava 'vencida' com o
+      // desconto como divida (15 titulos, R$ 1.076,31, pedidos bloqueados).
+      // Regra estrita: boleto simples, pagamento MENOR que o saldo e a diferenca
+      // batendo (+-5 centavos) com o % de desconto do cadastro do cliente. So assim
+      // a diferenca vira DESCONTO (reduz o titulo, como na baixa manual com desconto).
+      // Nunca em titulo que ja teve o desconto do cadastro abatido (sem desconto em dobro).
+      let descontoBanco = 0;
+      let pctDescBanco = 0;
+      if (targets.length === 1 && pay > 0 && pay < outstanding - 0.005 && receivable.customerId) {
+        try {
+          const dq: any = await db.execute(sql`SELECT collection_discount FROM customers WHERE id = ${receivable.customerId} LIMIT 1`);
+          const pct = parseFloat(String((dq?.rows ?? [])[0]?.collection_discount ?? '0')) || 0;
+          // Titulo que JA teve o desconto do cadastro abatido no faturamento (regra nova)
+          // nunca recebe o desconto de novo: ai o pagamento menor e parcial de verdade.
+          const jaAbatido: any = await db.execute(sql`SELECT 1 FROM receivable_payments WHERE receivable_id = ${t.receivableId} AND deleted_at IS NULL AND reference IN ('desconto-cobranca-cadastro', 'desconto-cobranca-banco') LIMIT 1`);
+          if (pct > 0 && pct < 100 && !((jaAbatido?.rows ?? []).length > 0)) {
+            const esperado = Number((outstanding * (1 - pct / 100)).toFixed(2));
+            if (Math.abs(pay - esperado) <= 0.05) {
+              descontoBanco = Number((outstanding - pay).toFixed(2));
+              pctDescBanco = pct;
+            }
+          }
+        } catch (e: any) { descontoBanco = 0; /* na duvida segue como baixa parcial (regra antiga) */ }
+      }
+      const valorTituloAntes = parseFloat(receivable.amount);
+      const valorTitulo = descontoBanco > 0 ? Number((valorTituloAntes - descontoBanco).toFixed(2)) : valorTituloAntes;
       const totalPaid = parseFloat(receivable.amountPaid || '0') + pay;
       // FIX: baixa parcial marcava 'a_vencer' mesmo em titulo com vencimento no passado,
       // escondendo atraso na lista. Tolerancia de meio centavo evita que arredondamento
@@ -663,7 +693,7 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
       const venc = dv instanceof Date
         ? new Date(dv.getTime() - 3 * 3600 * 1000).toISOString().slice(0, 10)
         : (dv ? String(dv).slice(0, 10) : '');
-      const receivableStatus = totalPaid >= parseFloat(receivable.amount) - 0.005
+      const receivableStatus = totalPaid >= valorTitulo - 0.005
         ? 'recebida'
         : (/^\d{4}-\d{2}-\d{2}$/.test(venc) && venc < hojeBR ? 'vencida' : 'a_vencer');
       // Retry curto em erro transitorio (lock_timeout, conexao derrubada, pool fechando):
@@ -673,7 +703,19 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
         status: receivableStatus as any,
         paymentMethod: 'boleto' as any,
         financialAccountId: account?.id || receivable.financialAccountId || null,
+        ...(descontoBanco > 0 ? { amount: valorTitulo.toFixed(2), originalAmount: receivable.originalAmount || valorTituloAntes.toFixed(2) } : {}),
       } as any), `updateReceivable ${t.receivableId}`);
+      if (descontoBanco > 0) {
+        console.log(`[BB-BOLETO] desconto do cadastro (${pctDescBanco}%) R$ ${descontoBanco.toFixed(2)} reconhecido no titulo ${t.receivableId} (nosso ${charge.nosso_numero}): titulo R$ ${valorTituloAntes.toFixed(2)} -> R$ ${valorTitulo.toFixed(2)}`);
+        try {
+          await db.execute(sql`
+            INSERT INTO financial_audit_log (action, entity, entity_id, user_email, user_role, amount, before_json, after_json, note)
+            VALUES ('update', 'receivable', ${t.receivableId}, 'sistema', 'sistema', ${descontoBanco},
+                    ${JSON.stringify({ amount: valorTituloAntes.toFixed(2) })}::jsonb,
+                    ${JSON.stringify({ amount: valorTitulo.toFixed(2), desconto: descontoBanco.toFixed(2), pct: pctDescBanco, nossoNumero: charge.nosso_numero })}::jsonb,
+                    ${`Desconto do cadastro (${pctDescBanco}%) de R$ ${descontoBanco.toFixed(2)} concedido pelo banco no boleto ${charge.nosso_numero}: titulo de R$ ${valorTituloAntes.toFixed(2)} passa a R$ ${valorTitulo.toFixed(2)}.`})`);
+        } catch (e: any) { console.warn('[BB-BOLETO] auditoria do desconto falhou (segue):', e?.message); }
+      }
       try {
         await comRetryTransitorio(() => storage.createReceivablePayment({
           receivableId: t.receivableId,
@@ -683,7 +725,8 @@ export async function settleBoletoCharge(charge: any, paidAmount: number, paidAt
           financialAccountId: account?.id || receivable.financialAccountId || null,
           reference: charge.nosso_numero || null,
           interest: moraPendente > 0 ? moraPendente.toFixed(2) : undefined,
-          notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}${targets.length > 1 ? ' [boleto unificado]' : ''}${moraPendente > 0 ? ` - juros/multa R$ ${moraPendente.toFixed(2)}` : ''}`,
+          discount: descontoBanco > 0 ? descontoBanco.toFixed(2) : undefined,
+          notes: `Baixa automatica boleto BB (${source}) - nosso ${charge.nosso_numero}${targets.length > 1 ? ' [boleto unificado]' : ''}${moraPendente > 0 ? ` - juros/multa R$ ${moraPendente.toFixed(2)}` : ''}${descontoBanco > 0 ? ` - desconto do cadastro ${pctDescBanco}% R$ ${descontoBanco.toFixed(2)} concedido no boleto` : ''}`,
           createdBy: 'sistema',
         } as any), `createReceivablePayment ${t.receivableId}`);
         if (moraPendente > 0) { console.log(`[BB-BOLETO] juros/multa de atraso R$ ${moraPendente.toFixed(2)} lancados no titulo ${t.receivableId} (pago R$ ${amount.toFixed(2)})`); moraPendente = 0; }
