@@ -5,12 +5,17 @@ import { useQuery } from "@tanstack/react-query";
 const brl = (v: any) => (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const dt = (v: any) => v ? new Date(v).toLocaleDateString("pt-BR", { timeZone: "UTC" }) : "—";
 
+const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+
 export default function AccountEntriesModal({ drill, onClose }: { drill: any; onClose: () => void }) {
   const params = new URLSearchParams();
   if (drill.accountId) params.set("accountId", drill.accountId);
   if (drill.group) params.set("group", drill.group);
   if (drill.special) params.set("special", drill.special);
+  if (drill.instanceId) params.set("instanceId", drill.instanceId);
+  if (drill.month) params.set("month", String(drill.month));
   params.set("year", String(drill.year || new Date().getFullYear()));
+  const periodo = drill.month ? `${MESES[drill.month - 1]}/${drill.year}` : `${drill.year}`;
   const q = useQuery({
     queryKey: ["/api/financial/account-entries", params.toString()],
     queryFn: async () => (await fetch(`/api/financial/account-entries?${params.toString()}`, { credentials: "include" })).json(),
@@ -25,13 +30,13 @@ export default function AccountEntriesModal({ drill, onClose }: { drill: any; on
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <div>
             <div className="font-bold">{drill.label}</div>
-            <div className="text-xs text-muted-foreground">{rows.length} lançamento(s) em {drill.year} · Total {brl(total)}</div>
+            <div className="text-xs text-muted-foreground">{rows.length} lançamento(s) em {periodo} · Total {brl(total)}</div>
           </div>
           <button className="text-2xl leading-none px-2 hover:text-red-600" onClick={onClose}>×</button>
         </div>
         <div className="overflow-auto p-2">
           {q.isLoading ? <div className="text-center text-muted-foreground py-10">Carregando…</div> : rows.length === 0 ? (
-            <div className="text-center text-muted-foreground py-10">Nenhum lançamento.</div>
+            <div className="text-center text-muted-foreground py-10">{d?.message ? `Erro: ${d.message}` : "Nenhum lançamento."}</div>
           ) : (
             <table className="text-xs w-full">
               <thead>
@@ -46,7 +51,7 @@ export default function AccountEntriesModal({ drill, onClose }: { drill: any; on
               <tbody>
                 {rows.map((r, idx) => (
                   <tr key={idx} className="border-b align-top hover:bg-accent/30">
-                    <td className="px-2 py-1 whitespace-nowrap">{r.titulo || "—"}</td>
+                    <td className="px-2 py-1 whitespace-nowrap">{r.titulo || "—"}{drill.group && r.rubrica ? <div className="text-[10px] text-muted-foreground">{r.rubrica}</div> : null}</td>
                     <td className="px-2 py-1 max-w-[200px] truncate" title={r.contraparte || ""}>{r.contraparte || "—"}</td>
                     <td className="px-2 py-1 whitespace-nowrap">{dt(r.emissao)}</td>
                     <td className="px-2 py-1 whitespace-nowrap">{r.vencimento ? dt(r.vencimento) : "—"}</td>
