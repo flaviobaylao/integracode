@@ -102,6 +102,8 @@ const CATALOGO_PREMISSAS: Array<Omit<Premissa, "ativa" | "modo" | "valor" | "gat
     base: "vendas do cliente novo (em vez dos 8% normais)",
     ativaPadrao: false, modoPadrao: "percentual", valorPadrao: 12, gatilhoPadrao: 6,
     tipoCliente: true,
+    // 1ª compra (total do cliente no dia) a partir deste valor (17/nov/2026).
+    pedidoMinLabel: "Pedido mínimo da 1ª compra", pedidoMinPadrao: 300,
   },
 ];
 

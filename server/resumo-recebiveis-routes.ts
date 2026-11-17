@@ -41,6 +41,7 @@ import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
 import { sqlFaturamentoPorVendedor, sqlFaturamentoPeriodo } from "./faturamento-oficial";
 import { computeCampaign } from "./campanha-outubro";
+import { vendasClienteNovoDoMes, sincronizarComissaoNovos } from "./comissao-novos-routes";
 import { descontosTrocaPorVendedor } from "./troca-registros-routes";
 import ExcelJS from "exceljs";
 import { calcularComissaoSemana, normalizarConfigComissao, chaveEntregador } from "@shared/comissao-entrega";
@@ -170,6 +171,20 @@ function calcularComissao(cfg: Cfg, faturamento: number, meta: number): number {
     return alvo * (faturamento / meta);
   }
   return Math.max(0, (faturamento * cfg.comissaoPct) / 100 - cfg.comissaoDescontoFixo);
+}
+
+// Taxa NOMINAL de comissão do colaborador no mês (sem desconto fixo, sem abater
+// no fixo): é a que ele já recebe sobre a venda do cliente novo dentro da comissão
+// normal. A coluna "Comissão cliente novo" paga só a diferença até os 12%.
+function aliquotaNominal(cfg: Cfg, faturamento: number, meta: number): number {
+  if (cfg.comissaoTipo === "nenhum" || cfg.comissaoTipo === "entrega") return 0;
+  if (cfg.comissaoTipo === "faixa") return aliquotaDaFaixa(cfg.faixaTipo, meta > 0 ? (faturamento / meta) * 100 : 0);
+  if (cfg.comissaoTipo === "escalonado") {
+    const cand = (cfg.comissaoFaixas || []).filter((f) => faturamento >= f.de).sort((a, b) => b.de - a.de);
+    const fx = cand.find((f) => f.ate === null || faturamento <= f.ate) || cand[0];
+    return fx ? fx.pct : 0;
+  }
+  return cfg.comissaoPct;
 }
 
 // COMISSÃO A PARTIR DO FIXO MENSAL (regra do Flavio em 30/out/2026).
@@ -929,6 +944,23 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         };
       }
 
+      // 7b. COMISSÃO DE CLIENTE NOVO (ata de 14/11/2026 + Flavio em 17/11/2026):
+      //     cliente novo conquistado com a premissa ligada rende 12% ao vendedor sobre
+      //     TODAS as compras dele por 6 meses. A comissão normal já paga a taxa do
+      //     vendedor sobre essas vendas; aqui entra só a diferença até os 12%.
+      const cliNovo: Record<string, Array<{ cliente: string; vendas: number; percentual: number; inicio: string; fim: string }>> = {};
+      if (ym >= "2026-11") {
+        try {
+          await sincronizarComissaoNovos();
+          for (const l of await vendasClienteNovoDoMes(ym)) {
+            if (!l.sellerUserId || l.vendas <= 0) continue;
+            (cliNovo[l.sellerUserId] = cliNovo[l.sellerUserId] || []).push({
+              cliente: l.cliente, vendas: l.vendas, percentual: l.percentual, inicio: l.inicio, fim: l.fim,
+            });
+          }
+        } catch (e: any) { console.error("[RESUMO-RECEB] comissão cliente novo:", e?.message || e); }
+      }
+
       // 8. Monta cada colaborador. Rubrica não flagada vem null -> a tela mostra
       //    "—" e ela não entra no total. Nunca um zero que pareça apurado.
       const colaboradores = linhas.map((u) => {
@@ -958,6 +990,15 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         // isso, senão o número do módulo de trocas nunca bate com o da folha.
         const descontoTrocaAplicado = descontoTroca === null ? null
           : Math.min(descontoTroca, Math.max(0, (comissaoBruta || 0) - abateFixo));
+
+        // Diferença até os 12% sobre as vendas dos clientes novos dele no mês.
+        const baseNominal = aliquotaNominal(cfg, fatMap[id] || 0, metaMap[id] || 0);
+        const clientesNovos = (cliNovo[id] || []).map((x) => {
+          const base = Math.min(baseNominal, x.percentual);
+          return { ...x, percentualBase: base, valor: Math.round(x.vendas * (x.percentual - base)) / 100 };
+        });
+        const comissaoClienteNovo = !cfg.usaComissao || !clientesNovos.length ? null
+          : Math.round(clientesNovos.reduce((s2, x) => s2 + x.valor, 0) * 100) / 100;
 
         const kmRodado = kmMap[id] || 0;
         const tarifa = tarifaDe(id);
@@ -995,7 +1036,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           ? lancamentos.reduce((s, l) => s + l.valor, 0) : null;
 
         const total =
-          (fixo || 0) + (ajudaCusto || 0) + (comissao || 0) + (kmValor || 0) + (bonus || 0) +
+          (fixo || 0) + (ajudaCusto || 0) + (comissao || 0) + (comissaoClienteNovo || 0) + (kmValor || 0) + (bonus || 0) +
           campanhas.reduce((s, c) => s + (porCampanha[c.id] || 0), 0);
 
         return {
@@ -1007,6 +1048,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           fixoMensal: fixo, ajudaCusto, meta, faturamento,
           atingimentoPct: metaMap[id] > 0 ? ((fatMap[id] || 0) / metaMap[id]) * 100 : 0,
           comissao, comissaoBruta, comissaoAbatida, descontoTroca, descontoTrocaAplicado,
+          comissaoClienteNovo, clientesNovos: comissaoClienteNovo === null ? [] : clientesNovos,
           campanhas: porCampanha,
           bonus, lancamentos,
           entregaValorEntregue: ent?.entregue ?? null,
@@ -1055,7 +1097,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           c.comissao = Math.max(0, c.comissaoBruta - dt);
           c.descontoTrocaAplicado = Math.min(dt, c.comissaoBruta);
           c.totalMes = (c.fixoMensal || 0) + (c.ajudaCusto || 0) + (c.comissao || 0) +
-            (c.kmValor || 0) + (c.bonus || 0) +
+            (c.comissaoClienteNovo || 0) + (c.kmValor || 0) + (c.bonus || 0) +
             campanhas.reduce((s, k) => s + (c.campanhas?.[k.id] || 0), 0);
         }
       }
@@ -1121,6 +1163,9 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           comissaoAbatida: somaG((c) => c.comissaoAbatida || 0),
           descontoTroca: somaG((c) => c.descontoTroca || 0),
           descontoTrocaAplicado: somaG((c) => c.descontoTrocaAplicado || 0),
+          comissaoClienteNovo: membros.some((c) => c.comissaoClienteNovo !== null && c.comissaoClienteNovo !== undefined)
+            ? somaG((c) => c.comissaoClienteNovo || 0) : null,
+          clientesNovos: membros.flatMap((c) => c.clientesNovos || []),
           campanhas: Object.fromEntries(campanhas.map((k) => [k.id, somaG((c) => c.campanhas?.[k.id] || 0)])),
           bonus: membros.some((c) => c.bonus !== null) ? somaG((c) => c.bonus || 0) : null,
           lancamentos: membros.flatMap((c) => c.lancamentos || []),
@@ -1174,6 +1219,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         comissao: soma((c) => c.comissao || 0),
         // Já descontado dentro da comissão: não entra de novo no total.
         descontoTroca: soma((c) => c.descontoTroca || 0),
+        comissaoClienteNovo: soma((c) => c.comissaoClienteNovo || 0),
         bonus: soma((c) => c.bonus || 0),
         kmRodado: soma((c) => c.kmRodado || 0),
         kmValor: soma((c) => c.kmValor || 0),
@@ -1283,6 +1329,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           faturamento: base((c) => c.faturamento || 0),
           comissao: soma((c) => c.comissao || 0),
           descontoTroca: soma((c) => c.descontoTroca || 0),
+          comissaoClienteNovo: soma((c) => c.comissaoClienteNovo || 0),
           bonus: soma((c) => c.bonus || 0),
           kmRodado: soma((c) => c.kmRodado || 0),
           kmValor: soma((c) => c.kmValor || 0),
@@ -1301,7 +1348,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       // Reembolsos é a última coluna e só existe para admin: vem DEPOIS do total
       // justamente por não entrar nele.
       const cab = ["Colaborador", "Função", "Fixo Mensal", "Ajuda de Custo", "Meta", "Faturamento",
-        "Comissão Mês", "Desc. Trocas", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês",
+        "Comissão Mês", "Desc. Trocas", "Comissão Cliente Novo", ...campanhas.map((c) => c.nome), "Bônus", "Km rodado", "Km R$", "Total Mês",
         ...(admin ? ["Reembolsos (não soma)"] : [])];
 
       const wb = new ExcelJS.Workbook();
@@ -1323,6 +1370,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
           cel(c.fixoMensal), cel(c.ajudaCusto), cel(c.meta), cel(c.faturamento), cel(c.comissao),
           // Negativo: é o que saiu da comissão, já abatido na coluna anterior.
           c.descontoTroca ? -Number(c.descontoTroca) : cel(c.descontoTroca ?? null),
+          cel(c.comissaoClienteNovo ?? null),
           ...campanhas.map((k) => cel(c.campanhas?.[k.id] ?? null)),
           cel(c.bonus), Number(c.kmRodado || 0), cel(c.kmValor), Number(c.totalMes || 0),
           ...(admin ? [Number(c.reembolsos?.total || 0)] : []),
@@ -1332,6 +1380,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         ws.addRow([
           "TOTAL", "", totais.fixoMensal, totais.ajudaCusto, totais.meta, totais.faturamento,
           totais.comissao, totais.descontoTroca ? -Number(totais.descontoTroca) : 0,
+          Number(totais.comissaoClienteNovo || 0),
           ...campanhas.map((k) => totais.campanhas?.[k.id] || 0),
           totais.bonus, totais.kmRodado, totais.kmValor, totais.totalMes,
           ...(admin ? [Number(totais.reembolsos || 0)] : []),
