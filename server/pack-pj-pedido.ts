@@ -18,7 +18,8 @@
 // banco engasga.
 // ============================================================================
 import { db } from './db';
-import { sql } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
+import { products } from '@shared/schema';
 import { barrarPackPJ, unidadesPorFardo, type ItemForaDoPack } from '@shared/pack-pj';
 
 export interface ItemDoPedido {
@@ -41,16 +42,22 @@ export async function barrarPackPJDoPedido(
     const ids = lista.map((i) => String(i?.productId || '')).filter(Boolean);
     if (!ids.length) return null;
 
-    const r: any = await db.execute(sql`SELECT id, name, fardo_filas, fardo_por_fila
-      FROM products WHERE id = ANY(${ids})`);
-    const porId = new Map<string, any>(((r.rows || []) as any[]).map((p) => [String(p.id), p]));
+    // ⚠️ Consulta pelo construtor do drizzle (inArray), NAO por sql`id = ANY(${ids})`:
+    // uma lista JS interpolada no template chega ao Postgres como texto e estoura
+    // "malformed array literal". Como este modulo FALHA ABERTA, o erro nao aparecia
+    // em lugar nenhum — a trava simplesmente nao barrava (visto em producao, 17/nov).
+    const rows = await db
+      .select({ id: products.id, name: products.name, filas: products.fardoFilas, porFila: products.fardoPorFila })
+      .from(products)
+      .where(inArray(products.id, ids));
+    const porId = new Map<string, any>(rows.map((p: any) => [String(p.id), p]));
 
     const paraRegra = lista.map((i) => {
       const p = porId.get(String(i?.productId || ''));
       return {
         nome: String(p?.name || i?.productName || 'produto'),
         quantidade: Number(i?.quantity) || 0,
-        unidadesPorFardo: unidadesPorFardo(p?.fardo_filas, p?.fardo_por_fila),
+        unidadesPorFardo: unidadesPorFardo(p?.filas, p?.porFila),
       };
     });
 
