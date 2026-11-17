@@ -3595,18 +3595,35 @@ function DRETab() {
       return '';
     };
 
+    // Celula clicavel: mes abre os lancamentos daquele mes; Total abre o ano;
+    // o nome da linha tambem abre o ano.
     const clk = !!dr;
+    const abrir = (month?: number) => setDrill({ ...dr, label, year, instanceId, month });
+    const cellClk = (v: number) => (clk && v !== 0 ? 'cursor-pointer hover:bg-accent/60 hover:underline' : '');
     return (
-      <tr key={label} className={`${baseClass} ${clk ? 'cursor-pointer hover:bg-accent/40' : ''}`} onClick={clk ? () => setDrill({ ...dr, label, year }) : undefined}>
-        <td className={`sticky left-0 bg-background px-2 py-1 whitespace-nowrap border-r min-w-[250px] max-w-[300px] truncate z-10 ${clk ? 'underline decoration-dotted' : ''}`}>
+      <tr key={label} className={`${baseClass} ${clk ? 'hover:bg-accent/20' : ''}`}>
+        <td
+          className={`sticky left-0 bg-background px-2 py-1 whitespace-nowrap border-r min-w-[250px] max-w-[300px] truncate z-10 ${clk ? 'cursor-pointer underline decoration-dotted' : ''}`}
+          onClick={clk ? () => abrir() : undefined}
+          title={clk ? 'Clique no nome para ver o ano todo, ou em um mes para ver so aquele mes' : undefined}
+        >
           {style === 'deduction' ? `(-) ${label}` : label}
         </td>
         {monthly.map((v, i) => (
-          <td key={i} className={`px-2 py-1 text-right whitespace-nowrap tabular-nums ${textColor(v)}`}>
+          <td
+            key={i}
+            className={`px-2 py-1 text-right whitespace-nowrap tabular-nums ${textColor(v)} ${cellClk(v)}`}
+            onClick={clk && v !== 0 ? () => abrir(i + 1) : undefined}
+            title={clk && v !== 0 ? `Ver lançamentos de ${months[i]}/${year}` : undefined}
+          >
             {fmtNum(v)}
           </td>
         ))}
-        <td className={`px-2 py-1 text-right whitespace-nowrap tabular-nums font-medium border-l ${textColor(total)}`}>
+        <td
+          className={`px-2 py-1 text-right whitespace-nowrap tabular-nums font-medium border-l ${textColor(total)} ${cellClk(total)}`}
+          onClick={clk && total !== 0 ? () => abrir() : undefined}
+          title={clk && total !== 0 ? `Ver lançamentos de ${year}` : undefined}
+        >
           {fmtNum(total)}
         </td>
         <td className={`px-2 py-1 text-right whitespace-nowrap tabular-nums border-l ${textColor(avPct)}`}>
@@ -3703,9 +3720,9 @@ function DRETab() {
                 )}
                 {renderRow('Despesas Gerais Total', c.despesasGerais.monthly, c.despesasGerais.total, computeAV(c.despesasGerais.total, rl), 'total', { group: 'despesas_gerais' })}
 
-                {renderRow('(-) Outras Receitas/Despesas Operacionais', c.outrasReceitasDespesas.monthly, c.outrasReceitasDespesas.total, computeAV(c.outrasReceitasDespesas.total, rl), 'deduction')}
+                {renderRow('(-) Outras Receitas/Despesas Operacionais', c.outrasReceitasDespesas.monthly, c.outrasReceitasDespesas.total, computeAV(c.outrasReceitasDespesas.total, rl), 'deduction', { group: 'outras_receitas_despesas' })}
                 {renderRow('Despesas Operacionais Total', c.despesasOperacionaisTotal.monthly, c.despesasOperacionaisTotal.total, computeAV(c.despesasOperacionaisTotal.total, rl), 'total')}
-                {renderRow('(-) Depreciação e Amortização', c.depreciacao.monthly, c.depreciacao.total, computeAV(c.depreciacao.total, rl), 'deduction')}
+                {renderRow('(-) Depreciação e Amortização', c.depreciacao.monthly, c.depreciacao.total, computeAV(c.depreciacao.total, rl), 'deduction', { group: 'depreciacao' })}
                 {renderRow('EBITDA', c.ebitda.monthly, c.ebitda.total, computeAV(c.ebitda.total, rl), 'highlight')}
                 {renderRow('Resultado Operacional (EBIT)', c.ebit.monthly, c.ebit.total, computeAV(c.ebit.total, rl), 'highlight')}
 
@@ -3725,8 +3742,8 @@ function DRETab() {
                 {(c.unclassifiedReceivables.total > 0 || c.unclassifiedPayables.total > 0) && (
                   <>
                     {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
-                    {renderRow('⚠ Receitas não classificadas', c.unclassifiedReceivables.monthly, c.unclassifiedReceivables.total, 0, 'normal')}
-                    {renderRow('⚠ Despesas não classificadas', c.unclassifiedPayables.monthly, c.unclassifiedPayables.total, 0, 'normal')}
+                    {renderRow('⚠ Receitas não classificadas', c.unclassifiedReceivables.monthly, c.unclassifiedReceivables.total, 0, 'normal', { special: 'sem_conta_receber' })}
+                    {renderRow('⚠ Despesas não classificadas', c.unclassifiedPayables.monthly, c.unclassifiedPayables.total, 0, 'normal', { special: 'sem_conta_pagar' })}
                   </>
                 )}
 
