@@ -4098,77 +4098,152 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
   app.get('/api/financial/account-entries', authenticateUser, isFinancialReadAuthorized, async (req, res) => {
     try {
       const year = parseInt(String(req.query.year || '')) || new Date().getFullYear();
-      const start = `${year}-01-01`; const end = `${year}-12-31 23:59:59`;
+      // Celula da DRE: month (1-12) restringe ao mes; sem month = ano inteiro (coluna Total).
+      const month = parseInt(String(req.query.month || '')) || 0;
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const start = month >= 1 && month <= 12 ? `${year}-${pad(month)}-01` : `${year}-01-01`;
+      const endExcl = month >= 1 && month <= 11 ? `${year}-${pad(month + 1)}-01` : `${year + 1}-01-01`;
       const accountId = (req.query.accountId as string) || '';
       const group = (req.query.group as string) || '';
       const special = (req.query.special as string) || '';
+      const instanceId = String(req.query.instanceId || '').replace(/'/g, '');
       const uname = (e: any) => e ? String(e) : '';
+      const soma = (rows: any[]) => rows.reduce((s: number, x: any) => s + x.valor, 0);
 
-      // FATURAMENTO (receita bruta): lista NF-e de venda
+      // FATURAMENTO (receita bruta): lista NF-e de venda (mesma regra da DRE)
       if (special === 'faturamento' || group === 'receita_bruta') {
+        const instNf = instanceId ? `AND fiscal_invoices.omie_instance_id = '${instanceId}'` : '';
         const q: any = await db.execute(sql.raw(`
           WITH nf AS (
             SELECT DISTINCT ON (COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text,'id:'||id::text)) *
-            FROM fiscal_invoices WHERE ${nfVendaWhere('fiscal_invoices')}
+            FROM fiscal_invoices WHERE ${nfVendaWhere('fiscal_invoices')} ${instNf}
             ORDER BY COALESCE(issuer_cnpj,''), COALESCE(series,''), COALESCE(invoice_number::text,'id:'||id::text), created_at DESC
           )
           SELECT invoice_number AS titulo, customer_name AS contraparte, ${nfData('nf')} AS emissao,
                  total_invoice::numeric AS valor, status
-          FROM nf WHERE ${nfData('nf')} >= '${start}' AND ${nfData('nf')} <= '${end}'
-          ORDER BY ${nfData('nf')} DESC LIMIT 3000`));
+          FROM nf WHERE ${nfData('nf')} >= '${start}' AND ${nfData('nf')} < '${endExcl}'
+          ORDER BY ${nfData('nf')} DESC LIMIT 5000`));
         const rows = ((q as any).rows || []).map((r: any) => ({
           tipo: 'faturamento', titulo: r.titulo, contraparte: r.contraparte, emissao: r.emissao,
           vencimento: null, valor: Number(r.valor || 0), valorPago: null, status: r.status,
           contaTitulo: null, lancadoPor: null, pagamentos: [],
         }));
-        return res.json({ fonte: 'faturamento', total: rows.reduce((s: number, x: any) => s + x.valor, 0), rows });
+        return res.json({ fonte: 'faturamento', total: soma(rows), rows });
       }
       // DEVOLUÇÕES: NF-e de devolução
       if (special === 'devolucoes' || group === 'devolucoes') {
+        const instDev = instanceId ? `AND omie_instance_id = '${instanceId}'` : '';
         const q: any = await db.execute(sql.raw(`
           SELECT invoice_number AS titulo, customer_name AS contraparte, COALESCE(emission_date,created_at) AS emissao, total_invoice::numeric AS valor, status
           FROM fiscal_invoices
           WHERE upper(coalesce(nature_of_operation,'')) LIKE '%DEVOLU%' AND status NOT IN ('draft','cancelled','cancelada','rejected','rejeitada')
-            AND COALESCE(emission_date,created_at) >= '${start}' AND COALESCE(emission_date,created_at) <= '${end}'
-          ORDER BY COALESCE(emission_date,created_at) DESC LIMIT 3000`));
+            AND COALESCE(emission_date,created_at) >= '${start}' AND COALESCE(emission_date,created_at) < '${endExcl}' ${instDev}
+          ORDER BY COALESCE(emission_date,created_at) DESC LIMIT 5000`));
         const rows = ((q as any).rows || []).map((r: any) => ({ tipo: 'devolucao', titulo: r.titulo, contraparte: r.contraparte, emissao: r.emissao, vencimento: null, valor: Number(r.valor || 0), valorPago: null, status: r.status, contaTitulo: null, lancadoPor: null, pagamentos: [] }));
-        return res.json({ fonte: 'devolucoes', total: rows.reduce((s: number, x: any) => s + x.valor, 0), rows });
+        return res.json({ fonte: 'devolucoes', total: soma(rows), rows });
       }
 
-      // Contas do plano: por accountId ou por grupo
-      const chart = await storage.getChartOfAccounts();
-      let alvo = chart.filter((a: any) => accountId ? String(a.id) === accountId : (group ? String(a.dreGroup) === group : false));
+      const chart = await storage.getChartOfAccounts(instanceId || undefined);
+      const instTit = instanceId ? `AND t.omie_instance_id = '${instanceId}'` : '';
+
+      // Titulos (receber/pagar) de um conjunto de contas — mesma base da DRE:
+      // nao cancelados, nao excluidos, pela data de emissao. `semConta` lista os
+      // titulos que a DRE mostra em "nao classificadas".
+      const titulos = async (isReceita: boolean, ids: string[] | null, semConta = false) => {
+        const tabela = isReceita ? 'receivables' : 'payables';
+        const pgtab = isReceita ? 'receivable_payments' : 'payable_payments';
+        const fk = isReceita ? 'receivable_id' : 'payable_id';
+        const contraCol = isReceita ? 'customer_name' : 'supplier_name';
+        const lista = (arr: string[]) => arr.map((x) => `'${String(x).replace(/'/g, '')}'`).join(',');
+        let filtroConta = '';
+        if (semConta) {
+          const todos = chart.map((a: any) => String(a.id));
+          filtroConta = todos.length ? `AND (t.chart_account_id IS NULL OR t.chart_account_id NOT IN (${lista(todos)}))` : '';
+        } else {
+          if (!ids || !ids.length) return [];
+          filtroConta = `AND t.chart_account_id IN (${lista(ids)})`;
+        }
+        const q: any = await db.execute(sql.raw(`
+          SELECT t.id, t.title_number AS titulo, t.${contraCol} AS contraparte, t.issue_date AS emissao,
+                 t.due_date AS vencimento, t.amount::numeric AS valor, COALESCE(t.amount_paid::numeric,0) AS valor_pago,
+                 t.status, t.created_by AS lancado_por, fa.name AS conta_titulo, ca.name AS rubrica,
+                 COALESCE((
+                   SELECT json_agg(json_build_object(
+                     'data', p.paid_at, 'valor', p.amount::numeric,
+                     'conta', pfa.name, 'baixadoPor', p.created_by
+                   ) ORDER BY p.paid_at)
+                   FROM ${pgtab} p LEFT JOIN financial_accounts pfa ON pfa.id = p.financial_account_id
+                   WHERE p.${fk} = t.id AND p.deleted_at IS NULL
+                 ), '[]'::json) AS pagamentos
+          FROM ${tabela} t
+          LEFT JOIN financial_accounts fa ON fa.id = t.financial_account_id
+          LEFT JOIN chart_of_accounts ca ON ca.id::text = t.chart_account_id::text
+          WHERE t.deleted_at IS NULL AND t.status <> 'cancelada' ${filtroConta} ${instTit}
+            AND t.issue_date >= '${start}' AND t.issue_date < '${endExcl}'
+          ORDER BY t.issue_date DESC LIMIT 5000`));
+        return ((q as any).rows || []).map((r: any) => ({
+          tipo: isReceita ? 'receber' : 'pagar', id: r.id, titulo: r.titulo, contraparte: r.contraparte,
+          emissao: r.emissao, vencimento: r.vencimento, valor: Number(r.valor || 0), valorPago: Number(r.valor_pago || 0),
+          status: r.status, contaTitulo: r.conta_titulo, rubrica: r.rubrica || null, lancadoPor: uname(r.lancado_por),
+          pagamentos: (r.pagamentos || []).map((p: any) => ({ data: p.data, valor: Number(p.valor || 0), conta: p.conta, baixadoPor: uname(p.baixadoPor) })),
+        }));
+      };
+
+      // Titulos sem conta do plano (linhas "nao classificadas" da DRE)
+      if (special === 'sem_conta_receber' || special === 'sem_conta_pagar') {
+        const rows = await titulos(special === 'sem_conta_receber', null, true);
+        return res.json({ fonte: 'sem_conta', total: soma(rows), rows });
+      }
+
+      // Multa e juros (mora): na DRE vem das BAIXAS (fine + interest) pela data de
+      // pagamento, nao do titulo. Lista cada baixa com mora no periodo.
+      const mora = async (isReceita: boolean, rubrica: string) => {
+        const pgtab = isReceita ? 'receivable_payments' : 'payable_payments';
+        const tabela = isReceita ? 'receivables' : 'payables';
+        const fk = isReceita ? 'receivable_id' : 'payable_id';
+        const contraCol = isReceita ? 'customer_name' : 'supplier_name';
+        const q: any = await db.execute(sql.raw(`
+          SELECT t.id, t.title_number AS titulo, t.${contraCol} AS contraparte, t.issue_date AS emissao, t.due_date AS vencimento,
+                 (COALESCE(pg.fine,0)::numeric + COALESCE(pg.interest,0)::numeric) AS valor,
+                 pg.paid_at, pg.amount::numeric AS valor_baixa, pfa.name AS conta, pg.created_by AS baixado_por, t.status
+          FROM ${pgtab} pg
+          JOIN ${tabela} t ON t.id = pg.${fk}
+          LEFT JOIN financial_accounts pfa ON pfa.id = pg.financial_account_id
+          WHERE pg.deleted_at IS NULL AND t.deleted_at IS NULL AND t.status <> 'cancelada' ${instTit}
+            AND (COALESCE(pg.fine,0) <> 0 OR COALESCE(pg.interest,0) <> 0)
+            AND pg.paid_at >= '${start}' AND pg.paid_at < '${endExcl}'
+          ORDER BY pg.paid_at DESC LIMIT 5000`));
+        return ((q as any).rows || []).map((r: any) => ({
+          tipo: 'mora', id: r.id, titulo: r.titulo, contraparte: r.contraparte, emissao: r.emissao, vencimento: r.vencimento,
+          valor: Number(r.valor || 0), valorPago: null, status: r.status, contaTitulo: null, rubrica, lancadoPor: null,
+          pagamentos: [{ data: r.paid_at, valor: Number(r.valor_baixa || 0), conta: r.conta, baixadoPor: uname(r.baixado_por) }],
+        }));
+      };
+
+      // Contas do plano: por accountId ou por grupo (grupo = mesmas contas que a DRE soma:
+      // contas filhas, dentro da DRE).
+      const incFmap = await incDreMap();
+      let alvo: any[] = chart.filter((a: any) => accountId
+        ? String(a.id) === accountId
+        : (group ? (String(a.dreGroup) === group && String(a.code || '').includes('.') && incFmap.get(String(a.id)) !== false) : false));
       if (alvo.length === 0) return res.json({ fonte: 'conta', total: 0, rows: [] });
-      const ids = alvo.map((a: any) => `'${String(a.id)}'`).join(',');
-      const isReceita = alvo.every((a: any) => a.type === 'receita');
-      const tabela = isReceita ? 'receivables' : 'payables';
-      const pgtab = isReceita ? 'receivable_payments' : 'payable_payments';
-      const fk = isReceita ? 'receivable_id' : 'payable_id';
-      const contraCol = isReceita ? 'customer_name' : 'supplier_name';
-      const q: any = await db.execute(sql.raw(`
-        SELECT t.id, t.title_number AS titulo, t.${contraCol} AS contraparte, t.issue_date AS emissao,
-               t.due_date AS vencimento, t.amount::numeric AS valor, COALESCE(t.amount_paid::numeric,0) AS valor_pago,
-               t.status, t.created_by AS lancado_por, fa.name AS conta_titulo,
-               COALESCE((
-                 SELECT json_agg(json_build_object(
-                    'data', p.paid_at, 'valor', p.amount::numeric,
-                    'conta', pfa.name, 'baixadoPor', p.created_by
-                 ) ORDER BY p.paid_at)
-                 FROM ${pgtab} p LEFT JOIN financial_accounts pfa ON pfa.id = p.financial_account_id
-                 WHERE p.${fk} = t.id AND p.deleted_at IS NULL
-               ), '[]'::json) AS pagamentos
-        FROM ${tabela} t
-        LEFT JOIN financial_accounts fa ON fa.id = t.financial_account_id
-        WHERE t.chart_account_id IN (${ids}) AND t.deleted_at IS NULL AND t.status <> 'cancelada'
-          AND t.issue_date >= '${start}' AND t.issue_date <= '${end}'
-        ORDER BY t.issue_date DESC LIMIT 5000`));
-      const rows = ((q as any).rows || []).map((r: any) => ({
-        tipo: isReceita ? 'receber' : 'pagar', id: r.id, titulo: r.titulo, contraparte: r.contraparte,
-        emissao: r.emissao, vencimento: r.vencimento, valor: Number(r.valor || 0), valorPago: Number(r.valor_pago || 0),
-        status: r.status, contaTitulo: r.conta_titulo, lancadoPor: uname(r.lancado_por),
-        pagamentos: (r.pagamentos || []).map((p: any) => ({ data: p.data, valor: Number(p.valor || 0), conta: p.conta, baixadoPor: uname(p.baixadoPor) })),
-      }));
-      return res.json({ fonte: 'conta', tipo: isReceita ? 'receber' : 'pagar', total: rows.reduce((s: number, x: any) => s + x.valor, 0), rows });
+
+      const contasFin = await ensureContasFinanceirasDre();
+      const moraIds = new Set([contasFin.rec, contasFin.desp].filter(Boolean).map(String));
+      const contasTitulo = alvo.filter((a: any) => !moraIds.has(String(a.id)));
+      const contasMora = alvo.filter((a: any) => moraIds.has(String(a.id)));
+
+      const recIds = contasTitulo.filter((a: any) => a.type === 'receita').map((a: any) => String(a.id));
+      const pagIds = contasTitulo.filter((a: any) => a.type !== 'receita').map((a: any) => String(a.id));
+      let rows: any[] = [
+        ...(await titulos(true, recIds)),
+        ...(await titulos(false, pagIds)),
+      ];
+      for (const a of contasMora) rows = rows.concat(await mora(String(a.id) === String(contasFin.rec), a.name));
+      const ts = (v: any) => (v ? new Date(v).getTime() : 0) || 0;
+      rows.sort((x: any, y: any) => ts(y.emissao) - ts(x.emissao));
+      const tipo = pagIds.length === 0 ? 'receber' : (recIds.length === 0 ? 'pagar' : 'misto');
+      return res.json({ fonte: 'conta', tipo, total: soma(rows), rows });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
