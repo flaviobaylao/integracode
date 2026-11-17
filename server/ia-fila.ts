@@ -4,12 +4,14 @@
 // Regra de negocio implementada aqui:
 //   1. Enquanto a IA esta atendendo, NENHUM atendente pode interromper a conversa.
 //   2. A conversa so e liberada quando a IA chama transferir_humano.
-//   3. Ao liberar, a IA procura o DONO DA CARTEIRA do cliente (customers.seller_id):
-//        - dono ONLINE  -> a conversa vai para ele, em modo EXCLUSIVO (so ele le e
-//                          responde) e ele recebe a notificacao de "aguardando atendimento";
-//        - dono OFFLINE -> vai para qualquer atendente online (rodizio), sem exclusividade.
-//   4. Se o dono foi notificado e nao responder em ia_handoff_min (padrao 5 min),
-//      a conversa e repassada para outro atendente online.
+//   3. Ao liberar, o caso vai para a PRIMEIRA LINHA em rodizio: um pedido para a
+//      Leticia, o proximo para o Joao Pedro, o seguinte para a Leticia de novo. So quem
+//      esta da vez recebe o aviso no WhatsApp; o outro pode assumir se quiser.
+//   4. Se quem foi notificado nao responder em ia_handoff_min (padrao 15 min),
+//      o caso sobe para a COORDENACAO (Cinthia e Flavio), que sao avisados juntos.
+//      A conversa nao muda de dono: continua aberta para a primeira linha.
+//   5. Dia nao util, ou primeira linha toda offline: a conversa fica reservada ao dono
+//      da carteira, que e avisado, e o cliente ouve que o retorno vem em breve.
 //
 // Presenca: o sistema tem DOIS mecanismos independentes (chat_agents.status, do
 // heartbeat do ChatCenter, e users.last_seen_at, do ping do Layout). Aqui vale
@@ -20,7 +22,8 @@
 //
 // Chaves (system_settings):
 //   ia_front_line     : 'on'|'off'  -> IA atende sozinha (trava o atendente)
-//   ia_handoff_min    : minutos que o dono tem para responder antes de perder a vez (padrao 5)
+//   ia_handoff_min    : minutos ate escalar para a coordenacao (padrao 15)
+//   ia_handoff_rodizio: user_id de quem levou o ultimo aviso (ponteiro do rodizio)
 //   ia_carteira_padrao: users.id que vira dono do cliente NOVO cadastrado pela IA
 //   ia_notifica_wa    : 'on'|'off'  -> avisa o atendente por WhatsApp (padrao on)
 //   ia_trava_admin    : 'on'|'off'  -> se 'on', nem admin escreve por cima da IA (padrao off)
@@ -179,9 +182,10 @@ async function agentDoUsuario(userId: string): Promise<{ agent_id: string; name:
 // ---------------------------------------------------------------------------
 // Decisao do Flavio: o pedido de "falar com uma pessoa" NAO vai para quem estiver
 // online nem para o dono da carteira. Vai sempre para a PRIMEIRA LINHA (Leticia e
-// Joao Pedro). Se em `ia_handoff_min` minutos nenhum dos dois atender, o caso sobe
-// para a ESCALACAO (Cinthia e Flavio). Ninguem mais entra nesse fluxo — pedido de
-// atendimento nao e assunto de administrativo nem de vendedor de carteira.
+// Joao Pedro), UM DE CADA VEZ, alternando (ver `proximoDaVez`). Se em `ia_handoff_min`
+// minutos nenhum dos dois atender, o caso sobe para a ESCALACAO (Cinthia e Flavio, os
+// dois juntos). Ninguem mais entra nesse fluxo — pedido de atendimento nao e assunto de
+// administrativo nem de vendedor de carteira.
 //
 // As duas listas sao configuraveis sem deploy (aceitam e-mail ou user_id, separados
 // por virgula): `ia_handoff_equipe` e `ia_handoff_escalacao`.
@@ -220,25 +224,51 @@ async function resolverEquipe(chave: string, padrao: string): Promise<MembroEqui
       out.push({ user_id: userId, agent_id: a?.agent_id ? String(a.agent_id) : null, name: name || item, phone, online: await usuarioOnline(userId) });
     } catch (e: any) { console.error(`[IA-FILA] ${chave} "${item}":`, e?.message || e); }
   }
-  // Quem esta online primeiro; depois quem atendeu ha mais tempo.
-  try {
-    for (const m of out) {
-      if (!m.agent_id) { (m as any)._ult = null; continue; }
-      const t: any = await db.execute(sql`SELECT max(last_attended_at) AS ult FROM chat_conversations WHERE assigned_agent_id = ${m.agent_id}`);
-      (m as any)._ult = t.rows?.[0]?.ult || null;
-    }
-    out.sort((a: any, b: any) => {
-      if (a.online !== b.online) return a.online ? -1 : 1;
-      if (!a._ult) return -1;
-      if (!b._ult) return 1;
-      return new Date(a._ult).getTime() - new Date(b._ult).getTime();
-    });
-  } catch { /* sem ordenacao, mantem a ordem da configuracao */ }
+  // A ORDEM DA CONFIGURACAO E PRESERVADA de proposito (nov/2026). Antes esta lista era
+  // reordenada por "online primeiro, depois quem atendeu ha mais tempo" — o que torna o
+  // rodizio imprevisivel. Quem decide a vez agora e `proximoDaVez()`, que anda na ordem
+  // configurada em `ia_handoff_equipe`. Mexer na ordenacao aqui quebra o rodizio.
   return out;
 }
 
 export async function primeiraLinha(): Promise<MembroEquipe[]> { return resolverEquipe('ia_handoff_equipe', EQUIPE_PADRAO); }
 export async function escalacao(): Promise<MembroEquipe[]> { return resolverEquipe('ia_handoff_escalacao', ESCALACAO_PADRAO); }
+
+// ---------------------------------------------------------------------------
+// Rodizio da primeira linha (decisao do Flavio, nov/2026)
+// ---------------------------------------------------------------------------
+//
+// UM DE CADA VEZ, alternando. O primeiro pedido vai para a Leticia, o segundo para o
+// Joao Pedro, o terceiro para a Leticia de novo — e assim por diante. SO UM dos dois e
+// avisado por pedido; antes os dois recebiam todos os avisos e ninguem sabia de quem era
+// a vez. A alternancia e CONTINUA: nao reinicia a cada dia, para a divisao fechar justa
+// no mes.
+//
+// Quem esta offline PERDE A VEZ: o aviso vai para o proximo online e a vez conta como
+// usada, senao o rodizio travava esperando quem faltou. Quando nenhum dos dois esta
+// online, ninguem e avisado aqui — a conversa cai na regra de "sem atendente", que
+// reserva o caso ao dono da carteira.
+//
+// A conversa NAO fica trancada: quem nao foi avisado tambem pode assumir se quiser
+// (exclusivo = false). O rodizio decide quem RECEBE O TOQUE, nao quem tem permissao.
+//
+// O ponteiro fica em system_settings['ia_handoff_rodizio'] = user_id de quem levou a
+// ultima. Para forcar o proximo a ser a Leticia, basta gravar ali o id do Joao Pedro.
+const CHAVE_RODIZIO = 'ia_handoff_rodizio';
+
+async function proximoDaVez(equipe: MembroEquipe[]): Promise<MembroEquipe | null> {
+  const fila = equipe.filter(m => m.agent_id);
+  if (!fila.length) return null;
+  const ultimo = await getSetting(CHAVE_RODIZIO, '');
+  const i = fila.findIndex(m => m.user_id === ultimo);
+  // Comeca LOGO DEPOIS de quem levou a ultima. Se o ponteiro nao casa com ninguem da
+  // lista (primeira vez, ou a equipe mudou), i = -1 e a volta comeca no primeiro.
+  for (let p = 1; p <= fila.length; p++) {
+    const cand = fila[(i + p) % fila.length];
+    if (cand.online) return cand;
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Carteira
@@ -487,7 +517,7 @@ async function atribuir(conversationId: string, agentId: string): Promise<void> 
 export async function handoffParaHumano(conversationId: string, phone: string, motivo?: string): Promise<{ ok: boolean; alvo?: string; exclusivo?: boolean; erro?: string; foraExpediente?: boolean; retorno?: string; semAtendente?: boolean }> {
   try {
     await ensureFilaTable();
-    const minutos = Math.max(1, parseInt(await getSetting('ia_handoff_min', '5'), 10) || 5);
+    const minutos = Math.max(1, parseInt(await getSetting('ia_handoff_min', '15'), 10) || 15);
     const cliente = await nomeDoCliente(conversationId);
     // Contato para o atendente chamar. Vem formatado no aviso; `ig:` nunca e contato.
     const contato = await contatoParaAtendente(conversationId, phone);
@@ -519,21 +549,24 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
     let alvoAgent: { agent_id: string; name: string; phone: string | null } | null = null;
     let exclusivo = false;
 
-    // 👥 PRIMEIRA LINHA — Leticia e Joao Pedro. A conversa fica com um deles (o que
-    // atendeu ha mais tempo, preferindo quem esta online), mas AMBOS sao avisados e
-    // qualquer um dos dois pode responder: por isso `exclusivo = false`. O dono da
-    // carteira nao entra aqui, nem quem estiver online por acaso.
+    // 👥 PRIMEIRA LINHA — Leticia e Joao Pedro, UM DE CADA VEZ (ver `proximoDaVez`).
+    // So quem esta da vez recebe o aviso; o outro continua podendo assumir a conversa
+    // se quiser, por isso `exclusivo = false`. O dono da carteira nao entra aqui, nem
+    // quem estiver online por acaso.
     const equipe = await primeiraLinha();
-    if (equipe.length) {
-      const escolhido = equipe.find(m => m.agent_id) || equipe[0];
-      alvoUserId = escolhido.user_id;
-      if (escolhido.agent_id) alvoAgent = { agent_id: escolhido.agent_id, name: escolhido.name, phone: escolhido.phone };
+    const temEquipe = equipe.some(m => m.agent_id);
+    const daVez = await proximoDaVez(equipe);
+    if (daVez && daVez.agent_id) {
+      alvoUserId = daVez.user_id;
+      alvoAgent = { agent_id: daVez.agent_id, name: daVez.name, phone: daVez.phone };
     }
 
-    // Rede de seguranca: se a lista estiver vazia ou mal configurada (ninguem com
-    // cadastro valido), volta ao comportamento antigo em vez de deixar o cliente sem
-    // ninguem — melhor atender fora da regra do que nao atender.
-    if (!alvoAgent) {
+    // Rede de seguranca: SO quando a primeira linha esta vazia ou mal configurada
+    // (ninguem com cadastro valido). Se a equipe existe mas ninguem esta online, NAO
+    // caimos aqui de proposito — o caso desce para a regra de "sem atendente", que
+    // reserva a conversa ao dono da carteira. Pedido de atendimento continua sendo
+    // assunto da primeira linha, nao de quem estiver logado por acaso.
+    if (!alvoAgent && !temEquipe) {
       if (owner && (await usuarioOnline(owner))) {
         const a = await agentDoUsuario(owner);
         if (a) { alvoUserId = owner; alvoAgent = a; exclusivo = true; }
@@ -591,19 +624,18 @@ export async function handoffParaHumano(conversationId: string, phone: string, m
         answered_at = NULL, updated_at = now()`);
 
     await marcarTransferida(conversationId);
-    const nomesEquipe = equipe.length ? equipe.map(m => m.name).join(' e ') : alvoAgent.name;
     await msgSistema(conversationId, exclusivo
       ? `[IA] Aguardando atendimento de ${alvoAgent.name} (dono da carteira).`
-      : `[IA] Aguardando atendimento de ${nomesEquipe}. Sem resposta em ${minutos} min, sobe para a coordenacao.`);
-    // Avisa TODO MUNDO da primeira linha: os dois podem responder, quem pegar primeiro atende.
-    if (equipe.length) {
-      for (const m of equipe) await avisarAtendente(m.phone, m.name, cliente, false, contato);
-    } else {
-      await avisarAtendente(alvoAgent.phone, alvoAgent.name, cliente, exclusivo, contato);
-    }
+      : `[IA] Aguardando atendimento de ${alvoAgent.name} (vez do rodizio). Sem resposta em ${minutos} min, sobe para a coordenacao.`);
+    // SO quem esta da vez recebe o toque. O outro da primeira linha continua podendo
+    // assumir a conversa — o rodizio decide quem e avisado, nao quem pode responder.
+    await avisarAtendente(alvoAgent.phone, alvoAgent.name, cliente, exclusivo, contato);
+    // A vez so e marcada como usada DEPOIS do aviso sair, e so quando quem atendeu veio
+    // do rodizio — a rede de seguranca (regra antiga) nao mexe no ponteiro.
+    if (daVez) await setSetting(CHAVE_RODIZIO, daVez.user_id);
 
-    console.log(`[IA-FILA] conv=${conversationId} -> ${nomesEquipe} (atribuida a ${alvoAgent.name}) prazo=${minutos}min`);
-    return { ok: true, alvo: nomesEquipe, exclusivo };
+    console.log(`[IA-FILA] conv=${conversationId} -> ${alvoAgent.name}${daVez ? ' (rodizio)' : ''} prazo=${minutos}min`);
+    return { ok: true, alvo: alvoAgent.name, exclusivo };
   } catch (e: any) {
     console.error('[IA-FILA] handoff', e?.message || e);
     return { ok: false, erro: e?.message || String(e) };
@@ -721,7 +753,7 @@ export async function filaTick(): Promise<{ ran: boolean; repassadas: number; de
       FROM ia_handoff WHERE status = 'waiting' AND deadline_at IS NOT NULL AND deadline_at < now()
       ORDER BY deadline_at ASC LIMIT 20`);
     const chefes = (r.rows || []).length ? await escalacao() : [];
-    const minutosPrazo = Math.max(1, parseInt(await getSetting('ia_handoff_min', '5'), 10) || 5);
+    const minutosPrazo = Math.max(1, parseInt(await getSetting('ia_handoff_min', '15'), 10) || 15);
     for (const h of (r.rows || []) as any[]) {
       const cli = await nomeDoCliente(String(h.conversation_id));
       const contatoCli = await contatoParaAtendente(String(h.conversation_id), String(h.customer_phone || ''));
@@ -747,26 +779,31 @@ export async function filaTick(): Promise<{ ran: boolean; repassadas: number; de
       // em quem estiver online por acaso. So Leticia e Joao Pedro assumem.
       let alvo: { agent_id: string; name: string; phone: string | null } | null = null;
       let alvoUser: string | null = null;
+      // Mesmo rodizio do handoff: quem esta da vez e online. Nao e "o primeiro da lista",
+      // senao a Leticia pegaria todas as conversas represadas da madrugada.
       const eq = await primeiraLinha();
-      const comAgente = eq.filter(m => m.agent_id);
-      if (comAgente.length) {
-        const m = comAgente[0];
-        alvo = { agent_id: String(m.agent_id), name: m.name, phone: m.phone };
-        alvoUser = m.user_id;
+      const daVez2 = await proximoDaVez(eq);
+      if (daVez2 && daVez2.agent_id) {
+        alvo = { agent_id: String(daVez2.agent_id), name: daVez2.name, phone: daVez2.phone };
+        alvoUser = daVez2.user_id;
       }
       if (!alvo) { const lista = await agentesDisponiveis(); if (lista.length) { const n = lista[0]; alvo = { agent_id: String(n.agent_id), name: n.name, phone: n.phone }; alvoUser = n.user_id ? String(n.user_id) : null; } }
       if (!alvo) continue;
       await atribuir(String(h.conversation_id), alvo.agent_id);
+      // Com PRAZO: a conversa que estava represada entra na mesma regra das outras — se
+      // ninguem responder em `ia_handoff_min`, sobe para a coordenacao. Antes ficava com
+      // deadline nulo e nunca escalava.
       await db.execute(sql`UPDATE ia_handoff SET target_user_id = ${alvoUser}, target_agent_id = ${alvo.agent_id},
-        exclusivo = false, status = 'waiting', notified_at = now(), deadline_at = NULL, updated_at = now()
+        exclusivo = false, status = 'waiting', notified_at = now(),
+        deadline_at = now() + make_interval(mins => ${minutosPrazo}), updated_at = now()
         WHERE conversation_id = ${h.conversation_id}`);
-      await msgSistema(String(h.conversation_id), `[IA] Conversa atribuida a ${alvo.name}.`);
+      await msgSistema(String(h.conversation_id), `[IA] Conversa atribuida a ${alvo.name} (vez do rodizio). Sem resposta em ${minutosPrazo} min, sobe para a coordenacao.`);
       {
         const cli2 = await nomeDoCliente(String(h.conversation_id));
         const ct2 = await contatoParaAtendente(String(h.conversation_id), String(h.customer_phone || ''));
-        if (comAgente.length) { for (const m of eq) await avisarAtendente(m.phone, m.name, cli2, false, ct2); }
-        else await avisarAtendente(alvo.phone, alvo.name, cli2, false, ct2);
+        await avisarAtendente(alvo.phone, alvo.name, cli2, false, ct2);
       }
+      if (daVez2) await setSetting(CHAVE_RODIZIO, daVez2.user_id);
       repassadas++;
       detalhes.push({ conv: h.conversation_id, para: alvo.name, origem: 'sem_atendente' });
       console.log(`[IA-FILA] sem_atendente atribuido conv=${h.conversation_id} -> ${alvo.name}`);

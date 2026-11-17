@@ -32,7 +32,7 @@ const KEYS: Record<string, string> = {
   ia_canal_1841: 'on',                     // liga/desliga a acao da IA no numero 1841 (HONESTAPI)
   ia_wpp_vendas: 'off',                    // "modo Instagram" no WhatsApp: registrar pedido + PIX
   ia_front_line: 'off',                    // IA atende sozinha; humano so entra quando a IA transferir
-  ia_handoff_min: '5',                     // minutos que a primeira linha tem para responder antes de escalar
+  ia_handoff_min: '15',                    // minutos que a primeira linha tem para responder antes de escalar
   // 👥 Quem atende o pedido de "falar com uma pessoa" (nov/2026). E-mail ou user_id,
   // separados por virgula. A primeira linha recebe o aviso; passados ia_handoff_min
   // minutos sem resposta, o caso sobe para a escalacao. Ninguem fora destas listas entra.
