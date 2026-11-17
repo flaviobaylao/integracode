@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, ArrowLeft, FileText, Camera, Paperclip } from "lucide-react";
 import { PIX_TIPOS, PIX_REGRA } from "@/lib/pix";
-import { useFavoritosPagamento, SeletorFavorito, type FavoritoPagamento } from "@/lib/favoritosPagamento";
+import { useFavoritosPagamento, CampoComSugestao, type FavoritoPagamento } from "@/lib/favoritosPagamento";
 
 type Reembolso = {
   id: string; numero: number; codigo: string; solicitanteId: string; solicitanteNome: string;
@@ -185,8 +185,7 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
     setFavId(null); setFavNome(nome); setFavDoc(doc); setPixChave(""); setPixTitular(""); setBanco(""); setAgencia(""); setConta("");
   };
   const favQ = useFavoritosPagamento(null);
-  const favAplicado = useRef(false);
-  useEffect(() => { const l = favQ.data; if (!favAplicado.current && l && l.length) { favAplicado.current = true; aplicarFav(l[0]); } }, [favQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const favLista = favQ.data || []; // só sugestões: nada é preenchido sozinho
   const total = useMemo(() => itens.reduce((a, i) => a + (Number(String(i.valor).replace(",", ".")) || 0), 0), [itens]);
   const setItem = (k: number, p: Partial<Item>) => setItens(itens.map((x, i) => (i === k ? { ...x, ...p } : x)));
 
@@ -295,21 +294,20 @@ function NovoReembolso({ cfg, onCancel, onOk, erro }: { cfg: Cfg; onCancel: () =
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">4. Como você quer receber</CardTitle></CardHeader>
         <CardContent className="grid gap-3">
-          <SeletorFavorito lista={favQ.data || []} atualId={favId} onEscolher={aplicarFav} onLimpar={() => limparFav("", "")} />
           <div className="flex gap-2 flex-wrap">
             {Object.entries(FORMA_LABEL).map(([k, l]) => (
               <button key={k} onClick={() => setForma(k)} className={`h-10 px-4 rounded-full border text-sm font-semibold ${forma === k ? "bg-green-700 text-white border-green-700" : "bg-white"}`}>{l}</button>
             ))}
           </div>
           <div className="grid sm:grid-cols-2 gap-3">
-            <Campo label="Favorecido (nome)" obrig><Input value={favNome} onChange={(e) => setFavNome(e.target.value)} /></Campo>
-            <Campo label="CPF/CNPJ do favorecido"><Input value={favDoc} onChange={(e) => setFavDoc(e.target.value)} placeholder="000.000.000-00" /></Campo>
+            <Campo label="Favorecido (nome)" obrig dica={favLista.length ? "Comece a digitar para ver os favorecidos já usados" : undefined}><CampoComSugestao campo="nome" lista={favLista} onEscolher={aplicarFav} value={favNome} onValor={setFavNome} data-testid="input-favorecido" /></Campo>
+            <Campo label="CPF/CNPJ do favorecido"><CampoComSugestao campo="doc" lista={favLista} onEscolher={aplicarFav} value={favDoc} onValor={setFavDoc} placeholder="000.000.000-00" inputMode="numeric" /></Campo>
             {forma === "pix" && (<>
               <Campo label="Tipo de chave PIX"><select className={selCls} value={pixTipo} data-testid="select-pix-tipo" onChange={(e) => { const t = e.target.value; setPixTipo(t); setPixChave((k) => PIX_REGRA[t].limpar(k)); }}>{PIX_TIPOS.map((t) => <option key={t}>{t}</option>)}</select></Campo>
               <Campo label="Chave PIX" obrig dica={PIX_REGRA[pixTipo].dica}>
-                <Input value={pixChave} inputMode={PIX_REGRA[pixTipo].modo} placeholder={PIX_REGRA[pixTipo].placeholder} data-testid="input-pix-chave"
-                  onChange={(e) => setPixChave(PIX_REGRA[pixTipo].limpar(e.target.value))}
-                  className={pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? "border-red-500 focus-visible:ring-red-500" : ""} />
+                <CampoComSugestao campo="chave" lista={favLista} onEscolher={aplicarFav} value={pixChave} inputMode={PIX_REGRA[pixTipo].modo} placeholder={PIX_REGRA[pixTipo].placeholder} data-testid="input-pix-chave"
+                  onValor={(v) => setPixChave(PIX_REGRA[pixTipo].limpar(v))}
+                  inputClassName={pixChave && !PIX_REGRA[pixTipo].valido(pixChave) ? "border-red-500 focus-visible:ring-red-500" : ""} />
                 {pixChave && !PIX_REGRA[pixTipo].valido(pixChave) && <span className="text-[11px] font-semibold text-red-600">{pixTipo === "CPF" || pixTipo === "CNPJ" ? `${pixTipo} inválido — confira os números` : "Formato inválido para o tipo escolhido"}</span>}
               </Campo>
               <Campo label="Nome do titular da chave" dica="Opcional — confira com o nome que aparece no app do banco"><Input value={pixTitular} onChange={(e) => setPixTitular(e.target.value)} placeholder="Ex.: Maria da Silva" data-testid="input-pix-titular" /></Campo>
