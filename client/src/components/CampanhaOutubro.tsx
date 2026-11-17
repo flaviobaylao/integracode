@@ -396,14 +396,14 @@ export default function CampanhaOutubro() {
                         data-testid={`premissa-pedidominpf-${p.chave}`} />
                     </label>
                   )}
-                  {(p.pedidoMin !== undefined || p.pedidoMinPf !== undefined) && (
+                  {p.chave === "positivacao" && (p.pedidoMin !== undefined || p.pedidoMinPf !== undefined) && (
                     <span className="col-span-2 -mt-1 block text-[10px] leading-relaxed text-gray-400">
                       {regraMinimos(p.pedidoMin || 0, p.pedidoMinPf || 0)}
                     </span>
                   )}
                   <p className="col-span-2 text-[10px] leading-relaxed text-gray-400">
                     {p.chave === "comissao_novo"
-                      ? <>Vale para cliente novo cuja 1ª compra cair enquanto este flag estiver ligado em <b>{nomeDoMes(ym)}</b>. Se o vendedor sair da Honest no prazo, o cliente volta para 8%.</>
+                      ? <>Vale para cliente novo cuja 1ª compra (total do cliente no dia) cair enquanto este flag estiver ligado em <b>{nomeDoMes(ym)}</b> e atingir o pedido mínimo. O vendedor recebe o % sobre <b>todas</b> as compras do cliente no prazo; a diferença para a taxa normal dele entra sozinha no Resumo Recebíveis (coluna Cliente Novo). Se o vendedor sair da Honest no prazo, o cliente volta para a taxa normal.</>
                       : <>Em <b>%</b>, o prêmio é calculado sobre o {p.base}. Vale só para{" "}
                         <b>{nomeDoMes(ym)}</b> — os outros meses ficam como estão.</>}
                   </p>

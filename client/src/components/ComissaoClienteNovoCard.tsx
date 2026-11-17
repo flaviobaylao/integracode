@@ -29,7 +29,7 @@ export default function ComissaoClienteNovoCard({ ym }: { ym: string }) {
       <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
         <div><div className="text-gray-500">Clientes</div><div className="text-base font-bold text-gray-800">{isLoading ? "…" : t?.clientes ?? 0}</div></div>
         <div><div className="text-gray-500">Vendas no mês</div><div className="text-base font-bold text-gray-800">{isLoading ? "…" : brl(t?.vendas ?? 0)}</div></div>
-        <div><div className="text-gray-500">A mais que 8%</div><div className="text-base font-bold text-emerald-700">{isLoading ? "…" : brl(t?.adicional ?? 0)}</div></div>
+        <div><div className="text-gray-500" title="Diferença até 12% sobre a taxa normal de cada vendedor — é o que entra na coluna Cliente Novo do Resumo Recebíveis">A mais (até 12%)</div><div className="text-base font-bold text-emerald-700">{isLoading ? "…" : brl(t?.adicional ?? 0)}</div></div>
       </div>
       {!!data?.clientes?.length && (
         <button type="button" onClick={() => setAberto((v) => !v)} className="mt-2 text-[11px] font-semibold text-emerald-700 hover:underline">
