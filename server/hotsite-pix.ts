@@ -251,6 +251,18 @@ export function registerHotsitePix(app: Express): void {
         }
       }
 
+      // 📦 PACK FECHADO PARA CNPJ — antes de gerar a cobranca, junto com as outras
+      // travas. No PIX o dinheiro entra antes do pedido nascer: recusar so na criacao
+      // cobraria por um pedido que nao vamos montar.
+      {
+        const { barrarPackPJDoPedido } = await import('./pack-pj-pedido');
+        const pack = await barrarPackPJDoPedido(c.cpfCnpj, c.customerType, body.items);
+        if (pack) {
+          console.warn('📦 [LOJA-PIX] cobranca recusada — pack incompleto (CNPJ)');
+          return res.status(400).json(pack);
+        }
+      }
+
       const accounts = await storage.getFinancialAccounts();
       const account = (accounts || []).find((a: any) => a.bbPixEnabled && a.pixKey);
       if (!account) return res.status(503).json({ message: 'Pagamento PIX indisponível no momento. Tente novamente em instantes.' });
