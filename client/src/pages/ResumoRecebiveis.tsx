@@ -293,6 +293,26 @@ const AJUDA: Record<string, { titulo: string; corpo: any }> = {
       </>
     ),
   },
+  comissaoClienteNovo: {
+    titulo: "Comissão Cliente Novo — diferença até 12%",
+    corpo: (
+      <>
+        <p className="mb-2">
+          Cliente novo conquistado com a regra da campanha ligada (1ª compra de pelo menos R$ 300,
+          pessoa jurídica) rende ao vendedor <strong>12% sobre todas as compras dele por 6 meses</strong>,
+          contados da 1ª compra.
+        </p>
+        <Formula>
+          vendas do cliente novo no mês × (12% − % normal do vendedor)
+        </Formula>
+        <p className="mt-2">
+          A Comissão Mês já paga o % normal sobre essas vendas; esta coluna paga só a diferença, para o
+          total chegar a 12% (Gilmar 8% → +4 pontos; Radilton 4,5% → +7,5). Passe o mouse no valor para
+          ver os clientes. A lista completa fica em Metas de Vendas → Campanha.
+        </p>
+      </>
+    ),
+  },
   descontoTroca: {
     titulo: "Desc. Trocas — já abatido na comissão",
     corpo: (
@@ -482,6 +502,9 @@ interface Colab {
   comissaoBruta?: number | null; comissaoAbatida?: number | null;
   // Troca por vencimento: já sai da comissão, não soma de novo no total.
   descontoTroca?: number | null; descontoTrocaAplicado?: number | null;
+  // Diferença até 12% sobre as vendas dos clientes novos (null = não tem).
+  comissaoClienteNovo?: number | null;
+  clientesNovos?: Array<{ cliente: string; vendas: number; percentual: number; percentualBase: number; valor: number; inicio: string; fim: string }>;
   campanhas: Record<string, number | null>;
   bonus: number | null;
   lancamentos: Array<{ id: string; descricao: string; valor: number; tipo?: string; justificativa?: string }>;
@@ -595,6 +618,7 @@ export default function ResumoRecebiveis() {
       faturamento: somaBase((c) => c.faturamento || 0),
       comissao: soma((c) => c.comissao || 0),
       descontoTroca: soma((c) => c.descontoTroca || 0),
+      comissaoClienteNovo: soma((c) => c.comissaoClienteNovo || 0),
       bonus: soma((c) => c.bonus || 0),
       kmValor: soma((c) => c.kmValor || 0),
       reembolsos: soma((c) => c.reembolsos?.total || 0),
@@ -794,6 +818,7 @@ export default function ResumoRecebiveis() {
                     <Th col="faturamento" ajuda={AJUDA.faturamento}>Faturamento</Th>
                     <Th col="comissao" ajuda={AJUDA.comissao}>Comissão Mês</Th>
                     <Th col="descontoTroca" ajuda={AJUDA.descontoTroca}>Desc. Trocas</Th>
+                    <Th col="comissaoClienteNovo" ajuda={AJUDA.comissaoClienteNovo}>Cliente Novo</Th>
                     {campanhas.map((c) => (
                       <Th key={c.id} col={`camp:${c.id}`} ajuda={ajudaCampanha(c)}>{c.nome}</Th>
                     ))}
@@ -933,6 +958,14 @@ export default function ResumoRecebiveis() {
                           ? <span className="text-red-600">−{brl(c.descontoTroca)}</span>
                           : brl(c.descontoTroca ?? null)}
                       </td>
+                      <td className="px-3 py-2 text-right" data-testid={`cell-cliente-novo-${c.id}`}
+                        title={(c.clientesNovos || []).length
+                          ? (c.clientesNovos || []).map((x) =>
+                              `${x.cliente}: vendas ${brl(x.vendas)} × (${x.percentual}% − ${String(x.percentualBase).replace(".", ",")}%) = ${brl(x.valor)} · até ${String(x.fim || "").split("-").reverse().join("/")}`
+                            ).join("\n")
+                          : "Nenhum cliente novo com a comissão de 12% no mês"}>
+                        {c.comissaoClienteNovo ? <span className="text-emerald-700">{brl(c.comissaoClienteNovo)}</span> : brl(c.comissaoClienteNovo ?? null)}
+                      </td>
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(c.campanhas?.[k.id] ?? null)}</td>
                       ))}
@@ -1019,6 +1052,7 @@ export default function ResumoRecebiveis() {
                       <td className="px-3 py-2 text-right text-red-600">
                         {totaisVis.descontoTroca ? `−${brl(totaisVis.descontoTroca)}` : brl(0)}
                       </td>
+                      <td className="px-3 py-2 text-right">{brl((totaisVis as any).comissaoClienteNovo || 0)}</td>
                       {campanhas.map((k) => (
                         <td key={k.id} className="px-3 py-2 text-right">{brl(totaisVis.campanhas?.[k.id] || 0)}</td>
                       ))}
