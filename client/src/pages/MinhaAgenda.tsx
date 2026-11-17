@@ -47,6 +47,9 @@ const COR_HORA_MARCADA = "#db2777"; // evento com hora marcada fica rosa; ao des
 // Cores por vendedor no modo Clientes (fixas por posicao na lista).
 const CORES_VEND = ["#2a78d6", "#16a34a", "#d03b3b", "#7c3aed", "#eda100", "#0891b2", "#db2777", "#475569", "#65a30d", "#c2410c"];
 type CliRota = { dia: string; id: string; nome: string; cidade: string; bairro: string; periodicidade: string; semana: string | null; virtual: boolean; sellerId: string; sellerNome: string };
+const PERIODICIDADES: Array<[string, string]> = [["semanal", "Semanal"], ["quinzenal", "Quinzenal"], ["mensal", "Mensal"]];
+const SEMANAS_MES: Array<[string, string]> = [["toda", "Toda semana"], ["impar", "Semanas ímpares"], ["par", "Semanas pares"], ["1", "1ª semana"], ["2", "2ª semana"], ["3", "3ª semana"], ["4", "4ª semana"], ["ultima", "Última semana"]];
+const semanaDe = (c: { semana: string | null }) => String(c.semana || "toda").toLowerCase();
 const CORES_SUGERIDAS = ["#2a78d6", "#d03b3b", "#7c3aed", "#eda100", "#16a34a", "#0891b2", "#db2777", "#6b7280"];
 const VIEWS: Array<[string, string]> = [["timeGridDay", "Dia"], ["timeGridWeek", "Semana"], ["dayGridMonth", "Mês"], ["listWeek", "Lista"]];
 
@@ -121,6 +124,9 @@ export default function MinhaAgenda() {
   // vendSel: [] = todos; [NENHUM] = nenhum marcado; senao a lista de ids marcados
   const NENHUM = "__nenhum__";
   const [vendSel, setVendSel] = useState<string[]>([]);
+  // filtros do modo Clientes: valores DESMARCADOS (vazio = mostra tudo)
+  const [perOcultas, setPerOcultas] = useState<Set<string>>(new Set());
+  const [semOcultas, setSemOcultas] = useState<Set<string>>(new Set());
   const [cliSel, setCliSel] = useState<{ c: CliRota; x: number; y: number } | null>(null);
 
   const { data: eventos = [], isLoading } = useQuery<Ev[]>({
@@ -151,13 +157,14 @@ export default function MinhaAgenda() {
   const cliEvents = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return clientes
+      .filter((c) => !perOcultas.has(c.periodicidade) && !semOcultas.has(semanaDe(c)))
       .filter((c) => !q || `${c.nome} ${c.cidade} ${c.bairro} ${c.sellerNome}`.toLowerCase().includes(q))
       .map((c) => ({
         id: `cli:${c.id}:${c.dia}`, title: `${c.virtual ? "☎ " : ""}${c.nome}${ehAdmin ? ` · ${c.sellerNome}` : ""}`, start: c.dia, allDay: true,
         backgroundColor: corVend[c.sellerId] || COR_PADRAO, borderColor: corVend[c.sellerId] || COR_PADRAO, editable: false,
         extendedProps: { cli: c },
       }));
-  }, [clientes, busca, corVend, ehAdmin]);
+  }, [clientes, busca, corVend, ehAdmin, perOcultas, semOcultas]);
   const { data: cores = [] } = useQuery<{ color: string; n: number; name: string | null }[]>({
     queryKey: ["/api/agenda/colors"],
     queryFn: () => apiRequest("GET", "/api/agenda/colors"),
@@ -434,6 +441,29 @@ export default function MinhaAgenda() {
               ) : (
                 <div className="text-xs text-muted-foreground">{clientes.length} visita(s) no período.</div>
               )}
+              {([
+                ["Periodicidade", PERIODICIDADES, perOcultas, setPerOcultas, (c: CliRota) => c.periodicidade, "per"],
+                ["Semana do mês", SEMANAS_MES, semOcultas, setSemOcultas, semanaDe, "sem"],
+              ] as const).map(([titulo, opcoes, ocultas, setOcultas, valor, tid]) => {
+                const conta = (v: string) => clientes.filter((c) => valor(c) === v).length;
+                const visiveis = opcoes.filter(([v]) => conta(v) > 0 || ocultas.has(v));
+                return (
+                  <div key={tid} className="mt-4" data-testid={`agenda-filtro-${tid}`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{titulo}</span>
+                      {ocultas.size > 0 && <button className="text-xs text-blue-600 hover:underline" onClick={() => setOcultas(new Set())}>Marcar todos</button>}
+                    </div>
+                    {visiveis.length === 0 && <div className="text-xs text-muted-foreground">Nenhum cliente no período.</div>}
+                    {visiveis.map(([v, l]) => (
+                      <label key={v} className="flex items-center gap-2 py-1 text-sm cursor-pointer">
+                        <Checkbox checked={!ocultas.has(v)} onCheckedChange={(ck) => setOcultas((s0) => { const n = new Set(s0); if (ck) n.delete(v); else n.add(v); return n; })} />
+                        <span className="flex-1 truncate">{l}</span>
+                        <span className="text-xs text-muted-foreground">{conta(v)}</span>
+                      </label>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           ) : (
           <div>
