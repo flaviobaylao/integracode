@@ -2,6 +2,7 @@ import { useActiveSellers, MultiSelect, multiMatch, exportToExcel, ExportExcelBu
 import { hojeBR } from '@shared/tempo';
 import { useState, useEffect, useRef } from 'react';
 import AccountEntriesModal from '@/components/AccountEntriesModal';
+import DreInsumosProducao from '@/components/DreInsumosProducao';
 import { generateMultiCobrancaPdf, type CobrancaData } from '@/lib/cobranca-generator';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearch } from 'wouter';
@@ -3768,6 +3769,8 @@ function DRETab() {
       })() : (
         <div className="text-center text-muted-foreground py-8">Nenhum dado disponível para o período</div>
       )}
+      {/* Rodape: insumos consumidos nas ordens de producao, mes a mes */}
+      {!isLoading && <DreInsumosProducao year={year} />}
       {drill && <AccountEntriesModal drill={drill} onClose={() => setDrill(null)} />}
     </div>
   );
