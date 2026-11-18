@@ -16,6 +16,7 @@ import { db, pool } from './db';
 import { sql } from 'drizzle-orm';
 import { handlerDebitosVencidosPorCliente } from './overdue-debts-por-cliente';
 import { calcularInsumosMensal } from './contabilidade-insumos';
+import { deltaDe as riDeltaDe, classificar as riClassificar, diaBR as riDiaBR, dataHoraBR as riDataHoraBR, type MovRow as RiMovRow } from './relatorio-insumos';
 
 // ============================================================================
 // FILTRO POR PERIODO (dia-calendario) - vencimento / emissao
@@ -4418,6 +4419,121 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
     }
     return __contasFinDre;
   }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // RODAPE DA DRE — insumos consumidos nas ORDENS DE PRODUCAO, mes a mes
+  // (Flavio, 18/nov/2026). Quantifica, por OP, todos os insumos usados no mes e
+  // totaliza o valor por Materia-prima e Embalagens.
+  //
+  // Fonte: raw_material_movements ligados a uma OP (production_order_id), com a
+  // MESMA regra do Relatorio PRD/PP/INSUMO (relatorio-insumos.ts): consumo em OP
+  // (saida_producao) + perda na OP; estornados ficam de fora; o mes e o dia de
+  // Brasilia do movimento; o valor usa o custo gravado no movimento ou, sem ele,
+  // o custo atual do insumo. Materia-prima = polpa/concentrado/fruta; Embalagens =
+  // garrafa/tampa/rotulo; o resto aparece em "Outros insumos".
+  // ════════════════════════════════════════════════════════════════════════
+  app.get('/api/financial/dre-insumos-op', authenticateUser, isFinancialAuthorized, async (req, res) => {
+    try {
+      const year = parseInt(String(req.query.year || '')) || new Date().getFullYear();
+      const norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const grupoDe = (cat: any): 'mp' | 'emb' | 'outros' => {
+        const c = norm(cat);
+        if (/polpa|concentrad|fruta/.test(c)) return 'mp';
+        if (/garrafa|tampa|rotulo/.test(c)) return 'emb';
+        return 'outros';
+      };
+      const r2 = (v: number) => Math.round(v * 100) / 100;
+      const r3 = (v: number) => Math.round(v * 1000) / 1000;
+      const num = (v: any) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+
+      const mr: any = await db.execute(sql`SELECT id, name, code, category, unit, unit_cost FROM raw_materials`);
+      const mats = new Map<string, any>();
+      for (const m of ((mr as any).rows || [])) mats.set(String(m.id), m);
+
+      // Folga de um dia nas pontas: o corte fino e feito pelo dia de Brasilia.
+      const mv: any = await db.execute(sql`
+        SELECT m.id, m.raw_material_id, m.movement_type, m.quantity, m.previous_quantity, m.new_quantity,
+               m.production_order_id, m.notes, m.unit_cost,
+               EXTRACT(EPOCH FROM m.created_at)::float8 AS epoch,
+               po.order_number, po.product_name AS op_product_name, po.lot_number AS op_lot_number,
+               po.status AS op_status, po.quantity AS op_quantity, po.production_date AS op_production_date
+        FROM raw_material_movements m
+        LEFT JOIN production_orders po ON po.id = m.production_order_id
+        WHERE m.production_order_id IS NOT NULL
+          AND m.created_at >= ${`${year - 1}-12-31 00:00:00`}::timestamp
+          AND m.created_at <  ${`${year + 1}-01-02 00:00:00`}::timestamp`);
+
+      type Item = { id: string; nome: string; codigo: string; unidade: string; grupo: string; qtd: number[]; valor: number[] };
+      const itens = new Map<string, Item>();
+      const ops = new Map<string, any>();
+      for (const m of ((mv as any).rows || []) as RiMovRow[]) {
+        const dia = riDiaBR(num(m.epoch));
+        if (dia.slice(0, 4) !== String(year)) continue;
+        const col = riClassificar(m);
+        if (col !== 'consumoOP' && col !== 'perdas') continue;
+        const mi = Number(dia.slice(5, 7)) - 1;
+        const mat = mats.get(String(m.raw_material_id));
+        const q = Math.abs(riDeltaDe(m));
+        if (!q) continue;
+        const custo = num(m.unit_cost ?? mat?.unit_cost);
+        const valor = q * custo;
+        const grupo = grupoDe(mat?.category);
+        const k = String(m.raw_material_id);
+        let it = itens.get(k);
+        if (!it) {
+          it = { id: k, nome: mat?.name || '(insumo excluido)', codigo: mat?.code || '', unidade: mat?.unit || '', grupo,
+            qtd: new Array(12).fill(0), valor: new Array(12).fill(0) };
+          itens.set(k, it);
+        }
+        it.qtd[mi] += q; it.valor[mi] += valor;
+
+        const ok = String(m.production_order_id);
+        let op = ops.get(ok);
+        if (!op) {
+          op = { id: ok, op: m.order_number || '(OP excluida)', produto: m.op_product_name || '', lote: m.op_lot_number || '',
+            status: m.op_status || '', quantidade: num(m.op_quantity),
+            dataProducao: m.op_production_date ? String(m.op_production_date).slice(0, 10) : '',
+            mes: mi + 1, primeiro: num(m.epoch), mp: 0, emb: 0, outros: 0, total: 0, insumos: new Map<string, any>() };
+          ops.set(ok, op);
+        }
+        // A OP fica no mes do PRIMEIRO consumo dela.
+        if (num(m.epoch) < op.primeiro) { op.primeiro = num(m.epoch); op.mes = mi + 1; }
+        op[grupo] += valor; op.total += valor;
+        const chave = k + '|' + col;
+        let oi = op.insumos.get(chave);
+        if (!oi) { oi = { material: it.nome, unidade: it.unidade, grupo, perda: col === 'perdas', quantidade: 0, custoUnit: custo, valor: 0 }; op.insumos.set(chave, oi); }
+        oi.quantidade += q; oi.valor += valor;
+      }
+
+      const nomes: Record<string, string> = { mp: 'Matéria-prima', emb: 'Embalagens', outros: 'Outros insumos' };
+      const grupos = (['mp', 'emb', 'outros'] as const).map((g) => {
+        const lista = Array.from(itens.values()).filter((i) => i.grupo === g)
+          .map((i) => ({ ...i, qtd: i.qtd.map(r3), valor: i.valor.map(r2),
+            qtdTotal: r3(i.qtd.reduce((s, v) => s + v, 0)), valorTotal: r2(i.valor.reduce((s, v) => s + v, 0)) }))
+          .sort((a, b) => b.valorTotal - a.valorTotal || a.nome.localeCompare(b.nome));
+        const valor = new Array(12).fill(0);
+        for (const i of lista) for (let k = 0; k < 12; k++) valor[k] += i.valor[k];
+        return { key: g, nome: nomes[g], itens: lista, valor: valor.map(r2), total: r2(valor.reduce((s, v) => s + v, 0)) };
+      }).filter((g) => g.itens.length > 0 || g.key !== 'outros');
+
+      const total = new Array(12).fill(0);
+      for (const g of grupos) for (let k = 0; k < 12; k++) total[k] += g.valor[k];
+      const listaOps = Array.from(ops.values()).map((o: any) => ({
+        id: o.id, op: o.op, produto: o.produto, lote: o.lote, status: o.status, quantidade: o.quantidade,
+        dataProducao: o.dataProducao, mes: o.mes, primeiro: riDataHoraBR(o.primeiro),
+        mp: r2(o.mp), emb: r2(o.emb), outros: r2(o.outros), total: r2(o.total),
+        insumos: Array.from(o.insumos.values())
+          .map((i: any) => ({ ...i, quantidade: r3(i.quantidade), valor: r2(i.valor) }))
+          .sort((a: any, b: any) => String(a.grupo).localeCompare(String(b.grupo)) || b.valor - a.valor),
+      })).sort((a, b) => a.mes - b.mes || String(a.primeiro).localeCompare(String(b.primeiro)));
+      const opsPorMes = new Array(12).fill(0);
+      for (const o of listaOps) opsPorMes[o.mes - 1]++;
+
+      res.json({ year, grupos, total: total.map(r2), totalAno: r2(total.reduce((s, v) => s + v, 0)), opsPorMes, ops: listaOps });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
 
   app.get('/api/financial/dre', authenticateUser, isFinancialAuthorized, async (req, res) => {
     try {
