@@ -5958,7 +5958,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           pipelineInstanceBySeller.set(_sid, _m);
         }
       }
-      const _sellerKeys = (u: any) => new Set([String(u.id), String(u.omieVendorCode || ''), 'omie-vendor-' + String(u.omieVendorCode || '')]);
+      // Chaves do vendedor: id e, SÓ quando existe, o código do Omie. Sem o filtro, quem não tem
+      // código (cadastrado direto no Integra) ganhava as chaves '' e 'omie-vendor-' e herdava toda
+      // nota de pedido SEM vendedor (ex.: NF 108717 do hotsite, R$ 136, caiu em João Pedro,
+      // Letícia, Radilton e Jhonatan ao mesmo tempo). Corrigido em 18/11/2026.
+      const _sellerKeys = (u: any) => {
+        const code = String(u.omieVendorCode || '').trim();
+        return new Set([String(u.id), ...(code ? [code, 'omie-vendor-' + code] : [])].filter((k) => k && k !== 'null' && k !== 'undefined'));
+      };
       const pipelineRevenueForSeller = (u: any): number => {
         const keys = _sellerKeys(u); let t = 0;
         for (const [k, v] of pipelineRevenueBySeller) { if (keys.has(k)) t += v; }
