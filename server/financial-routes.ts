@@ -15,6 +15,7 @@ import { webhookTokenGuard } from './webhook-security';
 import { db, pool } from './db';
 import { sql } from 'drizzle-orm';
 import { handlerDebitosVencidosPorCliente } from './overdue-debts-por-cliente';
+import { calcularInsumosMensal } from './contabilidade-insumos';
 
 // ============================================================================
 // FILTRO POR PERIODO (dia-calendario) - vencimento / emissao
@@ -4594,6 +4595,68 @@ FROM receivables WHERE deleted_at IS NULL GROUP BY status ORDER BY 2 DESC</texta
           if (idx >= 0) lines[idx] = line; else lines.push(line);
         }
       } catch (e: any) { console.warn('[DRE] linha de multa/juros falhou:', String(e?.message || e).slice(0, 160)); }
+
+      // ESTOQUE DE INSUMOS NO CPV (Flavio, 18/nov/2026). O CPV de Materia-prima e o de
+      // Embalagens passam a ser ESTOQUE INICIAL + COMPRAS - ESTOQUE FINAL. As compras
+      // continuam vindo das contas a pagar (linhas das contas do plano); o estoque vem
+      // da serie mensal ESTIMADA de insumos (calcularInsumosMensal, em
+      // contabilidade-insumos.ts), valorizada pelo custo unitario cadastrado.
+      // Materia-prima = polpa, concentrado e fruta; Embalagens = garrafa, tampa e
+      // rotulo; a categoria 'outros' fica de fora (decisao do Flavio).
+      //
+      // Como o inicial de cada mes e o final do mes anterior, a soma dos meses fecha
+      // no ano: CPV do ano = inicial de janeiro + compras - final do ultimo mes.
+      // So vale para o ANO CORRENTE: a serie e ancorada no saldo de HOJE, entao para
+      // anos fechados ela nao representa o estoque daquela epoca.
+      try {
+        if (year === new Date().getFullYear()) {
+          const calc: any = await calcularInsumosMensal(year, instanceId ? [instanceId] : []);
+          if (!calc.vazio && calc.meses.length) {
+            const norm = (s: any) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+            const tipoDe = (cat: any): 'mp' | 'emb' | null => {
+              const c = norm(cat);
+              if (/polpa|concentrad|fruta/.test(c)) return 'mp';
+              if (/garrafa|tampa|rotulo/.test(c)) return 'emb';
+              return null;
+            };
+            const serie: Record<'mp' | 'emb', { ei: number[]; ef: number[] }> = {
+              mp: { ei: new Array(12).fill(0), ef: new Array(12).fill(0) },
+              emb: { ei: new Array(12).fill(0), ef: new Array(12).fill(0) },
+            };
+            for (const l of calc.linhas) {
+              const t = tipoDe(l.categoria);
+              const custo = Number(l.custoUnitario || 0);
+              if (!t || !(custo > 0)) continue;
+              calc.meses.forEach((mesStr: string, k: number) => {
+                const mi = Number(String(mesStr).slice(5, 7)) - 1;
+                if (mi < 0 || mi > 11) return;
+                serie[t].ei[mi] += Number(l.abertura[k] || 0) * custo;
+                serie[t].ef[mi] += Number(l.fechamento[k] || 0) * custo;
+              });
+            }
+            const ultimo = Number(String(calc.meses[calc.meses.length - 1]).slice(5, 7)) - 1;
+            const r2 = (v: number) => Math.round(v * 100) / 100;
+            const cpvAccs = chartAccounts.filter((a: any) => a.dreGroup === 'cpv');
+            for (const t of ['mp', 'emb'] as const) {
+              const ei = serie[t].ei.map(r2);
+              const ef = serie[t].ef.map(r2);
+              if (!ei.some((v) => v) && !ef.some((v) => v)) continue;
+              const nome = t === 'mp' ? 'Matéria-prima' : 'Embalagens';
+              const re = t === 'mp' ? /mat[eé]ria/i : /embalag/i;
+              const acc: any = cpvAccs.find((a: any) => re.test(String(a.name || '')));
+              const base = acc ? String(acc.code) : 'zz';
+              const novas = [
+                { code: base + '.EI', name: `(+) Estoque inicial ${nome} (estimado)`, dreGroup: 'cpv', type: 'despesa', isHeader: false,
+                  monthly: ei, total: ei[0], accountId: null, estoque: 'inicial', insumo: t, estimado: true },
+                { code: base + '.EF', name: `(-) Estoque final ${nome} (estimado)`, dreGroup: 'cpv', type: 'despesa', isHeader: false,
+                  monthly: ef.map((v) => -v), total: -(ef[ultimo] || 0), accountId: null, estoque: 'final', insumo: t, estimado: true },
+              ];
+              const idx = acc ? lines.findIndex((l: any) => l.accountId === acc.id) : -1;
+              if (idx >= 0) lines.splice(idx + 1, 0, ...novas); else lines.push(...novas);
+            }
+          }
+        }
+      } catch (e: any) { console.warn('[DRE] estoque de insumos falhou:', String(e?.message || e).slice(0, 160)); }
 
       const unclassifiedRecMonthly = new Array(12).fill(0);
       for (const r of receivables) {
