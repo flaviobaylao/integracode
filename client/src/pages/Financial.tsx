@@ -3694,9 +3694,16 @@ function DRETab() {
                 {renderRow('', new Array(12).fill(0), 0, 0, 'separator')}
 
                 {renderRow('(-) CPV', [], 0, 0, 'header')}
-                {getGroupLines('cpv').map((l: any) =>
-                  renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction', { accountId: l.accountId })
-                )}
+                {getGroupLines('cpv').map((l: any) => {
+                  // Estoque inicial/final dos insumos (estimado): soma no CPV, mas aparece com o
+                  // sinal no nome e o valor positivo. Nao abre lancamentos.
+                  if (l.estoque) {
+                    const sinal = l.estoque === 'final' ? -1 : 1;
+                    const mostra = l.monthly.map((v: number) => v * sinal);
+                    return renderRow(l.name, mostra, l.total * sinal, computeAV(l.total * sinal, rl), 'indicator');
+                  }
+                  return renderRow(l.name, l.monthly, l.total, computeAV(l.total, rl), 'deduction', { accountId: l.accountId });
+                })}
                 {renderRow('CPV Total', c.cpvTotal.monthly, c.cpvTotal.total, computeAV(c.cpvTotal.total, rl), 'total', { group: 'cpv' })}
                 {renderRow('Lucro Bruto', c.lucroBruto.monthly, c.lucroBruto.total, computeAV(c.lucroBruto.total, rl), 'highlight')}
 
