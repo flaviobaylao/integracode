@@ -224,117 +224,11 @@ export function registerContabilidadeInsumos(app: Express) {
         return res.status(400).json({ error: "Ano invalido." });
       }
       const instancias = listaDeIds(req.query.instancias);
-      const hoje = new Date();
-      const ateMes = hoje.getFullYear() === ano ? hoje.getMonth() + 1 : 12;
-
-      const equivalentes: string[] = [];
-      for (const i of instancias) {
-        const eq = await equivalentesInstancia(i);
-        if (eq) equivalentes.push(...eq);
-      }
-      const filtro = equivalentes.length
-        ? sql`AND (m.instance_id = ANY(${arraySql(equivalentes)})
-                   OR UPPER(TRIM(COALESCE(m.instance_name, ''))) = ANY(${arraySql(equivalentes.map((e) => e.toUpperCase()))}))`
-        : sql``;
-
-      const rMat: any = await db.execute(sql`
-        SELECT m.id, m.name, m.code, m.category, m.unit, m.quantity, m.unit_cost,
-               m.instance_id, m.instance_name, oi.display_name AS instancia
-          FROM raw_materials m
-          LEFT JOIN omie_instances oi ON oi.id = m.instance_id
-         WHERE COALESCE(m.is_active, true) = true ${filtro}
-         ORDER BY m.name`);
-      const materiais = rMat.rows || rMat;
-      if (!materiais.length) {
+      const calc = await calcularInsumosMensal(ano, instancias);
+      if (calc.vazio) {
         return res.json({ ano, meses: [], linhas: [], totais: null, avisos: ["Nenhum insumo cadastrado para esta instancia."] });
       }
-
-      // Consumo de cada mes, pela ficha tecnica das vendas daquele mes.
-      // UMA consulta para o ano inteiro, agrupada por mes. A 1a versao chamava
-      // consumoPelasVendas() doze vezes em sequencia e a rota passava dos 45s —
-      // o navegador desistia antes da resposta.
-      const meses: string[] = [];
-      for (let k = 1; k <= ateMes; k++) meses.push(`${ano}-${String(k).padStart(2, "0")}`);
-      const consumoMes = await consumoPelasVendasPorMes(ano, ateMes, instancias);
-
-      const N = meses.length;
-      const linhas = materiais.map((mat: any) => {
-        const id = String(mat.id);
-        const c = consumoMes.map((mm) => mm.get(id) || 0);
-        const saldoHoje = n(mat.quantity);
-
-        const positivos = c.filter((x) => x > EPS);
-        const mediaConsumo = positivos.length ? positivos.reduce((a, b) => a + b, 0) / positivos.length : 0;
-        const cobertura = mediaConsumo > EPS ? saldoHoje / mediaConsumo : 0;
-
-        // Alvo de fechamento: cobrir o consumo do mes seguinte. O ultimo mes fecha
-        // no saldo real de hoje, que e o ancoradouro de toda a serie.
-        const alvo = new Array(N).fill(0);
-        for (let m = 0; m < N - 1; m++) alvo[m] = cobertura * c[m + 1];
-        alvo[N - 1] = saldoHoje;
-        // Trava 1: o mes abre com o suficiente para a propria producao. Como a
-        // abertura E, por aritmetica, o fechamento do mes anterior, a exigencia recai
-        // sobre o mes ANTERIOR — ele fecha com pelo menos o consumo do mes seguinte.
-        // Levantar a abertura direto faria estoque surgir do nada; assim a diferenca
-        // vira COMPRA no mes anterior, que e o que de fato aconteceu.
-        for (let m = 1; m < N; m++) alvo[m - 1] = Math.max(alvo[m - 1], c[m]);
-
-        const abertura = new Array(N).fill(0);
-        const fechamento = new Array(N).fill(0);
-        const compras = new Array(N).fill(0);
-        abertura[0] = Math.max(c[0], cobertura * c[0]);
-        for (let m = 0; m < N; m++) {
-          compras[m] = Math.max(0, alvo[m] - (abertura[m] - c[m])); // trava 2
-          fechamento[m] = abertura[m] - c[m] + compras[m];
-          if (m + 1 < N) abertura[m + 1] = fechamento[m];           // encadeamento
-        }
-        const residuo = Math.max(0, fechamento[N - 1] - saldoHoje); // trava 3
-        if (residuo > EPS) fechamento[N - 1] = saldoHoje;
-
-        const custo = n(mat.unit_cost);
-        const r2 = (v: number) => Number(v.toFixed(3));
-        return {
-          insumoId: id,
-          codigo: mat.code || null,
-          produto: mat.name,
-          categoria: mat.category || null,
-          unidade: mat.unit || "UN",
-          instancia: mat.instancia || mat.instance_name || "—",
-          cobertura: Number(cobertura.toFixed(2)),
-          // Duas coisas diferentes que a cobertura zero confundia (bug pego em
-          // producao, 18/set): "nao entra em receita nenhuma" e "entra, mas o
-          // estoque esta zerado hoje". A polpa de maracuja e do segundo tipo —
-          // 14 t consumidas no ano, saldo zero — e o aviso a acusava de nao ter
-          // ficha tecnica. Agora cada condicao tem seu proprio campo.
-          entraEmReceita: mediaConsumo > EPS,
-          semEstoqueHoje: saldoHoje <= EPS,
-          consumo: c.map(r2),
-          abertura: abertura.map(r2),
-          compras: compras.map(r2),
-          fechamento: fechamento.map(r2),
-          residuo: residuo > EPS ? r2(residuo) : 0,
-          custoUnitario: custo > 0 ? custo : null,
-          valorFechamento: custo > 0 ? fechamento.map((v) => Number((v * custo).toFixed(2))) : null,
-          saldoHoje: r2(saldoHoje),
-          estimado: true,
-        };
-      });
-
-      const zeros = () => new Array(N).fill(0);
-      const totais = {
-        consumo: zeros(), abertura: zeros(), compras: zeros(), fechamento: zeros(), valorFechamento: zeros(),
-        itens: linhas.length,
-      };
-      for (const l of linhas) {
-        for (let m = 0; m < N; m++) {
-          totais.consumo[m] += l.consumo[m]; totais.abertura[m] += l.abertura[m];
-          totais.compras[m] += l.compras[m]; totais.fechamento[m] += l.fechamento[m];
-          totais.valorFechamento[m] += l.valorFechamento ? l.valorFechamento[m] : 0;
-        }
-      }
-      for (const k of ["consumo", "abertura", "compras", "fechamento", "valorFechamento"] as const) {
-        (totais as any)[k] = (totais as any)[k].map((v: number) => Number(v.toFixed(2)));
-      }
+      const { meses, linhas, totais } = calc;
 
       const avisos: string[] = [
         "Estoque mensal ESTIMADO, nao lancado: o livro de movimentos de insumo nao cobre o periodo. Premissa: a empresa mantem ao longo do ano a mesma cobertura (em meses de producao) que o estoque tem hoje. A serie fecha no saldo atual, nunca fica negativa, e cada mes abre com o suficiente para a producao vendida naquele mes.",
@@ -499,4 +393,125 @@ async function consumoPelasVendasPorMes(
     console.warn("[CONTABIL/INSUMOS] consumo por mes:", e?.message);
   }
   return out;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Serie mensal ESTIMADA de insumos de um ano (abertura, consumo, compras e
+// fechamento por insumo). Extraida da rota insumos-mensal para a DRE usar a mesma
+// conta no CPV (estoque inicial + compras - estoque final). A rota so acrescenta
+// os avisos por cima do resultado.
+// ───────────────────────────────────────────────────────────────────────────
+export async function calcularInsumosMensal(ano: number, instancias: string[]) {
+  const hoje = new Date();
+  const ateMes = hoje.getFullYear() === ano ? hoje.getMonth() + 1 : 12;
+
+  const equivalentes: string[] = [];
+  for (const i of instancias) {
+    const eq = await equivalentesInstancia(i);
+    if (eq) equivalentes.push(...eq);
+  }
+  const filtro = equivalentes.length
+    ? sql`AND (m.instance_id = ANY(${arraySql(equivalentes)})
+               OR UPPER(TRIM(COALESCE(m.instance_name, ''))) = ANY(${arraySql(equivalentes.map((e) => e.toUpperCase()))}))`
+    : sql``;
+
+  const rMat: any = await db.execute(sql`
+    SELECT m.id, m.name, m.code, m.category, m.unit, m.quantity, m.unit_cost,
+           m.instance_id, m.instance_name, oi.display_name AS instancia
+      FROM raw_materials m
+      LEFT JOIN omie_instances oi ON oi.id = m.instance_id
+     WHERE COALESCE(m.is_active, true) = true ${filtro}
+     ORDER BY m.name`);
+  const materiais = rMat.rows || rMat;
+  if (!materiais.length) {
+    return { ano, meses: [] as string[], linhas: [] as any[], totais: null as any, vazio: true };
+  }
+
+  // Consumo de cada mes, pela ficha tecnica das vendas daquele mes.
+  // UMA consulta para o ano inteiro, agrupada por mes. A 1a versao chamava
+  // consumoPelasVendas() doze vezes em sequencia e a rota passava dos 45s —
+  // o navegador desistia antes da resposta.
+  const meses: string[] = [];
+  for (let k = 1; k <= ateMes; k++) meses.push(`${ano}-${String(k).padStart(2, "0")}`);
+  const consumoMes = await consumoPelasVendasPorMes(ano, ateMes, instancias);
+
+  const N = meses.length;
+  const linhas = materiais.map((mat: any) => {
+    const id = String(mat.id);
+    const c = consumoMes.map((mm) => mm.get(id) || 0);
+    const saldoHoje = n(mat.quantity);
+
+    const positivos = c.filter((x) => x > EPS);
+    const mediaConsumo = positivos.length ? positivos.reduce((a, b) => a + b, 0) / positivos.length : 0;
+    const cobertura = mediaConsumo > EPS ? saldoHoje / mediaConsumo : 0;
+
+    // Alvo de fechamento: cobrir o consumo do mes seguinte. O ultimo mes fecha
+    // no saldo real de hoje, que e o ancoradouro de toda a serie.
+    const alvo = new Array(N).fill(0);
+    for (let m = 0; m < N - 1; m++) alvo[m] = cobertura * c[m + 1];
+    alvo[N - 1] = saldoHoje;
+    // Trava 1: o mes abre com o suficiente para a propria producao. Como a
+    // abertura E, por aritmetica, o fechamento do mes anterior, a exigencia recai
+    // sobre o mes ANTERIOR — ele fecha com pelo menos o consumo do mes seguinte.
+    // Levantar a abertura direto faria estoque surgir do nada; assim a diferenca
+    // vira COMPRA no mes anterior, que e o que de fato aconteceu.
+    for (let m = 1; m < N; m++) alvo[m - 1] = Math.max(alvo[m - 1], c[m]);
+
+    const abertura = new Array(N).fill(0);
+    const fechamento = new Array(N).fill(0);
+    const compras = new Array(N).fill(0);
+    abertura[0] = Math.max(c[0], cobertura * c[0]);
+    for (let m = 0; m < N; m++) {
+      compras[m] = Math.max(0, alvo[m] - (abertura[m] - c[m])); // trava 2
+      fechamento[m] = abertura[m] - c[m] + compras[m];
+      if (m + 1 < N) abertura[m + 1] = fechamento[m];           // encadeamento
+    }
+    const residuo = Math.max(0, fechamento[N - 1] - saldoHoje); // trava 3
+    if (residuo > EPS) fechamento[N - 1] = saldoHoje;
+
+    const custo = n(mat.unit_cost);
+    const r2 = (v: number) => Number(v.toFixed(3));
+    return {
+      insumoId: id,
+      codigo: mat.code || null,
+      produto: mat.name,
+      categoria: mat.category || null,
+      unidade: mat.unit || "UN",
+      instancia: mat.instancia || mat.instance_name || "—",
+      cobertura: Number(cobertura.toFixed(2)),
+      // Duas coisas diferentes que a cobertura zero confundia (bug pego em
+      // producao, 18/set): "nao entra em receita nenhuma" e "entra, mas o
+      // estoque esta zerado hoje". A polpa de maracuja e do segundo tipo —
+      // 14 t consumidas no ano, saldo zero — e o aviso a acusava de nao ter
+      // ficha tecnica. Agora cada condicao tem seu proprio campo.
+      entraEmReceita: mediaConsumo > EPS,
+      semEstoqueHoje: saldoHoje <= EPS,
+      consumo: c.map(r2),
+      abertura: abertura.map(r2),
+      compras: compras.map(r2),
+      fechamento: fechamento.map(r2),
+      residuo: residuo > EPS ? r2(residuo) : 0,
+      custoUnitario: custo > 0 ? custo : null,
+      valorFechamento: custo > 0 ? fechamento.map((v) => Number((v * custo).toFixed(2))) : null,
+      saldoHoje: r2(saldoHoje),
+      estimado: true,
+    };
+  });
+
+  const zeros = () => new Array(N).fill(0);
+  const totais = {
+    consumo: zeros(), abertura: zeros(), compras: zeros(), fechamento: zeros(), valorFechamento: zeros(),
+    itens: linhas.length,
+  };
+  for (const l of linhas) {
+    for (let m = 0; m < N; m++) {
+      totais.consumo[m] += l.consumo[m]; totais.abertura[m] += l.abertura[m];
+      totais.compras[m] += l.compras[m]; totais.fechamento[m] += l.fechamento[m];
+      totais.valorFechamento[m] += l.valorFechamento ? l.valorFechamento[m] : 0;
+    }
+  }
+  for (const k of ["consumo", "abertura", "compras", "fechamento", "valorFechamento"] as const) {
+    (totais as any)[k] = (totais as any)[k].map((v: number) => Number(v.toFixed(2)));
+  }
+  return { ano, meses, linhas, totais, vazio: false };
 }
