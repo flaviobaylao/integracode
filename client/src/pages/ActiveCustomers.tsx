@@ -389,6 +389,10 @@ export default function ActiveCustomers() {
   const [bulkSemana, setBulkSemana] = useState("");
   const [bulkHolidayRule, setBulkHolidayRule] = useState("");
   const [bulkGeocode, setBulkGeocode] = useState(false);
+  // 📞 Flags do telefone em massa (SOMENTE ADMIN — nov/2026).
+  const [bulkNotif, setBulkNotif] = useState(""); // "", "bloquear", "liberar"
+  const [bulkNotifMotivo, setBulkNotifMotivo] = useState("");
+  const [bulkDispensa, setBulkDispensa] = useState(""); // "", "dispensar", "remover"
   const SEMANA_OPCOES: [string, string][] = [["toda","Toda semana"],["impar","1ª e 3ª do mês"],["par","2ª e 4ª do mês"],["1","1ª do mês"],["2","2ª do mês"],["3","3ª do mês"],["4","4ª do mês"],["ultima","Última do mês"]];
   const { toast } = useToast();
   const { pedirMotivo, MotivoModal } = useMotivoInativacao();
@@ -1067,15 +1071,31 @@ export default function ActiveCustomers() {
         const gj = (g ?? {});
         geocodeCount = gj.candidates ?? ids.length;
       }
-      return { updated, agendaRegen, geocoded: bulkGeocode, geocodeCount, hadFields: Object.keys(fields).length > 0 };
+      // Flags do telefone (só admin): notificações e dispensa de confirmação.
+      let flags: any = null;
+      if (isStrictAdmin && ids.length > 0 && (bulkNotif || bulkDispensa)) {
+        flags = await apiRequest('POST', '/api/admin/customers/bulk-flags-telefone', {
+          ids,
+          ...(bulkNotif ? { notificacoes: bulkNotif, motivo: bulkNotifMotivo } : {}),
+          ...(bulkDispensa ? { dispensaConfirmacao: bulkDispensa } : {}),
+        });
+      }
+      return { updated, agendaRegen, geocoded: bulkGeocode, geocodeCount, hadFields: Object.keys(fields).length > 0, flags };
     },
     onSuccess: (res: any) => {
       const parts: string[] = [];
       if (res.hadFields) parts.push(`${res.updated ?? 0} de ${selectedCustomerIds.size} cliente(s) alterado(s)`);
       if (res.agendaRegen > 0) parts.push(`agenda de ${res.agendaRegen} cliente(s) regenerada a partir da nova Data de Início`);
       if (res.geocoded) parts.push(`coordenadas de ${res.geocodeCount} cliente(s) sendo buscadas em segundo plano`);
+      if (res.flags) {
+        if (bulkNotif) parts.push(`notificações ${bulkNotif === 'bloquear' ? 'bloqueadas' : 'liberadas'} em ${res.flags.notificacoes ?? 0} cliente(s)`);
+        if (bulkDispensa) parts.push(`confirmação ${bulkDispensa === 'dispensar' ? 'dispensada' : 'voltou a ser exigida'} em ${res.flags.dispensas ?? 0} cliente(s)`);
+        if (res.flags.semTelefone) parts.push(`${res.flags.semTelefone} sem telefone válido (dispensa não aplicada)`);
+        queryClient.invalidateQueries({ queryKey: ['/api/notificacoes-bloqueadas'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/customers/phone-verification-status'] });
+      }
       toast({ title: "Concluído", description: parts.join(' · ') || 'Nada para alterar.' });
-      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkSemana(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType(""); setBulkGeocode(false);
+      setShowBulkModal(false); setSelectedCustomerIds(new Set()); setBulkSeller(""); setBulkPeriodicity(""); setBulkSemana(""); setBulkWeekdays([]); setBulkStartDate(""); setBulkVirtualType(""); setBulkGeocode(false); setBulkNotif(""); setBulkNotifMotivo(""); setBulkDispensa("");
       queryClient.invalidateQueries({ queryKey: ['/api/active-customers'] });
       queryClient.invalidateQueries({ queryKey: ['/api/customers'] });
     },
@@ -2056,11 +2076,41 @@ export default function ActiveCustomers() {
                   </label>
                   <p className="text-[11px] text-gray-400 mt-1">Ao aplicar, busca/recalcula latitude e longitude apenas dos {selectedCustomerIds.size} cliente(s) marcado(s), em segundo plano.</p>
                 </div>
+                {isStrictAdmin && (
+                  <div className="pt-2 border-t space-y-3" data-testid="bulk-flags-telefone">
+                    <div className="text-xs font-semibold text-gray-700">Telefone <span className="font-normal text-gray-400">(somente admin)</span></div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">Confirmação do telefone
+                        <span title="Dispensar: o número atual de cada cliente entra como confirmado, sem o contato precisar clicar no link. Vale para o número atual — se o telefone mudar, volta a exigir. Clientes sem telefone válido são pulados." className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+                      </label>
+                      <select value={bulkDispensa} onChange={(e) => setBulkDispensa(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-dispensa-confirmacao">
+                        <option value="">— não alterar —</option>
+                        <option value="dispensar">Dispensar confirmação deste número</option>
+                        <option value="remover">Voltar a exigir confirmação</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">Notificações
+                        <span title="Bloquear: o número não recebe mensagens automáticas do Integra (campanhas, confirmações, avisos de pedido/entrega, cobranças, recompra, IA proativa). Respostas a conversas iniciadas pelo cliente continuam por 24h. Telefones da equipe não são afetados." className="ml-1 inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold rounded-full border border-current opacity-60 cursor-help align-middle">i</span>
+                      </label>
+                      <select value={bulkNotif} onChange={(e) => setBulkNotif(e.target.value)} className="w-full border rounded px-2 py-1.5" data-testid="bulk-notificacoes">
+                        <option value="">— não alterar —</option>
+                        <option value="bloquear">Não enviar notificações para estes números</option>
+                        <option value="liberar">Voltar a enviar notificações</option>
+                      </select>
+                      {bulkNotif === 'bloquear' && (
+                        <input value={bulkNotifMotivo} onChange={(e) => setBulkNotifMotivo(e.target.value)} maxLength={300}
+                          placeholder="Motivo (ex.: pediram para não receber mensagens)"
+                          className="w-full border rounded px-2 py-1.5 mt-1 text-xs" data-testid="bulk-notificacoes-motivo" />
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="px-5 py-3 border-t flex justify-end gap-2">
                 <button onClick={() => setShowBulkModal(false)} className="px-3 py-1.5 rounded border text-sm">Cancelar</button>
                 <button
-                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkSemana && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkHolidayRule && !bulkGeocode) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
+                  onClick={() => { if (!bulkSeller && !bulkPeriodicity && !bulkSemana && !bulkWeekdays.length && !bulkStartDate && !bulkVirtualType && !bulkHolidayRule && !bulkGeocode && !(isStrictAdmin && (bulkNotif || bulkDispensa))) { toast({ title: 'Nada para alterar', description: 'Preencha ao menos um campo ou marque atualizar coordenadas.', variant: 'destructive' }); return; } if (window.confirm(`Aplicar a ${selectedCustomerIds.size} cliente(s)?`)) bulkUpdateMutation.mutate(); }}
                   disabled={bulkUpdateMutation.isPending}
                   className="px-4 py-1.5 rounded bg-green-600 text-white text-sm font-medium disabled:opacity-50"
                 >{bulkUpdateMutation.isPending ? 'Aplicando…' : 'Aplicar'}</button>
