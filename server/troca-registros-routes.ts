@@ -153,6 +153,11 @@ export async function descontosTrocaPorVendedor(ym: string): Promise<Record<stri
 /** % de comissão do vendedor no mês da NF — mesma regra do Resumo Recebíveis
  *  (fixo, faixa por atingimento, escalonado). Sem configuração: histórico das metas. */
 async function pctComissaoDetalhe(sellerId: string, ano: number, mes: number): Promise<{ pct: number; fonte: string }> {
+  // (19/nov/2026) Distribuidor (ex.: Amorix) nao recebe comissao, logo nao sofre desconto de troca.
+  try {
+    const d: any = await db.execute(sql`SELECT seller_type FROM users WHERE id = ${sellerId} LIMIT 1`);
+    if (String(d.rows?.[0]?.seller_type || "") === "distribuidor") return { pct: 0, fonte: "distribuidor (sem comissão)" };
+  } catch {}
   try {
     const { percentualComissaoDoMes } = await import("./resumo-recebiveis-routes");
     const r = await percentualComissaoDoMes(sellerId, ano, mes);
