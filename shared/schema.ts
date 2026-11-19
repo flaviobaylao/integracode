@@ -192,7 +192,11 @@ export const users = pgTable("users", {
   // Mapeamento de códigos de vendedor por instância Omie: {"instanceId": "vendorCode", ...}
   omieVendorCodes: jsonb("omie_vendor_codes").$type<Record<string, string>>(),
   
-  sellerType: varchar("seller_type").$type<'telemarketing' | 'vendedor_clt' | 'vendedor_pj'>(),
+  // (19/nov/2026) 'distribuidor' = parceiro que revende (ex.: Amorix): e' um vendedor para
+  // fins de carteira/rota/positivacao, mas sem comissao, sem recebiveis e sem desconto de troca.
+  sellerType: varchar("seller_type").$type<'telemarketing' | 'vendedor_clt' | 'vendedor_pj' | 'distribuidor'>(),
+  // Cliente (customers.id) que fatura as compras deste distribuidor — liga o vendedor ao cliente.
+  distribuidorCustomerId: varchar("distribuidor_customer_id"),
   
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -260,6 +264,8 @@ export const customers = pgTable("customers", {
   
   // Cliente Consumidor flag (cliente especial com destaque verde)
   isConsumerClient: boolean("is_consumer_client").notNull().default(false),
+  // (19/nov/2026) Distribuidor (ex.: Amorix): compra pela tabela "Preços Amorix" (products.distributor_price).
+  isDistribuidor: boolean("is_distribuidor").notNull().default(false),
   
   // Data de início do fornecimento - só pode ser alterada por admins
   serviceStartDate: timestamp("service_start_date"),
@@ -384,6 +390,7 @@ export const products = pgTable("products", {
   resaleGoianiaPrice: decimal("resale_goiania_price", { precision: 10, scale: 2 }), // Revenda Goiânia
   resaleInteriorPrice: decimal("resale_interior_price", { precision: 10, scale: 2 }), // Revenda Interior Goiás
   resaleBrasiliaPrice: decimal("resale_brasilia_price", { precision: 10, scale: 2 }), // Revenda Brasília/Entorno
+  distributorPrice: decimal("distributor_price", { precision: 10, scale: 2 }), // Preços Amorix (fornecimento ao distribuidor, 19/nov/2026)
   
   ncm: varchar("ncm"), // Nomenclatura Comum do Mercosul (código fiscal do produto)
   stock: integer("stock").notNull().default(0),
