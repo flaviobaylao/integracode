@@ -980,6 +980,7 @@ run();
   registerDelegationRoutes(app);
   // CHAMADOS (21/out/2026): solicitações internas com numeração, inbox por destino e consulta entre setores. Rotas /api/chamados*.
   try { const { registerChamados } = await import('./chamados-routes'); registerChamados(app); } catch (e: any) { console.error('[chamados]', e?.message || e); }
+  try { const { registerDegustacoes } = await import('./degustacoes-routes'); registerDegustacoes(app); } catch (e: any) { console.error('[degustacoes]', e?.message || e); }
   try { const { registerViagens } = await import('./viagens-routes'); registerViagens(app); } catch (e: any) { console.error('[viagens]', e?.message || e); }
   try { const { registerReembolsos } = await import('./reembolsos-routes'); registerReembolsos(app); } catch (e: any) { console.error('[reembolsos]', e?.message || e); }
   try { const { registerFavoritosPagamento } = await import('./favoritos-pagamento'); registerFavoritosPagamento(app); } catch (e: any) { console.error('[pagamento-favoritos]', e?.message || e); }

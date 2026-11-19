@@ -610,6 +610,8 @@ export function registerChamados(app: Express) {
           recebido_por = coalesce(recebido_por, ${uid}), recebido_em = coalesce(recebido_em, now()), updated_at = now() WHERE id = ${c.id}`);
         await db.execute(sql`UPDATE chamado_consultas SET pendente = false WHERE chamado_id = ${c.id} AND pendente = true`);
         await inserirMsg(c.id, uid, nome, "sistema", null, null, `${nome} finalizou o chamado como solucionado`);
+        // Promoção de Degustação vinculada → concluída (fotos ficam no chamado e aparecem na degustação)
+        try { const { aoFinalizarChamado } = await import("./degustacoes-routes"); await aoFinalizarChamado(String(c.id)); } catch (e: any) { console.warn("[chamados] degustação:", e?.message || e); }
       } else {
         await db.execute(sql`UPDATE chamados SET status = 'respondido', respondido_em = now(),
           recebido_por = coalesce(recebido_por, ${uid}), recebido_em = coalesce(recebido_em, now()), updated_at = now() WHERE id = ${c.id}`);
@@ -639,6 +641,7 @@ export function registerChamados(app: Express) {
         await salvarAnexos(c.id, msgId, uid, files);
       }
       await db.execute(sql`UPDATE chamados SET status = 'reaberto', reaberto_em = now(), updated_at = now() WHERE id = ${c.id}`);
+      try { const { aoReabrirChamado } = await import("./degustacoes-routes"); await aoReabrirChamado(String(c.id)); } catch { /* degustação é opcional */ }
       const dono = vis.destinos.find((x) => x.key === c.destinoKey);
       avisarBg((dono?.userIds || []).filter((x) => x !== uid),
         `🔁 ${nome} reabriu o chamado ${c.codigo}\n${c.assunto}${texto ? `\n"${trecho(texto)}"` : ""}${sufixoAnexos(files.length)}\n\nVer no Integra: ${APP_URL}/chamados?id=${c.id}`);

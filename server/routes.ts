@@ -16997,6 +16997,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         await db.insert(blockedOrders).values([blockedOrderData]);
         console.log(`✅ Pedido bloqueado criado em blocked_orders para card ${id}`);
+        // PROMOÇÃO DE DEGUSTAÇÃO: amostra lançada pela degustação leva as observações dela ao bloqueio
+        if ((operationType || '') === 'amostra') {
+          try { const { aoAmostraBloqueada } = await import('./degustacoes-routes'); await aoAmostraBloqueada(String(id)); } catch (e: any) { console.warn('[FINALIZE-SALE] degustação:', e?.message); }
+        }
         
         return res.json({
           success: true,

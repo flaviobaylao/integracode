@@ -143,6 +143,7 @@ export const PAGE_MAP: Record<string, { label: string; group: string }> = {
   "/tabela-precos": { label: "Tabela de Preços", group: "Clientes" },
   "/precos-grade": { label: "Preços (Grade)", group: "Clientes" },
   "/comodatos": { label: "Contratos de Comodato", group: "Clientes" },
+  "/degustacoes": { label: "Promoção de Degustações", group: "Clientes" },
   "/rota-entrega": { label: "Minhas Entregas", group: "Logística" },
   "/entregas-do-dia": { label: "Entregas do Dia", group: "Logística" },
   "/validacao-rotas": { label: "Validação de Rotas", group: "Logística" },

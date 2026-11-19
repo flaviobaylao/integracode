@@ -444,6 +444,10 @@ export async function insertBlockedOrderIdempotent(
   // 📣 Pedido que nasce bloqueado tambem e ocorrencia: o cliente e avisado agora
   // (pedido_confirmado_debito / pedido_confirmado_analise), sem esperar varredura.
   try { const { dispararAgora } = await import('./pipeline-dispatch'); dispararAgora('pedido bloqueado'); } catch {}
+  // PROMOÇÃO DE DEGUSTAÇÃO: amostra lançada pela degustação leva as observações dela ao bloqueio
+  if (String(salesCard.operationType || '') === 'amostra') {
+    try { const { aoAmostraBloqueada } = await import('./degustacoes-routes'); await aoAmostraBloqueada(String(salesCard.id)); } catch {}
+  }
   return true;
 }
 
