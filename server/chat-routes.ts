@@ -835,6 +835,8 @@ export async function sendUmblerTalkText(toPhone: string, text: string, fromPhon
   let digits = String(toPhone || '').replace(/\D/g, '');
   if (digits && !digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) digits = '55' + digits;
   if (!digits) return { success: false, error: 'Telefone do cliente vazio' };
+  // 🔕 nov/2026: número sem notificações — só passa resposta a conversa (cliente falou nas últimas 24h).
+  try { const { envioTextoBarrado } = await import('./notificacoes-bloqueio'); if (await envioTextoBarrado(digits)) { console.warn('[SEM-NOTIFICACAO] texto barrado para', digits); return { success: false, error: 'notificacoes_bloqueadas' }; } } catch {}
   const cfg = await resolveUmblerTalkConfig();
   if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
   try {
@@ -889,6 +891,8 @@ export async function sendUmblerTalkMedia(toPhone: string, fileUrl: string, capt
   if (digits && !digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) digits = '55' + digits;
   if (!digits) return { success: false, error: 'Telefone do cliente vazio' };
   if (!fileUrl) return { success: false, error: 'URL de midia vazia' };
+  // 🔕 nov/2026: mesma regra do texto.
+  try { const { envioTextoBarrado } = await import('./notificacoes-bloqueio'); if (await envioTextoBarrado(digits)) { console.warn('[SEM-NOTIFICACAO] mídia barrada para', digits); return { success: false, error: 'notificacoes_bloqueadas' }; } } catch {}
   const cfg = await resolveUmblerTalkConfig();
   if ('error' in cfg) return { success: false, error: 'Umbler Talk config: ' + cfg.error };
   try {

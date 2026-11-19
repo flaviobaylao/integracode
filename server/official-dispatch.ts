@@ -146,6 +146,8 @@ export async function sendOfficialText(toPhone: string, text: string): Promise<{
     if (!(await canalAtivoPorTelefone('5562994981841'))) { console.warn('[CANAL-OFF] envio 1841 bloqueado (canal desligado)'); return { success: false, error: 'canal_desligado' }; }
   } catch {}
   if (!process.env.UMBLER_TALK_TOKEN) return { success: false, error: 'token ausente' };
+  // 🔕 nov/2026: número sem notificações — só passa resposta a conversa (cliente falou nas últimas 24h).
+  try { const { envioTextoBarrado } = await import('./notificacoes-bloqueio'); if (await envioTextoBarrado(toPhone)) { console.warn('[SEM-NOTIFICACAO] texto 1841 barrado para', normalizeBrPhone(toPhone)); return { success: false, error: 'notificacoes_bloqueadas' }; } } catch {}
   const contactId = await resolveContactId(toPhone);
   if (!contactId) return { success: false, error: 'contato nao resolvido' };
   const chatId = await resolveChatId(contactId);
@@ -195,6 +197,11 @@ export async function enqueueOfficialDispatch(item: {
       if (n > 0 && n === Number(r.rows?.[0]?.fornecedores || 0)) return 'fornecedor';
     }
   } catch { /* sem conseguir checar, segue o fluxo normal */ }
+  // 🔕 nov/2026: cliente/número marcado pelo admin para NÃO receber notificações.
+  try {
+    const { notificacaoBloqueada } = await import('./notificacoes-bloqueio');
+    if (await notificacaoBloqueada({ customerId: item.customerId || null, phone: item.customerPhone })) return 'sem_notificacao';
+  } catch { /* sem conseguir checar, segue */ }
   const m = await modeFor(item.useCase);
   if (m === 'off') return 'desligado';
   if (!(await useCaseEnabled(item.useCase))) return 'desligado';
@@ -274,6 +281,13 @@ export async function processDispatchQueueTick() {
   // primeiro: quem acompanha o ensaio costuma ser mais de uma pessoa, e um
   // aparelho so nao prova que a mensagem chegou legivel nos dois. Em modo real,
   // um destino: o cliente.
+  // 🔕 nov/2026: marcado DEPOIS de entrar na fila também não recebe.
+  if (m !== 'test') {
+    try {
+      const { notificacaoBloqueada } = await import('./notificacoes-bloqueio');
+      if (await notificacaoBloqueada({ customerId: d.customer_id || null, phone: d.customer_phone })) { await mark(d.id, 'falha', 'notificacoes bloqueadas pelo admin'); return; }
+    } catch {}
+  }
   const alvos = m === 'test' ? testPhones() : [d.customer_phone];
   if (m === 'test' && !alvos.length) { await mark(d.id, 'falha', 'modo test sem INTEGRA_OFICIAL_TEST_PHONES configurada'); return; }
 
