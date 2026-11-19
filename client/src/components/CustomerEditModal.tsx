@@ -452,6 +452,32 @@ export default function CustomerEditModal({
     staleTime: 0,
   });
   const [showPhoneHelp, setShowPhoneHelp] = useState(false);
+  // 🔕 NÃO ENVIAR NOTIFICAÇÕES (nov/2026): flag só de admin; o selo aparece para todos.
+  const notifStatus = useQuery<any>({
+    queryKey: ['/api/customers', customer?.id, 'notificacoes'],
+    queryFn: async () => apiRequest('GET', `/api/customers/${customer?.id}/notificacoes`),
+    enabled: !!customer?.id && isOpen,
+    staleTime: 0,
+  });
+  const [showNotifHelp, setShowNotifHelp] = useState(false);
+  const [notifMotivoAberto, setNotifMotivoAberto] = useState(false);
+  const [notifMotivo, setNotifMotivo] = useState('');
+  const notifMutation = useMutation({
+    mutationFn: async (v: { bloquear: boolean; motivo?: string }) => apiRequest('PUT', `/api/customers/${customer?.id}/notificacoes`, v),
+    onSuccess: (_d: any, v: { bloquear: boolean }) => {
+      notifStatus.refetch();
+      setNotifMotivoAberto(false); setNotifMotivo('');
+      queryClient.invalidateQueries({ queryKey: ['/api/notificacoes-bloqueadas'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/customers', customer?.id, 'change-history'] });
+      toast({
+        title: v.bloquear ? 'Notificações bloqueadas' : 'Notificações liberadas',
+        description: v.bloquear
+          ? 'Este número não recebe mais mensagens automáticas. Respostas a conversas iniciadas pelo cliente continuam.'
+          : 'O número volta a receber as notificações normalmente.',
+      });
+    },
+    onError: (e: any) => toast({ title: 'Não foi possível gravar', description: e?.message || 'Tente novamente.', variant: 'destructive' }),
+  });
   const exemptMutation = useMutation({
     mutationFn: async (exempt: boolean) => apiRequest('POST', `/api/customers/${customer?.id}/phone-exempt`, { exempt }),
     onSuccess: (_d: any, exempt: boolean) => {
@@ -956,6 +982,79 @@ export default function CustomerEditModal({
                         entra como confirmado</strong> e o contato não precisa clicar em nada.
                         A dispensa vale para o número atual: se o telefone for alterado, o novo
                         número volta a precisar de confirmação. Só administradores veem esta opção.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* 🔕 Selo (todos veem) */}
+              {notifStatus.data?.bloqueado === true && (
+                <div
+                  className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 border border-slate-300 bg-slate-100 px-2 py-0.5 rounded-full"
+                  title={`Bloqueado${notifStatus.data?.por ? ' por ' + notifStatus.data.por : ''}${notifStatus.data?.em ? ' em ' + new Date(notifStatus.data.em).toLocaleString('pt-BR') : ''}${notifStatus.data?.motivo ? ' — ' + notifStatus.data.motivo : ''}`}
+                  data-testid="selo-sem-notificacoes"
+                >
+                  🔕 Não recebe notificações
+                </div>
+              )}
+              {/* 🔕 Flag SOMENTE PARA ADMIN: telefone confirmado, mas o cliente não quer notificações. */}
+              {isAdmin && customer?.id && (
+                <div className="mt-2 flex items-start gap-2">
+                  <Checkbox
+                    id="phone-sem-notificacao"
+                    checked={notifStatus.data?.bloqueado === true || notifMotivoAberto}
+                    disabled={notifMutation.isPending || notifStatus.isLoading}
+                    onCheckedChange={(v) => {
+                      if (v === true) setNotifMotivoAberto(true);
+                      else if (notifMotivoAberto && notifStatus.data?.bloqueado !== true) { setNotifMotivoAberto(false); setNotifMotivo(''); }
+                      else notifMutation.mutate({ bloquear: false });
+                    }}
+                    data-testid="checkbox-sem-notificacao"
+                  />
+                  <div className="text-xs leading-snug flex-1">
+                    <label htmlFor="phone-sem-notificacao" className="font-medium cursor-pointer">
+                      Não enviar notificações para este número
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowNotifHelp((v) => !v)}
+                      title="O que essa marcação faz"
+                      aria-label="O que essa marcação faz"
+                      className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full border border-blue-500 text-blue-600 text-[10px] font-bold align-middle"
+                      data-testid="button-sem-notificacao-info"
+                    >
+                      i
+                    </button>
+                    {showNotifHelp && (
+                      <div className="mt-1 p-2 rounded border border-blue-200 bg-blue-50 text-blue-900">
+                        Para cliente com telefone confirmado que <strong>não quer receber notificações</strong>.
+                        Marcado, o número deixa de receber qualquer mensagem automática do Integra pelo WhatsApp
+                        (campanhas, confirmações, avisos de pedido e entrega, cobranças, recompra, IA proativa).
+                        Se o próprio cliente escrever, o atendimento responde normalmente por 24h — responder não é notificar.
+                        Vale para o número: outros cadastros com o mesmo telefone também ficam protegidos
+                        (telefones da equipe não são afetados). Fica registrado no histórico. Só administradores veem esta opção.
+                      </div>
+                    )}
+                    {notifMotivoAberto && notifStatus.data?.bloqueado !== true && (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <Input
+                          value={notifMotivo}
+                          onChange={(e) => setNotifMotivo(e.target.value)}
+                          placeholder="Motivo (ex.: pediu para não receber mensagens)"
+                          maxLength={300}
+                          className="h-8 text-xs flex-1 min-w-[200px]"
+                          data-testid="input-sem-notificacao-motivo"
+                        />
+                        <Button type="button" size="sm" className="h-8" disabled={notifMutation.isPending}
+                          onClick={() => notifMutation.mutate({ bloquear: true, motivo: notifMotivo })}
+                          data-testid="button-sem-notificacao-salvar">
+                          Bloquear notificações
+                        </Button>
+                      </div>
+                    )}
+                    {notifStatus.data?.bloqueado === true && (notifStatus.data?.por || notifStatus.data?.motivo) && (
+                      <div className="mt-0.5 text-muted-foreground">
+                        {notifStatus.data?.por ? `Por ${notifStatus.data.por}` : ''}{notifStatus.data?.em ? ` em ${new Date(notifStatus.data.em).toLocaleDateString('pt-BR')}` : ''}{notifStatus.data?.motivo ? ` — ${notifStatus.data.motivo}` : ''}
                       </div>
                     )}
                   </div>
