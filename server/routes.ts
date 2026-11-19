@@ -2791,6 +2791,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // (19/nov/2026) Clientes marcados como distribuidor — usado na tela Vendedores para
+  // vincular o vendedor do tipo 'distribuidor' ao cliente que fatura as compras dele.
+  app.get('/api/customers/distribuidores', authenticateUser, async (req: any, res) => {
+    try {
+      if (!['admin', 'coordinator', 'administrative'].includes(req.currentUser?.role)) return res.status(403).json({ message: 'Sem permissão' });
+      const rows = await db.execute(sql`SELECT id, name, fantasy_name AS "fantasyName", company_name AS "companyName", cnpj FROM customers WHERE is_distribuidor = true AND is_active = true ORDER BY COALESCE(fantasy_name, name)`);
+      res.json((rows as any).rows ?? rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || 'Erro' });
+    }
+  });
+
   app.get('/api/customers/:id', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
@@ -5853,8 +5865,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const goalSellerIds = goals.map((g: any) => g.sellerId).filter((id: string) => id !== 'TELEMARKETING');
+      // (19/nov/2026) seller_type 'distribuidor' (ex.: Amorix) nao entra em metas de faturamento/comissao.
       const relevantSellers = allUsers.filter(u =>
-        u.isActive && (
+        u.isActive && u.sellerType !== 'distribuidor' && (
           goalSellerIds.includes(u.id) ||
           (u.role === 'vendedor' && u.omieVendorCode) ||
           (u.sellerType && ['vendedor_clt', 'vendedor_pj'].includes(u.sellerType)) ||
