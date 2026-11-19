@@ -142,37 +142,89 @@ export function registerNotificacoesBloqueio(app: Express): void {
   // Marca/desmarca — SOMENTE ADMIN. Body: { bloquear: boolean, motivo?: string }
   app.put("/api/customers/:id/notificacoes", authenticateUser, requireRole(["admin"]), async (req: any, res) => {
     try {
-      await ensureColunasNotificacao();
-      const id = String(req.params.id);
-      const bloquear = req.body?.bloquear === true;
-      const motivo = String(req.body?.motivo || "").replace(/\s+/g, " ").trim().slice(0, 300);
-      const u: any = req.user || {};
-      const quem = [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || "Admin";
-      const atual = rows(await db.execute(sql`SELECT notificacoes_bloqueadas AS b, phone FROM customers WHERE id = ${id} LIMIT 1`))[0];
-      if (!atual) return res.status(404).json({ message: "Cliente não encontrado" });
-      if (bloquear) {
-        await db.execute(sql`UPDATE customers SET notificacoes_bloqueadas = true, notificacoes_bloqueadas_em = now(),
-                               notificacoes_bloqueadas_por = ${quem}, notificacoes_bloqueadas_motivo = ${motivo || null}
-                             WHERE id = ${id}`);
-      } else {
-        await db.execute(sql`UPDATE customers SET notificacoes_bloqueadas = false, notificacoes_bloqueadas_em = now(),
-                               notificacoes_bloqueadas_por = ${quem}, notificacoes_bloqueadas_motivo = NULL
-                             WHERE id = ${id}`);
-      }
-      limparCacheNotificacao();
-      if ((atual.b === true) !== bloquear) {
-        try {
-          await db.execute(sql`
-            INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_user_id, changed_by_name, source)
-            VALUES (${id}, 'notificacoes', 'Notificações do telefone',
-                    ${atual.b === true ? "Bloqueadas" : "Recebe"},
-                    ${bloquear ? `Bloqueadas (${atual.phone || "sem telefone"})${motivo ? " — Motivo: " + motivo : ""}` : "Recebe"},
-                    ${u.id ? String(u.id) : null}, ${quem}, 'admin-notificacoes')`);
-        } catch (e: any) { console.warn("[notificacoes-bloqueio] histórico:", e?.message); }
-      }
-      res.json({ ok: true, bloqueado: bloquear });
+      const r = await aplicarNotificacao(String(req.params.id), req.body?.bloquear === true, req.body?.motivo, req.user || {});
+      if (!r.existe) return res.status(404).json({ message: "Cliente não encontrado" });
+      res.json({ ok: true, bloqueado: req.body?.bloquear === true });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "falha" });
     }
   });
+
+  // EDITAR EM MASSA — SOMENTE ADMIN (nov/2026).
+  // Body: { ids: string[], notificacoes?: 'bloquear'|'liberar', motivo?: string, dispensaConfirmacao?: 'dispensar'|'remover' }
+  app.post("/api/admin/customers/bulk-flags-telefone", authenticateUser, requireRole(["admin"]), async (req: any, res) => {
+    try {
+      const ids: string[] = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean).slice(0, 5000) : [];
+      const notif = String(req.body?.notificacoes || "");
+      const disp = String(req.body?.dispensaConfirmacao || "");
+      if (!ids.length) return res.status(400).json({ message: "Nenhum cliente selecionado." });
+      if (!["bloquear", "liberar"].includes(notif) && !["dispensar", "remover"].includes(disp)) {
+        return res.status(400).json({ message: "Nada para alterar." });
+      }
+      const u: any = req.user || {};
+      const quem = [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || "Admin";
+      const out = { notificacoes: 0, dispensas: 0, semTelefone: 0, naoEncontrados: 0 };
+      const { setPhoneExempt, getPhoneConfirmation } = await import("./phoneVerification");
+      for (const id of ids) {
+        if (notif === "bloquear" || notif === "liberar") {
+          const r = await aplicarNotificacao(id, notif === "bloquear", req.body?.motivo, u);
+          if (!r.existe) { out.naoEncontrados++; continue; }
+          if (r.mudou) out.notificacoes++;
+        }
+        if (disp === "dispensar" || disp === "remover") {
+          const c = rows(await db.execute(sql`SELECT id, name, fantasy_name, phone FROM customers WHERE id = ${id} LIMIT 1`))[0];
+          if (!c) { if (notif !== "bloquear" && notif !== "liberar") out.naoEncontrados++; continue; }
+          const phone = String(c.phone || "");
+          const digits = phone.replace(/\D/g, "");
+          if (digits.length < 10) { out.semTelefone++; continue; }
+          const antes = await getPhoneConfirmation(id, digits);
+          const exempt = disp === "dispensar";
+          if (antes.exempt === exempt) continue;
+          await setPhoneExempt(id, digits, phone, c.fantasy_name || c.name || null, exempt, String(u.id || "admin"));
+          out.dispensas++;
+          try {
+            await db.execute(sql`
+              INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_user_id, changed_by_name, source)
+              VALUES (${id}, 'confirmacao_telefone', 'Confirmação do telefone',
+                      ${antes.exempt ? "Dispensada pelo admin" : "Exigida"},
+                      ${exempt ? `Dispensada pelo admin (${phone})` : "Exigida"},
+                      ${u.id ? String(u.id) : null}, ${quem}, 'admin-massa')`);
+          } catch { /* histórico não bloqueia */ }
+        }
+      }
+      res.json({ ok: true, ...out });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "falha" });
+    }
+  });
+}
+
+/** Grava a flag de notificações de UM cliente (com histórico). */
+export async function aplicarNotificacao(id: string, bloquear: boolean, motivoRaw: any, u: any): Promise<{ existe: boolean; mudou: boolean }> {
+  await ensureColunasNotificacao();
+  const motivo = String(motivoRaw || "").replace(/\s+/g, " ").trim().slice(0, 300);
+  const quem = [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim() || u?.email || "Admin";
+  const atual = rows(await db.execute(sql`SELECT notificacoes_bloqueadas AS b, phone FROM customers WHERE id = ${id} LIMIT 1`))[0];
+  if (!atual) return { existe: false, mudou: false };
+  const mudou = (atual.b === true) !== bloquear;
+  if (!mudou) return { existe: true, mudou: false };
+  if (bloquear) {
+    await db.execute(sql`UPDATE customers SET notificacoes_bloqueadas = true, notificacoes_bloqueadas_em = now(),
+                           notificacoes_bloqueadas_por = ${quem}, notificacoes_bloqueadas_motivo = ${motivo || null}
+                         WHERE id = ${id}`);
+  } else {
+    await db.execute(sql`UPDATE customers SET notificacoes_bloqueadas = false, notificacoes_bloqueadas_em = now(),
+                           notificacoes_bloqueadas_por = ${quem}, notificacoes_bloqueadas_motivo = NULL
+                         WHERE id = ${id}`);
+  }
+  limparCacheNotificacao();
+  try {
+    await db.execute(sql`
+      INSERT INTO customer_change_history (customer_id, field, label, old_value, new_value, changed_by_user_id, changed_by_name, source)
+      VALUES (${id}, 'notificacoes', 'Notificações do telefone',
+              ${atual.b === true ? "Bloqueadas" : "Recebe"},
+              ${bloquear ? `Bloqueadas (${atual.phone || "sem telefone"})${motivo ? " — Motivo: " + motivo : ""}` : "Recebe"},
+              ${u?.id ? String(u.id) : null}, ${quem}, 'admin-notificacoes')`);
+  } catch (e: any) { console.warn("[notificacoes-bloqueio] histórico:", e?.message); }
+  return { existe: true, mudou: true };
 }
