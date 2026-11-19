@@ -18,7 +18,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Users, Mail, MapPin, Edit, Home, RefreshCw, Briefcase, UserX, UserCheck, Search, Plus, Trash2, Radio, FolderOpen } from "lucide-react";
+import { Users, Mail, MapPin, Edit, Home, RefreshCw, Briefcase, UserX, UserCheck, Search, Plus, Trash2, Radio, FolderOpen, Info } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import ArquivosVendedor from "@/components/ArquivosVendedor";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -640,7 +641,26 @@ export default function Sellers() {
             </div>
             {form.sellerType === 'distribuidor' && (
               <div className="space-y-2 md:col-span-2">
-                <Label>Cliente que fatura as compras do distribuidor</Label>
+                <Label className="flex items-center gap-1.5">
+                  Cliente que fatura as compras do distribuidor
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button type="button" aria-label="Como funciona o distribuidor" className="text-gray-400 hover:text-indigo-600" data-testid="info-distribuidor">
+                        <Info className="h-4 w-4" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 text-sm space-y-2" align="start">
+                      <p className="font-semibold">Como funciona o distribuidor</p>
+                      <p>Um distribuidor (ex.: Amorix) existe em dois lugares no Integra, ligados por este campo:</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li><b>Cliente</b> — o cadastro marcado como "Distribuidor" em Clientes. É nele que entram os pedidos de compra dele (sell-in), que seguem para pipeline, NF-e e contas a receber. Os itens já vêm com a coluna <b>Preços Amorix</b> de Preços de Venda.</li>
+                        <li><b>Vendedor</b> — este usuário, do tipo Distribuidor. Os clientes finais que ele atende ficam na carteira dele (campo Vendedor do cliente), então Mapa, Rota, Clientes Ativos, Churn e Fila de Resgate funcionam como em qualquer carteira.</li>
+                      </ul>
+                      <p>Por ser distribuidor, ele <b>não</b> entra no Resumo de Recebíveis, nas metas de faturamento/comissão nem no desconto de troca.</p>
+                      <p className="text-xs text-gray-500">Só aparecem aqui clientes com "Distribuidor" marcado no cadastro.</p>
+                    </PopoverContent>
+                  </Popover>
+                </Label>
                 <Select value={form.distribuidorCustomerId || 'none'} onValueChange={(v) => setField('distribuidorCustomerId', v === 'none' ? '' : v)}>
                   <SelectTrigger><SelectValue placeholder="Selecione o cliente marcado como distribuidor" /></SelectTrigger>
                   <SelectContent>
@@ -650,7 +670,7 @@ export default function Sellers() {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-gray-500">Só aparecem clientes com "Distribuidor" marcado no cadastro. Os clientes finais atendidos por ele devem ter este vendedor como carteira.</p>
+                <p className="text-xs text-gray-500">Os clientes finais atendidos por ele devem ter este vendedor como carteira.</p>
               </div>
             )}
 
