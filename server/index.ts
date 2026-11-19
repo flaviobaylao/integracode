@@ -40,6 +40,7 @@ import { registerAgendaForcadaRoutes } from "./agenda-forcada-routes";
 import { registerProductDatasheetRoutes } from "./product-datasheet-routes";
 import { registerFichaLogisticaRoutes } from "./ficha-logistica";
 import { registerTemperaturaEntregasRoutes } from "./temperatura-entregas";
+import { registerAmorixRoutes } from "./amorix-routes";
 import { setupVite, log } from "./vite";
 import { initializeDefaultAdmin } from "./localAuth";
 import path from "path";
@@ -439,6 +440,7 @@ run();
   // Ficha logística do produto (PDF gerado do cadastro: peso, fardo, palete).
   try { registerFichaLogisticaRoutes(app); } catch (e) { console.error('[ficha-logistica]', e); }
   try { registerTemperaturaEntregasRoutes(app); } catch (e) { console.error('[temperatura-entregas]', e); }
+  try { registerAmorixRoutes(app); } catch (e) { console.error('[amorix]', e); }
 
   // 🛡️ CRÍTICO (fix loop Rota do Dia): estas colunas estão no schema Drizzle, então SEM o
   // ALTER todo SELECT da tabela quebra (500 → o front fica re-tentando = "loop"). Rodam
@@ -456,6 +458,14 @@ run();
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS distributor_price numeric(10,2)',
       'ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_distribuidor boolean NOT NULL DEFAULT false',
       'ALTER TABLE users ADD COLUMN IF NOT EXISTS distribuidor_customer_id varchar',
+      // RAIA AMORIX (19/nov/2026): novo estagio do funil + campos do envio do PDF ao distribuidor.
+      "ALTER TYPE billing_pipeline_stage ADD VALUE IF NOT EXISTS 'amorix'",
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS amorix_sellout boolean NOT NULL DEFAULT false',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS amorix_pdf_em timestamptz',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS amorix_enviado_em timestamptz',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS amorix_enviado_por varchar',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS amorix_entregue_em timestamptz',
+      'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS faturar_honest_por varchar',
       // LOGÍSTICA DO PRODUTO (set/2026): peso, dimensões, fardo e paletização.
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_bruto_g numeric(8,1)',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_embalagem_g numeric(8,1)',
