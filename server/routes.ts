@@ -15917,6 +15917,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { finalizarPedidoParaPipeline } = await import('./billing-pipeline-routes.js');
       const user = (req as any).currentUser || (req as any).user;
+      // DISTRIBUIDOR (19/nov/2026): cliente da carteira Amorix — so' admin/administrativo/coordenacao lancam.
+      {
+        const { bloqueioLancamentoDistribuidor } = await import('./distribuidor.js');
+        const _bloq = await bloqueioLancamentoDistribuidor(user, (card as any).customerId);
+        if (_bloq) return res.status(403).json({ code: 'DISTRIBUIDOR_SOMENTE_ADMIN', message: _bloq });
+      }
       // Agendamento opcional: data (YYYY-MM-DD) enviada pelo popup de pedido -> item entra em 'agendado'.
       const scheduledBillingDate = (req as any).body?.scheduledBillingDate || null;
       const _dupJust = String((req as any).body?.dupJustificativa || '').trim();
@@ -16827,6 +16833,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/sales-cards/:id/finalize-sale', authenticateUser, async (req: any, res) => {
     try {
       const { id } = req.params;
+      // DISTRIBUIDOR (19/nov/2026): cliente da carteira Amorix — so' admin/administrativo/coordenacao lancam.
+      {
+        const _cardDist: any = await storage.getSalesCard(id);
+        const { bloqueioLancamentoDistribuidor } = await import('./distribuidor.js');
+        const _bloq = await bloqueioLancamentoDistribuidor(req.currentUser || (req as any).user, _cardDist?.customerId);
+        if (_bloq) return res.status(403).json({ code: 'DISTRIBUIDOR_SOMENTE_ADMIN', message: _bloq });
+      }
       const { 
         items, 
         totalValue, 
