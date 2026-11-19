@@ -224,6 +224,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
       longitude: '',
       coordinatesLocked: false,
       virtualService: false,
+      isDistribuidor: false,
       serviceStartDate: undefined,
       exclusiveVehicle: false,
       vehicleTypes: [],
@@ -286,6 +287,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         longitude: (customer as any).longitude || '',
         coordinatesLocked: (customer as any).coordinatesLocked || false,
         virtualService: (customer as any).virtualService || false,
+        isDistribuidor: (customer as any).isDistribuidor || false,
         serviceStartDate: (customer as any).serviceStartDate || undefined,
         exclusiveVehicle: (customer as any).exclusiveVehicle || false,
         vehicleTypes: Array.isArray((customer as any).vehicleTypes) ? (customer as any).vehicleTypes : [],
@@ -332,6 +334,7 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
         longitude: '',
         coordinatesLocked: false,
         virtualService: false,
+        isDistribuidor: false,
         serviceStartDate: undefined,
         exclusiveVehicle: false,
         vehicleTypes: [],
@@ -1623,6 +1626,39 @@ export default function CustomerModal({ isOpen, onClose, customer, initialData, 
                         </FormItem>
                       )}
                     />
+
+                    {/* (19/nov/2026) Distribuidor: compra pela tabela "Preços Amorix" e revende. So' admin. */}
+                    {user?.role === 'admin' && (
+                      <FormField
+                        control={form.control}
+                        name={"isDistribuidor" as any}
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 mt-4">
+                            <div className="space-y-0.5">
+                              <FormLabel className="text-base flex items-center space-x-2">
+                                <i className="fas fa-truck-fast text-indigo-600"></i>
+                                <span>Distribuidor</span>
+                              </FormLabel>
+                              <FormDescription>
+                                Cliente que compra para revender (ex.: Amorix). Os pedidos dele usam a coluna
+                                "Preços Amorix" de Preços de Venda. Vincule também um vendedor do tipo Distribuidor.
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <div className="flex items-center space-x-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!field.value}
+                                  onChange={field.onChange}
+                                  className="rounded border-gray-300 text-honest-blue focus:ring-honest-blue"
+                                  data-testid="checkbox-distribuidor"
+                                />
+                              </div>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    )}
                   </div>
                 )}
 
