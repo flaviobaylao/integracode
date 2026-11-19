@@ -99,7 +99,8 @@ const TEL_SEM_CONFIRMACAO = 'Sem confirmação';
 const TEL_CONFIRMADO = 'Confirmado';
 const TEL_FIXO = 'Fixo';
 const TEL_CELULAR = 'Celular válido';
-const TEL_OPCOES = [TEL_INVALIDO, TEL_SEM, TEL_SEM_CONFIRMACAO, TEL_CONFIRMADO, TEL_FIXO, TEL_CELULAR];
+const TEL_SEM_NOTIF = 'Não recebe notificações';
+const TEL_OPCOES = [TEL_INVALIDO, TEL_SEM, TEL_SEM_CONFIRMACAO, TEL_CONFIRMADO, TEL_FIXO, TEL_CELULAR, TEL_SEM_NOTIF];
 import { useAuth } from "@/hooks/useAuth";
 import {
   AlertDialog,
@@ -672,6 +673,9 @@ export default function ActiveCustomers() {
   });
 
   // 📲 Status de confirmação de telefone por cliente (destacar em vermelho quem não confirmou em 24h)
+  // 🔕 nov/2026: clientes marcados pelo admin para não receber notificações.
+  const { data: _semNotif } = useQuery<{ ids: string[] }>({ queryKey: ["/api/notificacoes-bloqueadas"], queryFn: () => fetch('/api/notificacoes-bloqueadas', { credentials: 'include' }).then(r => r.ok ? r.json() : { ids: [] }), staleTime: 60_000 });
+  const semNotificacao = useMemo(() => new Set((_semNotif?.ids || []).map(String)), [_semNotif]);
   const { data: phoneVerif = {} } = useQuery<Record<string, { status: string; over24h: boolean }>>({
     queryKey: ['/api/customers/phone-verification-status'],
     queryFn: () => fetch('/api/customers/phone-verification-status', { credentials: 'include' }).then(r => r.ok ? r.json() : {}),
@@ -1000,6 +1004,7 @@ export default function ActiveCustomers() {
           tags.add(a.tipo === 'fixo' ? TEL_FIXO : TEL_CELULAR);
           tags.add(confirmado ? TEL_CONFIRMADO : TEL_SEM_CONFIRMACAO);
         }
+        if (ac.customer?.id && semNotificacao.has(String(ac.customer.id))) tags.add(TEL_SEM_NOTIF);
         matchesTelefone = telMulti.some((o) => tags.has(o));
       }
       return matchesSearch && matchesSeller && matchesSellerMulti && matchesDayOfRoute && matchesPeriodicity && matchesSemana && matchesVirtualType && matchesDate && matchesPositivation && matchesCity && matchesNeighborhood && matchesPersonType && matchesSegment && matchesCoords && matchesTelefone;
@@ -1574,6 +1579,7 @@ export default function ActiveCustomers() {
                               <LinhaInfo marca={<span className="font-mono">-</span>}><b className="text-foreground">Sem telefone</b>: o próximo pedido só é implantado depois de preencher telefone e responsável.</LinhaInfo>
                               <LinhaInfo marca={<span className="text-[10px] font-semibold text-red-700 border border-red-300 bg-red-50 px-1 py-0.5 rounded">TELEFONE INVÁLIDO</span>}>Número que não é telefone válido (DDD inexistente, tamanho errado, número de preenchimento). <b className="text-foreground">SEM TELEFONE</b> = campo vazio. <b className="text-foreground">FORA DO PADRÃO</b> = número aproveitável mas escrito errado (passe o mouse para ver o correto). Corrija no cadastro.</LinhaInfo>
                               <LinhaInfo marca={<span className="text-[10px] font-semibold text-slate-600 border border-slate-300 bg-slate-50 px-1 py-0.5 rounded">FIXO</span>}>Telefone fixo — normalmente sem WhatsApp; se possível, cadastre o celular do responsável.</LinhaInfo>
+                              <LinhaInfo marca={<span>🔕</span>}><b className="text-foreground">Não recebe notificações</b>: o admin marcou o número para não receber mensagens automáticas (respostas a conversas iniciadas pelo cliente continuam).</LinhaInfo>
                               <LinhaInfo>Filtro <b className="text-foreground">Telefone</b> (pode marcar mais de um): <b className="text-foreground">Inválido</b> (número que não serve ou fora do padrão) · <b className="text-foreground">Sem telefone</b> · <b className="text-foreground">Sem confirmação</b> (número válido que o cliente ainda não confirmou no WhatsApp) · <b className="text-foreground">Confirmado</b> · <b className="text-foreground">Fixo</b> · <b className="text-foreground">Celular válido</b>.</LinhaInfo>
                               <LinhaInfo>Padrão: celular (DDD) 9XXXX-XXXX ou fixo (DDD) XXXX-XXXX, sem +55. O nome do <b className="text-foreground">responsável</b> é obrigatório ao lado do telefone.</LinhaInfo>
                             </InfoColuna>
@@ -1785,6 +1791,9 @@ export default function ActiveCustomers() {
                                   >
                                     {ac.customer?.phone || "-"}
                                     {_confirmed ? " ✓" : ""}
+                                    {ac.customer?.id && semNotificacao.has(String(ac.customer.id)) ? (
+                                      <span className="ml-1 font-sans" title="Não recebe notificações (bloqueado pelo admin)" data-testid={`sem-notificacao-${ac.id}`}>🔕</span>
+                                    ) : null}
                                   </span>
                                 );
                               })()}
