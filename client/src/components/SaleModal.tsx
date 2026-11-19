@@ -35,6 +35,8 @@ interface SaleItem {
   totalPrice: number;
 }
 
+import { precoParaCliente } from "@/lib/precoCliente";
+
 interface SaleModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -552,8 +554,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
           id: product.id,
           name: product.name,
           quantity,
-          unitPrice: parseFloat(product.price),
-          totalPrice: parseFloat(product.price) * quantity
+          unitPrice: precoParaCliente(product, (salesCard as any)?.customer),
+          totalPrice: precoParaCliente(product, (salesCard as any)?.customer) * quantity
         });
       }
     });
@@ -1171,7 +1173,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                         <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
                                       )}
                                     </div>
-                                    <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
+                                    <div className="text-gray-600">R$ {precoParaCliente(product, (salesCard as any)?.customer).toFixed(2)}</div>
                                     <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
                                   </Label>
                                 </div>
@@ -1230,7 +1232,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                         <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
                                       )}
                                     </div>
-                                    <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
+                                    <div className="text-gray-600">R$ {precoParaCliente(product, (salesCard as any)?.customer).toFixed(2)}</div>
                                     <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
                                   </Label>
                                 </div>
@@ -1289,7 +1291,7 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
                                         <span className="ml-2 text-xs font-normal text-amber-700">(ainda não disponível)</span>
                                       )}
                                     </div>
-                                    <div className="text-gray-600">R$ {parseFloat(product.price).toFixed(2)}</div>
+                                    <div className="text-gray-600">R$ {precoParaCliente(product, (salesCard as any)?.customer).toFixed(2)}</div>
                                     <div className="text-xs text-gray-500">Estoque: {product.stock}</div>
                                   </Label>
                                 </div>

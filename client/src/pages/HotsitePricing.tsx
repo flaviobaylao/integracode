@@ -149,7 +149,7 @@ export default function HotsitePricing() {
         </h1>
         <BackToDashboardButton />
         <p className="text-gray-600 mt-2">
-          Gerencie os 5 tipos de preço para cada produto do hotsite Instagram
+          Gerencie os 6 tipos de preço de cada produto (consumidor, revenda e distribuidor)
         </p>
       </div>
 
@@ -176,6 +176,7 @@ export default function HotsitePricing() {
                   <li>• <strong>Goiânia</strong> - Revenda na capital</li>
                   <li>• <strong>Interior GO</strong> - Revenda no interior de Goiás</li>
                   <li>• <strong>Brasília/Entorno</strong> - Revenda no DF e entorno</li>
+                  <li>• <strong>Preços Amorix</strong> - Fornecimento ao distribuidor (clientes marcados como distribuidor)</li>
                 </ul>
               </div>
             </div>
@@ -191,6 +192,7 @@ export default function HotsitePricing() {
           const displayGoiania = currentEdits.resaleGoianiaPrice !== undefined ? (currentEdits.resaleGoianiaPrice as number | null) : product.resaleGoianiaPrice;
           const displayInterior = currentEdits.resaleInteriorPrice !== undefined ? (currentEdits.resaleInteriorPrice as number | null) : product.resaleInteriorPrice;
           const displayBrasilia = currentEdits.resaleBrasiliaPrice !== undefined ? (currentEdits.resaleBrasiliaPrice as number | null) : product.resaleBrasiliaPrice;
+          const displayDistribuidor = currentEdits.distributorPrice !== undefined ? (currentEdits.distributorPrice as number | null) : (product as any).distributorPrice;
           const displayDetails = currentEdits.details !== undefined ? (currentEdits.details as string | null) : product.details;
 
           return (
@@ -227,7 +229,7 @@ export default function HotsitePricing() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid md:grid-cols-5 gap-4">
+                <div className="grid md:grid-cols-3 lg:grid-cols-6 gap-4">
                   {/* Preço Varejo */}
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
@@ -316,6 +318,24 @@ export default function HotsitePricing() {
                       className="text-right"
                     />
                     <p className="text-xs text-gray-500">Revenda</p>
+                  </div>
+
+                  {/* Preços Amorix (distribuidor) — 19/nov/2026 */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                      <Package className="h-4 w-4 text-indigo-600" />
+                      Preços Amorix
+                    </label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={valorCampo(product.id, 'distributorPrice' as keyof Product, displayDistribuidor)}
+                      onChange={(e) => handlePriceChange(product.id, 'distributorPrice' as keyof Product, e.target.value)}
+                      data-testid={`input-distribuidor-${product.id}`}
+                      className="text-right"
+                    />
+                    <p className="text-xs text-gray-500">Distribuidor</p>
                   </div>
                 </div>
 

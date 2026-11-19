@@ -452,6 +452,10 @@ run();
       'ALTER TABLE billing_pipeline ADD COLUMN IF NOT EXISTS is_priority boolean NOT NULL DEFAULT false',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS available_for_sale boolean NOT NULL DEFAULT true',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS internal_only boolean NOT NULL DEFAULT false',
+      // DISTRIBUIDOR (19/nov/2026): tabela "Preços Amorix", flag no cliente e vinculo no vendedor.
+      'ALTER TABLE products ADD COLUMN IF NOT EXISTS distributor_price numeric(10,2)',
+      'ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_distribuidor boolean NOT NULL DEFAULT false',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS distribuidor_customer_id varchar',
       // LOGÍSTICA DO PRODUTO (set/2026): peso, dimensões, fardo e paletização.
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_bruto_g numeric(8,1)',
       'ALTER TABLE products ADD COLUMN IF NOT EXISTS peso_embalagem_g numeric(8,1)',

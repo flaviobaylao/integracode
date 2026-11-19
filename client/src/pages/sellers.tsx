@@ -39,6 +39,7 @@ interface Seller {
   homeLatitude?: string;
   homeLongitude?: string;
   sellerType?: string;
+  distribuidorCustomerId?: string | null;
   omieVendorCode?: string;
   omieVendorCodes?: Record<string, string>;
 }
@@ -48,6 +49,7 @@ const SELLER_TYPE_LABELS: Record<string, string> = {
   vendedor_pj: 'Externo PJ',
   telemarketing: 'Telemarketing',
   canal: 'Canal',
+  distribuidor: 'Distribuidor',
 };
 
 const SELLER_TYPE_COLORS: Record<string, string> = {
@@ -55,6 +57,7 @@ const SELLER_TYPE_COLORS: Record<string, string> = {
   vendedor_pj: 'bg-purple-100 text-purple-800',
   telemarketing: 'bg-amber-100 text-amber-800',
   canal: 'bg-teal-100 text-teal-800',
+  distribuidor: 'bg-indigo-100 text-indigo-800',
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -80,6 +83,8 @@ interface SellerForm {
   homeLatitude: string;
   homeLongitude: string;
   omieVendorCode: string;
+  // (19/nov/2026) so' para sellerType 'distribuidor': cliente (customers.id) que fatura as compras
+  distribuidorCustomerId: string;
   isActive: boolean;
   password: string;
 }
@@ -95,6 +100,7 @@ const EMPTY_FORM: SellerForm = {
   homeLatitude: '',
   homeLongitude: '',
   omieVendorCode: '',
+  distribuidorCustomerId: '',
   isActive: true,
   password: '',
 };
@@ -115,6 +121,12 @@ export default function Sellers() {
   const [dialogMode, setDialogMode] = useState<null | 'create' | 'edit'>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<SellerForm>({ ...EMPTY_FORM });
+  // Clientes marcados como distribuidor (para vincular ao vendedor do tipo 'distribuidor').
+  const { data: clientesDistribuidores = [] } = useQuery<any[]>({
+    queryKey: ['/api/customers/distribuidores'],
+    queryFn: async () => { const r = await fetch('/api/customers/distribuidores', { credentials: 'include' }); return r.ok ? r.json() : []; },
+    enabled: dialogMode !== null,
+  });
   const [deletingSeller, setDeletingSeller] = useState<Seller | null>(null);
   // Pasta de arquivos do vendedor (contrato, documentos, planilhas...) — 16/out/2026
   const [arquivosSeller, setArquivosSeller] = useState<Seller | null>(null);
@@ -153,6 +165,7 @@ export default function Sellers() {
     sellerType: form.sellerType || null,
     route: form.route.trim() || null,
     omieVendorCode: form.omieVendorCode.trim() || null,
+    distribuidorCustomerId: form.sellerType === 'distribuidor' ? (form.distribuidorCustomerId || null) : null,
     homeLatitude: normalizeCoord(form.homeLatitude),
     homeLongitude: normalizeCoord(form.homeLongitude),
     isActive: form.isActive,
@@ -241,6 +254,7 @@ export default function Sellers() {
       homeLatitude: seller.homeLatitude || '',
       homeLongitude: seller.homeLongitude || '',
       omieVendorCode: seller.omieVendorCode || '',
+      distribuidorCustomerId: seller.distribuidorCustomerId || '',
       isActive: seller.isActive,
       password: '',
     });
@@ -620,9 +634,25 @@ export default function Sellers() {
                   <SelectItem value="vendedor_pj"><div className="flex items-center gap-2"><Briefcase className="h-4 w-4" />Vendedor Externo PJ</div></SelectItem>
                   <SelectItem value="telemarketing"><div className="flex items-center gap-2"><Users className="h-4 w-4" />Telemarketing</div></SelectItem>
                   <SelectItem value="canal"><div className="flex items-center gap-2"><Radio className="h-4 w-4" />Canal</div></SelectItem>
+                  <SelectItem value="distribuidor"><div className="flex items-center gap-2"><Briefcase className="h-4 w-4" />Distribuidor (revende; sem comissão)</div></SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {form.sellerType === 'distribuidor' && (
+              <div className="space-y-2 md:col-span-2">
+                <Label>Cliente que fatura as compras do distribuidor</Label>
+                <Select value={form.distribuidorCustomerId || 'none'} onValueChange={(v) => setField('distribuidorCustomerId', v === 'none' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o cliente marcado como distribuidor" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— não vinculado —</SelectItem>
+                    {clientesDistribuidores.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.fantasyName || c.companyName || c.name}{c.cnpj ? ` · ${c.cnpj}` : ''}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500">Só aparecem clientes com "Distribuidor" marcado no cadastro. Os clientes finais atendidos por ele devem ter este vendedor como carteira.</p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="route">Rota</Label>

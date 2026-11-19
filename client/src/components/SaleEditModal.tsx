@@ -1,4 +1,5 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
+import { precoParaCliente } from "@/lib/precoCliente";
 import { analisarTelefoneBR } from "@shared/telefone";
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
@@ -378,7 +379,7 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
           id: selectedProduct.id,
           name: selectedProduct.name,
           quantity: 0,
-          unitPrice: parseFloat(selectedProduct.price || '0'),
+          unitPrice: precoParaCliente(selectedProduct, (card as any)?.customer),
           totalPrice: 0
         }]);
       }
