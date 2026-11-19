@@ -3140,6 +3140,7 @@ export type InsertInventoryMovement = z.infer<typeof insertInventoryMovementSche
 export const billingPipelineStageEnum = pgEnum("billing_pipeline_stage", [
   "agendado",
   "pedido",
+  "amorix", // (19/nov/2026) raia do distribuidor: pedido de cliente da carteira Amorix, so PDF, sem NF
   "a_faturar",
   "faturado",
   "impresso",
@@ -3182,6 +3183,15 @@ export const billingPipeline = pgTable("billing_pipeline", {
   // Prioridade na roteirização: marcada no card quando ele está aguardando rota.
   // Vira `isUrgent` no planejamento (entra primeiro na rota) e `is_priority` na parada.
   isPriority: boolean("is_priority").notNull().default(false),
+  // DISTRIBUIDOR (19/nov/2026): pedido de cliente cuja carteira e' um vendedor 'distribuidor' (Amorix).
+  // Nao fatura pela Honest: vai para a raia 'amorix' (PDF enviado a Amorix) e dali para 'entregue'.
+  amorixSellout: boolean("amorix_sellout").notNull().default(false),
+  amorixPdfEm: timestamp("amorix_pdf_em"),
+  amorixEnviadoEm: timestamp("amorix_enviado_em"),
+  amorixEnviadoPor: varchar("amorix_enviado_por"),
+  amorixEntregueEm: timestamp("amorix_entregue_em"),
+  // Excecao: gestor decidiu faturar pela Honest um pedido de cliente da Amorix (segue o fluxo normal).
+  faturarHonestPor: varchar("faturar_honest_por"),
   stageHistory: jsonb("stage_history").$type<Array<{
     stage: string;
     changedAt: string;
