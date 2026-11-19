@@ -694,6 +694,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
       //    E quem foi cadastrado depois do mês não aparece nele.
       const mesCorrente = new Date().toISOString().slice(0, 7);
       const mesEncerrado = ym < mesCorrente;
+      // (19/nov/2026) seller_type 'distribuidor' (ex.: Amorix) fica fora do resumo: nao tem comissao nem fixo.
       const colabs: any = await db.execute(sql`
             SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.seller_type,
                    (u.is_active IS NOT TRUE) AS inativo
@@ -706,6 +707,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
                                 WHERE c.user_id = u.id AND c.vigencia_data < ${fim}::date))
               )
               AND (u.created_at IS NULL OR u.created_at < ${fim}::date)
+              AND COALESCE(u.seller_type, '') <> 'distribuidor'
               AND (
                 (u.role::text = ANY(${arraySql(PAPEIS)}) AND COALESCE(p.incluir, true) = true)
                 OR p.incluir = true
@@ -1507,6 +1509,7 @@ export function registerResumoRecebiveisRoutes(app: Express) {
         FROM users u
         LEFT JOIN resumo_participantes p ON p.user_id = u.id
         WHERE u.is_active = true
+          AND COALESCE(u.seller_type, '') <> 'distribuidor'
           AND (u.role::text = ANY(${arraySql(PAPEIS)}) OR p.incluir = true)
         ORDER BY u.role, u.first_name, u.last_name`);
       // Lista completa para a aba Participantes, com o estado de cada um.
