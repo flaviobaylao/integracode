@@ -1,7 +1,11 @@
-// Aba admin-only do Dashboard Geral: Produção & Faturamento por SKU/mês.
-// Consome GET /api/industria/dashboard-producao-faturamento (rota já restrita a admin).
-// Fontes: ordens de produção (produzidas), lotes de estoque (custo unit + valor em estoque),
-// billing_pipeline (vendidas + faturamento, só operações de venda).
+// Aba admin-only do Dashboard Geral: Produção & Faturamento — CUSTO PLENO por SKU num período.
+// Consome GET /api/industria/dashboard-custo-pleno?inicio=AAAA-MM-DD&fim=AAAA-MM-DD (rota admin).
+// Análise de contador (custeio por absorção, Flavio 23/11/2026):
+//  • insumos por garrafa (matéria-prima, embalagens, outros) — consumo real nas OPs do período,
+//    ou ficha técnica, ou custo do lote;
+//  • custos indiretos (pessoal, salários, aluguel, energia, comerciais, administrativos, gerais,
+//    financeiros) do Contas a Pagar por competência, rateados por LITROS produzidos;
+//  • impostos sobre vendas pela alíquota efetiva do período.
 import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,62 +13,90 @@ import { Card, CardContent } from "@/components/ui/card";
 const nf = (n: any) => new Intl.NumberFormat("pt-BR").format(Number(n) || 0);
 const brl = (n: any) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(n) || 0);
 const brl0 = (n: any) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(n) || 0);
-const pct = (n: number | null) => n == null ? "—" : new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
+const pct = (n: number | null | undefined) => n == null || !isFinite(n) ? "—" : new Intl.NumberFormat("pt-BR", { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(n);
 const cap = (s: string) => String(s || "").toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
-const mesLabel = (ym: string) => {
-  const [y, m] = (ym || "").split("-");
-  const nomes = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
-  return (nomes[Number(m)] || ym) + "/" + (y || "");
+const MESES = ["", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+const MESES_LONGO = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const MIN_DATA = "2026-05-01";
+const hojeSP = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+const ultimoDia = (ym: string) => { const [y, m] = ym.split("-").map(Number); return ym + "-" + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0"); };
+const dataBR = (iso: string) => iso ? iso.split("-").reverse().join("/") : "";
+
+type Row = {
+  sabor: string; tam: string; produzidas: number; vendidas: number; faturamento: number; trocas_amostras: number;
+  estoque: number; custo_estoque: number; fonte_insumos: "real" | "ficha" | "lote" | null;
+  mp_un: number; emb_un: number; outros_un: number; insumos_un: number; insumos_padrao_un: number | null;
+  indireto_un: number; custo_pleno_un: number; imposto_un: number; preco: number | null; lucro_un: number | null;
+  margem_contrib: number | null; margem_liquida: number | null; resultado: number; custo_ta: number; preco_equilibrio: number | null;
 };
 
-type Row = { sabor: string; tam: string; produzidas: number; custo_unit: number | null; custo_total_prod: number; vendidas: number; faturamento: number; trocas_amostras: number; custo_trocas_amostras: number; estoque: number; custo_estoque: number };
-type MonthData = { month: string; rows: Row[]; sub900: any; sub350: any; total: any };
+// Preço para a margem-alvo: custo pleno ÷ (1 − alíquota de impostos − margem).
+const precoAlvo = (pleno: number, aliq: number, m: number) => (1 - aliq - m > 0.0001 ? pleno / (1 - aliq - m) : null);
 
-// Preço médio realizado = faturamento ÷ garrafas vendidas.
-const precoMedio = (fat: number, vend: number) => (Number(vend) > 0 ? Number(fat) / Number(vend) : null);
-// Custo das vendidas (COGS) = Σ custo unitário do lote × garrafas vendidas.
-const cogsOf = (rows: Row[]) => rows.reduce((s, r) => s + (r.custo_unit != null ? r.custo_unit * r.vendidas : 0), 0);
-// Margem bruta = (faturamento − custo das vendidas) ÷ faturamento.
-const margemDe = (fat: number, cogs: number) => (Number(fat) > 0 ? (Number(fat) - Number(cogs)) / Number(fat) : null);
-
-// Ícone "i" com tooltip explicando origem/composição do dado da coluna.
 const Info = ({ t }: { t: string }) => (
   <span title={t} className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-500 text-[9px] font-bold cursor-help align-[1px] normal-case tracking-normal">i</span>
 );
 
+const FONTE: Record<string, { rot: string; cls: string; t: string }> = {
+  real: { rot: "real", cls: "bg-emerald-50 text-emerald-700", t: "Consumo real de insumos lançado nas ordens de produção do período ÷ garrafas produzidas." },
+  ficha: { rot: "ficha", cls: "bg-sky-50 text-sky-700", t: "Sem consumo lançado nas OPs do período: custo padrão pela ficha técnica (receita × custo atual de cada insumo)." },
+  lote: { rot: "lote", cls: "bg-amber-50 text-amber-700", t: "Sem consumo lançado nem ficha técnica: custo unitário do lote em estoque." },
+};
+
 const INFO = {
-  sabor: "Sabor do suco conforme o nome do SKU cadastrado no módulo Indústria.",
-  emb: "Embalagem da garrafa (900 ml ou 350 ml), extraída do nome do SKU.",
-  produzidas: "Soma das garrafas nas ordens de produção do mês (módulo Indústria › ordens de produção), agrupadas por SKU.",
-  custoUnit: "Custo unitário do lote em uso (módulo Indústria › lotes de estoque). Ainda NÃO inclui energia elétrica nem mão de obra.",
-  custoProd: "Custo de produção = garrafas produzidas × custo unitário do lote. Ainda NÃO inclui energia elétrica nem mão de obra.",
-  vendidas: "Garrafas vendidas = soma das quantidades dos itens das NF-e de venda emitidas no mês (regra oficial, a mesma do Painel: NF autorizada, deduplicada por nº, sem devolução/troca/transferência/remessa/bonificação/amostra).",
-  faturamento: "Valor dos produtos vendidos = soma do valor dos itens das NF-e de venda do mês (regra oficial do Painel). Pode diferir do total da NF por ajustes de rodapé (descontos, frete, impostos) — o total oficial da NF está indicado abaixo da tabela.",
+  produzidas: "Garrafas das ordens de produção do período (pela data de produção), exceto OPs planejadas ou canceladas.",
+  vendidas: "Garrafas vendidas = itens das NF-e de venda emitidas no período (regra oficial do Painel).",
+  faturamento: "Valor dos produtos nas NF-e de venda do período (itens da nota). O total oficial da NF aparece no resumo.",
   preco: "Preço médio de venda realizado = Faturamento ÷ Garrafas vendidas.",
-  margem: "Margem bruta = (Faturamento − custo das vendidas) ÷ Faturamento, com custo das vendidas = custo unitário do lote × garrafas vendidas. Ainda NÃO considera energia elétrica nem mão de obra.",
-  trocasAmostras: "Garrafas cedidas em operações do tipo 'troca' ou 'amostra' no mês (pipeline de faturamento). Não entram em Vendidas nem em Faturamento.",
-  custoTA: "Custo das trocas/amostras = garrafas cedidas × custo unitário do lote. Ainda NÃO inclui energia elétrica nem mão de obra.",
-  estoque: "Saldo atual de garrafas em lotes 'em uso' (snapshot do momento da consulta, módulo Indústria).",
-  custoEstoque: "Valor atual em estoque = soma do custo total dos lotes 'em uso' (snapshot do momento da consulta).",
+  mp: "Matéria-prima por garrafa (polpas, concentrados, frutas, açúcar).",
+  emb: "Embalagem por garrafa (garrafa, tampa, rótulo, lacre).",
+  insumos: "Custo direto de insumos por garrafa = matéria-prima + embalagem + outros insumos. A etiqueta mostra a origem: real (consumo nas OPs), ficha (ficha técnica) ou lote.",
+  indireto: "Custos indiretos por garrafa: todas as despesas do período no Contas a Pagar (pessoal, salários, aluguel, energia, comerciais, administrativas, gerais, financeiras), exceto compras de matéria-prima/embalagem, rateadas por litro produzido × volume da garrafa.",
+  pleno: "Custo pleno por garrafa = insumos + custos indiretos rateados.",
+  imposto: "Impostos sobre vendas por garrafa = preço × alíquota efetiva do período (impostos sobre vendas do Contas a Pagar ÷ faturamento oficial).",
+  lucro: "Lucro por garrafa = preço − impostos − custo pleno.",
+  mc: "Margem de contribuição = (preço − impostos − insumos) ÷ preço. Quanto cada garrafa sobra para pagar a estrutura.",
+  ml: "Margem líquida = lucro por garrafa ÷ preço, já com toda a estrutura rateada.",
+  resultado: "Resultado do SKU no período = lucro por garrafa × garrafas vendidas.",
+  equilibrio: "Preço de equilíbrio (lucro zero) = custo pleno ÷ (1 − alíquota de impostos).",
+  alvo: "Preço sugerido para a margem-alvo = custo pleno ÷ (1 − alíquota de impostos − margem-alvo).",
+  ta: "Garrafas cedidas em trocas/amostras no período (pipeline + amostras de leads). Custo = garrafas × custo pleno.",
+  estoque: "Saldo atual de garrafas em lotes em uso (foto do momento) e o valor em estoque.",
 };
 
 export default function ProducaoFaturamento() {
-  const { data, isLoading, error } = useQuery<any>({ queryKey: ["/api/industria/dashboard-producao-faturamento"], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
-  const months: MonthData[] = data?.months || [];
-  const [sel, setSel] = useState<string>("");
-  const current = useMemo(() => months.find((m) => m.month === sel) || months[months.length - 1], [months, sel]);
+  const hoje = hojeSP();
+  const [inicio, setInicio] = useState<string>(hoje.slice(0, 8) + "01");
+  const [fim, setFim] = useState<string>(hoje);
+  const [alvoTxt, setAlvoTxt] = useState<string>("20");
+  const alvo = Math.max(0, Math.min(90, Number(String(alvoTxt).replace(",", ".")) || 0)) / 100;
+  const url = `/api/industria/dashboard-custo-pleno?inicio=${inicio}&fim=${fim}`;
+  const { data, isLoading, isFetching, error } = useQuery<any>({ queryKey: [url], refetchInterval: 1800000, refetchOnWindowFocus: true, staleTime: 0 });
 
-  if (isLoading) return <div className="mt-6 text-sm text-gray-500">Carregando dados de produção…</div>;
-  if (error) return <div className="mt-6 text-sm text-red-600">Erro ao carregar: {String((error as any)?.message || error)}</div>;
-  if (!current) return <div className="mt-6 text-sm text-gray-500">Sem dados de produção a partir de Set/2026.</div>;
+  // Atalhos de mês: de maio/2026 até o mês atual (1º ao último dia; o mês atual vai até hoje).
+  const meses = useMemo(() => {
+    const out: string[] = [];
+    let [y, m] = [2026, 5];
+    const [yh, mh] = hoje.split("-").map(Number);
+    while (y < yh || (y === yh && m <= mh)) { out.push(`${y}-${String(m).padStart(2, "0")}`); m++; if (m > 12) { m = 1; y++; } }
+    return out;
+  }, [hoje]);
+  const escolherMes = (ym: string) => { setInicio(ym + "-01"); const u = ultimoDia(ym); setFim(u > hoje ? hoje : u); };
+  const mesAtivo = meses.find((ym) => inicio === ym + "-01" && (fim === ultimoDia(ym) || (fim === hoje && hoje.startsWith(ym))));
+  const setData = (qual: "i" | "f", v: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+    let x = v < MIN_DATA ? MIN_DATA : v > hoje ? hoje : v;
+    if (qual === "i") { setInicio(x); if (x > fim) setFim(x); } else { if (x < inicio) x = inicio; setFim(x); }
+  };
 
-  const T = current.total;
-  const r900 = current.rows.filter((r) => r.tam === "900");
-  const r350 = current.rows.filter((r) => r.tam === "350");
+  const rows: Row[] = data?.rows || [];
+  const r900 = rows.filter((r) => r.tam === "900");
+  const r350 = rows.filter((r) => r.tam === "350");
+  const aliq = Number(data?.rateio?.aliquota_impostos) || 0;
+  const periodoTxt = `${dataBR(inicio)} a ${dataBR(fim)}`;
 
-  // Exporta o mês selecionado para .xlsx com a mesma formatação da tela
-  // (cabeçalho, subtotais e TOTAL destacados, R$ e %). Usa xlsx-js-style.
   async function exportarExcel() {
+    if (!data) return;
     const mod: any = await import("xlsx-js-style");
     const XLSX: any = mod.default ?? mod;
     const M2 = '"R$" #,##0.00', M0 = '"R$" #,##0', PC = '0.0%', IN = '#,##0';
@@ -72,207 +104,316 @@ export default function ProducaoFaturamento() {
     const B = { top: bd, bottom: bd, left: bd, right: bd };
     const sTitle = { font: { bold: true, sz: 14, color: { rgb: "0F5132" } } };
     const sSub = { font: { sz: 9, color: { rgb: "6B7280" } } };
-    const sMonth = { font: { bold: true, sz: 11, color: { rgb: "047857" } } };
     const sHead = { font: { bold: true, sz: 10, color: { rgb: "374151" } }, fill: { patternType: "solid", fgColor: { rgb: "F1F5F9" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: B };
-    const cText = (v: any, extra: any = {}) => ({ v: v == null ? "" : String(v), t: "s", s: { alignment: { vertical: "center" }, border: B, ...extra } });
-    const cNum = (v: any, z: string, extra: any = {}) => (v == null ? { v: "—", t: "s", s: { alignment: { horizontal: "right", vertical: "center" }, border: B, ...extra } } : { v: Number(v), t: "n", z, s: { alignment: { horizontal: "right", vertical: "center" }, numFmt: z, border: B, ...extra } });
-    const rowFill = (rgb: string, white = false, bold = true) => ({ fill: { patternType: "solid", fgColor: { rgb } }, font: { bold, ...(white ? { color: { rgb: "FFFFFF" } } : {}) } });
-
-    const NC = 13;
+    const T = (v: any, ex: any = {}) => ({ v: v == null ? "" : String(v), t: "s", s: { alignment: { vertical: "center" }, border: B, ...ex } });
+    const N = (v: any, z: string, ex: any = {}) => (v == null || !isFinite(Number(v)) ? { v: "—", t: "s", s: { alignment: { horizontal: "right" }, border: B, ...ex } } : { v: Number(v), t: "n", z, s: { alignment: { horizontal: "right" }, numFmt: z, border: B, ...ex } });
+    const fill = (rgb: string, white = false) => ({ fill: { patternType: "solid", fgColor: { rgb } }, font: { bold: true, ...(white ? { color: { rgb: "FFFFFF" } } : {}) } });
+    const HEAD = ["Sabor", "Emb.", "Produzidas", "Vendidas", "Faturamento", "Preço venda", "Matéria-prima/un", "Embalagem/un", "Insumos/un", "Origem insumos", "Indireto/un", "Custo pleno/un", "Impostos/un", "Lucro/un", "Margem contrib.", "Margem líquida", "Resultado", "Preço equilíbrio", `Preço p/ ${Math.round(alvo * 100)}%`, "Trocas/Amostras", "Custo T/A", "Estoque", "Custo estoque"];
+    const NC = HEAD.length;
     const aoa: any[][] = [];
-    const blank = () => Array.from({ length: NC }, () => cText(""));
-    // Cabeçalho de documento
-    const rTitle = blank(); rTitle[0] = { v: "Produção & Faturamento por SKU", t: "s", s: sTitle }; aoa.push(rTitle);
-    const rSrc = blank(); rSrc[0] = { v: "Fonte: módulo Indústria (produção + lotes) e NF-e de venda oficial (regra do Painel). Trocas/amostras: pipeline.", t: "s", s: sSub }; aoa.push(rSrc);
-    const rMon = blank(); rMon[0] = { v: mesLabel(current.month) + (data?.generatedAt ? "  ·  atualizado em " + new Date(data.generatedAt).toLocaleString("pt-BR") : ""), t: "s", s: sMonth }; aoa.push(rMon);
-    aoa.push(blank());
-    // Cabeçalho da tabela
-    aoa.push(["Sabor", "Emb.", "Produzidas", "Custo unit.", "Custo produção", "Vendidas", "Faturamento", "Preço venda", "Margem", "Trocas/Amostras", "Custo T/A", "Estoque", "Custo estoque"].map((h) => ({ v: h, t: "s", s: sHead })));
-
-    const dataRow = (r: Row, extra: any = {}) => {
-      const preco = precoMedio(r.faturamento, r.vendidas);
-      const marg = r.custo_unit != null ? margemDe(r.faturamento, r.custo_unit * r.vendidas) : null;
-      return [
-        cText(cap(r.sabor), extra), cText(r.tam + "ml", { alignment: { horizontal: "center", vertical: "center" }, ...extra }),
-        cNum(r.produzidas, IN, extra), cNum(r.custo_unit, M2, extra), cNum(r.custo_total_prod, M0, extra),
-        cNum(r.vendidas, IN, extra), cNum(r.faturamento, M0, extra), cNum(preco, M2, extra), cNum(marg, PC, extra),
-        cNum(r.trocas_amostras, IN, extra), cNum(r.custo_trocas_amostras, M0, extra), cNum(r.estoque, IN, extra), cNum(r.custo_estoque, M0, extra),
-      ];
-    };
-    const subRow = (label: string, d: any, rows: Row[], fill: string) => {
-      const preco = precoMedio(d.faturamento, d.vendidas);
-      const marg = margemDe(d.faturamento, cogsOf(rows));
-      const ex = rowFill(fill);
-      return [
-        cText(label, ex), cText("", ex), cNum(d.produzidas, IN, ex), cText("", ex), cNum(d.custo_total_prod, M0, ex),
-        cNum(d.vendidas, IN, ex), cNum(d.faturamento, M0, ex), cNum(preco, M2, ex), cNum(marg, PC, ex),
-        cNum(d.trocas_amostras, IN, ex), cNum(d.custo_trocas_amostras, M0, ex), cNum(d.estoque, IN, ex), cNum(d.custo_estoque, M0, ex),
-      ];
-    };
-    r900.forEach((r) => aoa.push(dataRow(r)));
-    aoa.push(subRow("Subtotal 900 ml", current.sub900, r900, "EEF2F7"));
-    r350.forEach((r) => aoa.push(dataRow(r)));
-    aoa.push(subRow("Subtotal 350 ml", current.sub350, r350, "EEF2F7"));
-    // TOTAL (verde, branco)
-    {
-      const ex = rowFill("059669", true);
-      const preco = precoMedio(T.faturamento, T.vendidas);
-      const marg = margemDe(T.faturamento, cogsOf(current.rows));
-      aoa.push([
-        cText("TOTAL", ex), cText("", ex), cNum(T.produzidas, IN, ex), cText("", ex), cNum(T.custo_total_prod, M0, ex),
-        cNum(T.vendidas, IN, ex), cNum(T.faturamento, M0, ex), cNum(preco, M2, ex), cNum(marg, PC, ex),
-        cNum(T.trocas_amostras, IN, ex), cNum(T.custo_trocas_amostras, M0, ex), cNum(T.estoque, IN, ex), cNum(T.custo_estoque, M0, ex),
+    const linha = (cells: any[]) => { const r = Array.from({ length: NC }, () => T("")); cells.forEach((c, i) => (r[i] = c)); aoa.push(r); };
+    linha([{ v: "Produção & Faturamento — custo pleno por SKU", t: "s", s: sTitle }]);
+    linha([{ v: `Período: ${periodoTxt} · custos indiretos rateados por litro ${data.rateio?.base === "produzidos" ? "produzido" : "vendido"} (${brl(data.rateio?.custo_litro)}/litro) · alíquota efetiva de impostos ${pct(aliq)}`, t: "s", s: sSub }]);
+    linha([]);
+    aoa.push(HEAD.map((h) => ({ v: h, t: "s", s: sHead })));
+    const dataRow = (r: Row) => linha([
+      T(cap(r.sabor)), T(r.tam + "ml"), N(r.produzidas, IN), N(r.vendidas, IN), N(r.faturamento, M0), N(r.preco, M2),
+      N(r.mp_un, M2), N(r.emb_un, M2), N(r.insumos_un, M2), T(r.fonte_insumos || "—"), N(r.indireto_un, M2), N(r.custo_pleno_un, M2),
+      N(r.preco != null ? r.imposto_un : null, M2), N(r.lucro_un, M2), N(r.margem_contrib, PC), N(r.margem_liquida, PC), N(r.resultado, M0),
+      N(r.preco_equilibrio, M2), N(precoAlvo(r.custo_pleno_un, aliq, alvo), M2), N(r.trocas_amostras, IN), N(r.custo_ta, M0), N(r.estoque, IN), N(r.custo_estoque, M0),
+    ]);
+    const subRow = (rot: string, s: any, ex: any) => {
+      const preco = s.vendidas > 0 ? s.faturamento / s.vendidas : null;
+      linha([
+        T(rot, ex), T("", ex), N(s.produzidas, IN, ex), N(s.vendidas, IN, ex), N(s.faturamento, M0, ex), N(preco, M2, ex),
+        T("", ex), T("", ex), N(s.vendidas > 0 ? s.insumos_vendidas / s.vendidas : null, M2, ex), T("", ex),
+        N(s.vendidas > 0 ? s.indireto_vendidas / s.vendidas : null, M2, ex), N(s.vendidas > 0 ? (s.insumos_vendidas + s.indireto_vendidas) / s.vendidas : null, M2, ex),
+        N(s.vendidas > 0 ? s.impostos_vendidas / s.vendidas : null, M2, ex), N(s.vendidas > 0 ? s.resultado / s.vendidas : null, M2, ex),
+        N(s.faturamento > 0 ? (s.faturamento - s.impostos_vendidas - s.insumos_vendidas) / s.faturamento : null, PC, ex),
+        N(s.faturamento > 0 ? s.resultado / s.faturamento : null, PC, ex), N(s.resultado, M0, ex), T("", ex), T("", ex),
+        N(s.trocas_amostras, IN, ex), N(s.custo_ta, M0, ex), N(s.estoque, IN, ex), N(s.custo_estoque, M0, ex),
       ]);
+    };
+    r900.forEach(dataRow); subRow("Subtotal 900 ml", data.sub900, fill("EEF2F7"));
+    r350.forEach(dataRow); subRow("Subtotal 350 ml", data.sub350, fill("EEF2F7"));
+    subRow("TOTAL", data.total, fill("059669", true));
+    linha([]);
+    const D = data.dre || {};
+    linha([{ v: "Resultado gerencial do período", t: "s", s: { font: { bold: true, sz: 11, color: { rgb: "047857" } } } }]);
+    const dl = (rot: string, v: any, bold = false) => linha([T(rot, bold ? { font: { bold: true } } : {}), T(""), T(""), T(""), N(v, M2, bold ? { font: { bold: true } } : {}), N(D.faturamento_oficial > 0 ? Number(v) / D.faturamento_oficial : null, PC)]);
+    dl("Faturamento (NF-e oficial)", D.faturamento_oficial, true);
+    dl("(−) Impostos sobre vendas", -D.impostos);
+    dl("(−) Insumos das garrafas vendidas", -D.insumos_vendidas);
+    dl("= Margem de contribuição", D.margem_contribuicao, true);
+    for (const g of (data.despesas?.grupos || [])) dl("(−) " + g.nome, -g.total);
+    dl("= Resultado do período", D.resultado, true);
+    linha([]);
+    linha([{ v: "Despesas por conta (Contas a Pagar, competência)", t: "s", s: { font: { bold: true, sz: 11, color: { rgb: "047857" } } } }]);
+    for (const g of (data.despesas?.grupos || [])) {
+      linha([T(g.nome, { font: { bold: true } }), T(""), T(""), T(""), N(g.total, M2, { font: { bold: true } })]);
+      for (const c of g.contas) linha([T("   " + c.nome), T(""), T(""), N(c.qtd, IN), N(c.valor, M2)]);
     }
-    aoa.push(blank());
-    // Reconciliação + nota
-    const noteRow = (txt: string) => { const r = blank(); r[0] = { v: txt, t: "s", s: sSub }; return r; };
-    if (T.faturamento_oficial_nf != null) {
-      aoa.push(noteRow("Faturamento oficial da NF no mês (igual ao Painel): " + brl(T.faturamento_oficial_nf) + "   |   Soma do valor dos produtos por SKU: " + brl(T.faturamento)));
-    }
-    aoa.push(noteRow("Custo de produção não inclui energia elétrica nem mão de obra. Preço de venda = faturamento ÷ vendidas; margem bruta = (faturamento − custo das vendidas) ÷ faturamento. Trocas/amostras à parte (garrafas cedidas × custo unitário)."));
-
-    // Monta worksheet
     const ws: any = {};
-    for (let r = 0; r < aoa.length; r++) for (let c = 0; c < NC; c++) {
-      const cellObj = aoa[r][c]; if (!cellObj) continue;
-      ws[XLSX.utils.encode_cell({ r, c })] = cellObj;
-    }
+    for (let r = 0; r < aoa.length; r++) for (let c = 0; c < NC; c++) if (aoa[r][c]) ws[XLSX.utils.encode_cell({ r, c })] = aoa[r][c];
     ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: NC - 1 } });
-    ws["!cols"] = [{ wch: 22 }, { wch: 7 }, { wch: 11 }, { wch: 11 }, { wch: 14 }, { wch: 10 }, { wch: 13 }, { wch: 12 }, { wch: 9 }, { wch: 15 }, { wch: 11 }, { wch: 10 }, { wch: 13 }];
-    ws["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: NC - 1 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: NC - 1 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: NC - 1 } },
-    ];
-    ws["!rows"] = [{ hpt: 20 }, { hpt: 14 }, { hpt: 16 }, { hpt: 6 }, { hpt: 26 }];
-    ws["!freeze"] = { xSplit: 0, ySplit: 5 };
+    ws["!cols"] = [{ wch: 30 }, { wch: 7 }, ...Array.from({ length: NC - 2 }, () => ({ wch: 12 }))];
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: NC - 1 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: NC - 1 } }];
+    ws["!freeze"] = { xSplit: 0, ySplit: 4 };
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Produção & Faturamento");
+    XLSX.utils.book_append_sheet(wb, ws, "Custo pleno por SKU");
     const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const url = URL.createObjectURL(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const u = URL.createObjectURL(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     const a = document.createElement("a");
-    a.href = url; a.download = "producao-faturamento-" + current.month + ".xlsx";
+    a.href = u; a.download = `producao-faturamento-${inicio}_a_${fim}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setTimeout(() => URL.revokeObjectURL(u), 5000);
   }
 
-  const cell = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
-  const th = "px-3 py-2 text-right text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap";
-  const Margem = ({ m }: { m: number | null }) => m == null
-    ? <span className="text-gray-400">—</span>
+  const cell = "px-2.5 py-2 text-right tabular-nums whitespace-nowrap";
+  const th = "px-2.5 py-2 text-right text-[10.5px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap";
+  const thG = (cls: string) => th + " " + cls;
+  const vazio = <span className="text-gray-300">—</span>;
+  const M = ({ v, n = 2 }: { v: number | null | undefined; n?: 0 | 2 }) => v == null || !isFinite(v) ? vazio : <>{n === 0 ? brl0(v) : brl(v)}</>;
+  const Pc = ({ m }: { m: number | null | undefined }) => m == null || !isFinite(m) ? vazio
     : <span className={m < 0 ? "text-rose-600 font-semibold" : "text-emerald-700 font-semibold"}>{pct(m)}</span>;
-  const SubRow = ({ label, d, rows }: { label: string; d: any; rows: Row[] }) => {
-    const preco = precoMedio(d.faturamento, d.vendidas);
-    const marg = margemDe(d.faturamento, cogsOf(rows));
-    return (
-      <tr className="bg-slate-100 font-semibold text-slate-800 border-y-2 border-slate-300">
-        <td className="px-3 py-2 text-left"><span className="border-l-4 border-slate-400 pl-2">{label}</span></td><td></td>
-        <td className={cell}>{nf(d.produzidas)}</td><td></td><td className={cell}>{brl0(d.custo_total_prod)}</td>
-        <td className={cell}>{nf(d.vendidas)}</td><td className={cell}>{brl0(d.faturamento)}</td>
-        <td className={cell}>{preco != null ? brl(preco) : <span className="text-gray-400">—</span>}</td>
-        <td className={cell}><Margem m={marg} /></td>
-        <td className={cell + " text-sky-700"}>{nf(d.trocas_amostras)}</td>
-        <td className={cell + " text-sky-700"}>{brl0(d.custo_trocas_amostras)}</td>
-        <td className={cell}>{nf(d.estoque)}</td><td className={cell}>{brl0(d.custo_estoque)}</td>
-      </tr>
-    );
-  };
+  const Lucro = ({ v, n = 2 }: { v: number | null | undefined; n?: 0 | 2 }) => v == null || !isFinite(v) ? vazio
+    : <span className={v < 0 ? "text-rose-600 font-semibold" : "text-emerald-700 font-semibold"}>{n === 0 ? brl0(v) : brl(v)}</span>;
+
   const DataRow = ({ r }: { r: Row }) => {
-    const preco = precoMedio(r.faturamento, r.vendidas);
-    const marg = r.custo_unit != null ? margemDe(r.faturamento, r.custo_unit * r.vendidas) : null;
+    const f = r.fonte_insumos ? FONTE[r.fonte_insumos] : null;
     return (
-      <tr className="border-b border-gray-100">
-        <td className="px-3 py-2 text-left font-medium">{cap(r.sabor)}</td>
-        <td className="px-3 py-2 text-left"><span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.tam}ml</span></td>
+      <tr className="border-b border-gray-100 hover:bg-gray-50/60">
+        <td className="px-2.5 py-2 text-left font-medium whitespace-nowrap sticky left-0 bg-white">{cap(r.sabor)}</td>
+        <td className="px-2.5 py-2 text-left"><span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.tam}ml</span></td>
         <td className={cell}>{nf(r.produzidas)}</td>
-        <td className={cell}>{r.custo_unit != null ? brl(r.custo_unit) : <span className="text-gray-400">—</span>}</td>
-        <td className={cell}>{brl0(r.custo_total_prod)}</td>
         <td className={cell}>{nf(r.vendidas)}</td>
         <td className={cell}>{brl0(r.faturamento)}</td>
-        <td className={cell}>{preco != null ? brl(preco) : <span className="text-gray-400">—</span>}</td>
-        <td className={cell}><Margem m={marg} /></td>
-        <td className={cell + " text-sky-700"}>{nf(r.trocas_amostras)}</td>
-        <td className={cell + " text-sky-700"}>{brl0(r.custo_trocas_amostras)}</td>
-        <td className={cell}>{nf(r.estoque)}</td>
-        <td className={cell}>{brl0(r.custo_estoque)}</td>
+        <td className={cell + " font-semibold"}><M v={r.preco} /></td>
+        <td className={cell + " bg-orange-50/40"}><M v={r.fonte_insumos ? r.mp_un : null} /></td>
+        <td className={cell + " bg-orange-50/40"}><M v={r.fonte_insumos ? r.emb_un : null} /></td>
+        <td className={cell + " bg-orange-50/40"} title={r.outros_un ? "Inclui outros insumos: " + brl(r.outros_un) + "/un" + (r.insumos_padrao_un != null ? " · ficha técnica: " + brl(r.insumos_padrao_un) : "") : (r.insumos_padrao_un != null ? "Ficha técnica: " + brl(r.insumos_padrao_un) : "")}>
+          <M v={r.fonte_insumos ? r.insumos_un : null} />{f && <span title={f.t} className={"ml-1 text-[9px] font-semibold px-1 py-px rounded " + f.cls}>{f.rot}</span>}
+        </td>
+        <td className={cell + " bg-violet-50/40"}><M v={r.indireto_un} /></td>
+        <td className={cell + " bg-violet-50/40 font-semibold"}><M v={r.custo_pleno_un} /></td>
+        <td className={cell}><M v={r.preco != null ? r.imposto_un : null} /></td>
+        <td className={cell}><Lucro v={r.lucro_un} /></td>
+        <td className={cell}><Pc m={r.margem_contrib} /></td>
+        <td className={cell}><Pc m={r.margem_liquida} /></td>
+        <td className={cell}><Lucro v={r.vendidas ? r.resultado : null} n={0} /></td>
+        <td className={cell + " bg-sky-50/50"}><M v={r.custo_pleno_un ? r.preco_equilibrio : null} /></td>
+        <td className={cell + " bg-sky-50/50 font-semibold text-sky-800"}><M v={r.custo_pleno_un ? precoAlvo(r.custo_pleno_un, aliq, alvo) : null} /></td>
+        <td className={cell + " text-gray-500"}>{nf(r.trocas_amostras)}</td>
+        <td className={cell + " text-gray-500"}>{brl0(r.custo_ta)}</td>
+        <td className={cell + " text-gray-500"}>{nf(r.estoque)}</td>
+        <td className={cell + " text-gray-500"}>{brl0(r.custo_estoque)}</td>
+      </tr>
+    );
+  };
+  const SubRow = ({ rot, s, total }: { rot: string; s: any; total?: boolean }) => {
+    const v = s?.vendidas || 0, fat = s?.faturamento || 0;
+    const un = (x: number) => (v > 0 ? x / v : null);
+    const cls = total ? "bg-emerald-600 text-white font-bold border-t-4 border-emerald-800" : "bg-slate-100 font-semibold text-slate-800 border-y-2 border-slate-300";
+    const sticky = total ? "bg-emerald-600" : "bg-slate-100";
+    const neg = (x: number | null) => (total ? "" : x != null && x < 0 ? " text-rose-600" : "");
+    const mc = fat > 0 ? (fat - s.impostos_vendidas - s.insumos_vendidas) / fat : null;
+    const ml = fat > 0 ? s.resultado / fat : null;
+    return (
+      <tr className={cls}>
+        <td className={"px-2.5 py-2 text-left whitespace-nowrap sticky left-0 " + sticky}>{total ? "TOTAL" : <span className="border-l-4 border-slate-400 pl-2">{rot}</span>}</td><td></td>
+        <td className={cell}>{nf(s?.produzidas)}</td><td className={cell}>{nf(v)}</td><td className={cell}>{brl0(fat)}</td>
+        <td className={cell}>{un(fat) != null ? brl(un(fat)) : "—"}</td>
+        <td></td><td></td>
+        <td className={cell}>{un(s?.insumos_vendidas) != null ? brl(un(s.insumos_vendidas)) : "—"}</td>
+        <td className={cell}>{un(s?.indireto_vendidas) != null ? brl(un(s.indireto_vendidas)) : "—"}</td>
+        <td className={cell}>{v > 0 ? brl((s.insumos_vendidas + s.indireto_vendidas) / v) : "—"}</td>
+        <td className={cell}>{un(s?.impostos_vendidas) != null ? brl(un(s.impostos_vendidas)) : "—"}</td>
+        <td className={cell + neg(un(s?.resultado))}>{un(s?.resultado) != null ? brl(un(s.resultado)) : "—"}</td>
+        <td className={cell + neg(mc)}>{pct(mc)}</td><td className={cell + neg(ml)}>{pct(ml)}</td>
+        <td className={cell + neg(s?.resultado)}>{brl0(s?.resultado)}</td>
+        <td></td><td></td>
+        <td className={cell}>{nf(s?.trocas_amostras)}</td><td className={cell}>{brl0(s?.custo_ta)}</td>
+        <td className={cell}>{nf(s?.estoque)}</td><td className={cell}>{brl0(s?.custo_estoque)}</td>
       </tr>
     );
   };
 
+  const D = data?.dre || {};
+  const fatO = Number(D.faturamento_oficial) || 0;
+  const pf = (v: number) => (fatO > 0 ? pct(v / fatO) : "—");
+  const Kpi = ({ rot, v, sub, cor = "text-gray-900" }: { rot: string; v: string; sub?: string; cor?: string }) => (
+    <div className="min-w-0">
+      <div className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">{rot}</div>
+      <div className={"text-xl font-bold tabular-nums " + cor}>{v}</div>
+      {sub && <div className="text-[11px] text-gray-500 tabular-nums">{sub}</div>}
+    </div>
+  );
+
   return (
-    <div className="mt-4 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-800">Produção &amp; Faturamento por SKU</h2>
-          <p className="text-xs text-gray-500">Fonte: módulo Indústria (ordens de produção + lotes) e pipeline de faturamento. Dados a partir de Set/2026{data?.generatedAt ? " · atualizado em " + new Date(data.generatedAt).toLocaleString("pt-BR") : ""}.</p>
+    <div className="mt-4 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-gray-800">Produção &amp; Faturamento — custo pleno por SKU</h2>
+          <p className="text-xs text-gray-500">Matéria-prima e embalagem das ordens de produção, todos os custos e despesas do Contas a Pagar (pessoal, aluguel, energia, comerciais, administrativas...) rateados por litro, e impostos sobre vendas. Período {periodoTxt}{data?.generatedAt ? " · atualizado em " + new Date(data.generatedAt).toLocaleString("pt-BR") : ""}{isFetching ? " · atualizando…" : ""}.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex gap-1.5 flex-wrap">
-            {months.map((m) => (
-              <button key={m.month} type="button" onClick={() => setSel(m.month)}
-                className={"text-xs font-semibold px-3 py-1.5 rounded-full border " + (current.month === m.month ? "bg-emerald-600 border-emerald-600 text-white" : "border-gray-300 text-gray-500 hover:text-gray-700")}>
-                {mesLabel(m.month)}
-              </button>
-            ))}
-          </div>
-          <button type="button" onClick={exportarExcel} title="Exportar o mês selecionado para Excel (.xlsx)"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-600 text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-            Exportar para Excel
-          </button>
-        </div>
+        <button type="button" onClick={exportarExcel} disabled={!data} title="Exportar o período para Excel (.xlsx)"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border border-emerald-600 text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors disabled:opacity-50">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+          Exportar para Excel
+        </button>
       </div>
 
-      <Card><CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: 1140 }}>
-            <thead><tr className="border-b border-gray-200">
-              <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">Sabor<Info t={INFO.sabor} /></th>
-              <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wide text-gray-500 font-semibold whitespace-nowrap">Emb.<Info t={INFO.emb} /></th>
-              <th className={th}>Produzidas<Info t={INFO.produzidas} /></th>
-              <th className={th}>Custo unit.<Info t={INFO.custoUnit} /></th>
-              <th className={th}>Custo produção<Info t={INFO.custoProd} /></th>
-              <th className={th}>Vendidas<Info t={INFO.vendidas} /></th>
-              <th className={th}>Faturamento<Info t={INFO.faturamento} /></th>
-              <th className={th}>Preço venda<Info t={INFO.preco} /></th>
-              <th className={th}>Margem<Info t={INFO.margem} /></th>
-              <th className={th + " text-sky-700"}>Trocas/Amostras<Info t={INFO.trocasAmostras} /></th>
-              <th className={th + " text-sky-700"}>Custo T/A<Info t={INFO.custoTA} /></th>
-              <th className={th}>Estoque<Info t={INFO.estoque} /></th>
-              <th className={th}>Custo estoque<Info t={INFO.custoEstoque} /></th>
-            </tr></thead>
-            <tbody>
-              {r900.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
-              <SubRow label="Subtotal 900 ml" d={current.sub900} rows={r900} />
-              {r350.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
-              <SubRow label="Subtotal 350 ml" d={current.sub350} rows={r350} />
-              <tr className="bg-emerald-600 text-white font-bold text-[15px] border-t-4 border-emerald-800">
-                <td className="px-3 py-2.5 text-left tracking-wide">TOTAL</td><td></td>
-                <td className={cell}>{nf(T.produzidas)}</td><td></td><td className={cell}>{brl0(T.custo_total_prod)}</td>
-                <td className={cell}>{nf(T.vendidas)}</td><td className={cell}>{brl0(T.faturamento)}</td>
-                <td className={cell}>{precoMedio(T.faturamento, T.vendidas) != null ? brl(precoMedio(T.faturamento, T.vendidas)) : "—"}</td>
-                <td className={cell}>{pct(margemDe(T.faturamento, cogsOf(current.rows)))}</td>
-                <td className={cell}>{nf(T.trocas_amostras)}</td>
-                <td className={cell}>{brl0(T.custo_trocas_amostras)}</td>
-                <td className={cell}>{nf(T.estoque)}</td><td className={cell}>{brl0(T.custo_estoque)}</td>
-              </tr>
-            </tbody>
-          </table>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-gray-200 bg-white px-3 py-2" data-testid="pf-filtro">
+        <div className="flex items-center gap-1.5 text-xs text-gray-600">
+          <span className="font-semibold">Período</span>
+          <input type="date" value={inicio} min={MIN_DATA} max={hoje} onChange={(e) => setData("i", e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-xs" data-testid="pf-inicio" />
+          <span>a</span>
+          <input type="date" value={fim} min={inicio} max={hoje} onChange={(e) => setData("f", e.target.value)} className="border border-gray-300 rounded px-2 py-1 text-xs" data-testid="pf-fim" />
         </div>
-      </CardContent></Card>
-
-      {T.faturamento_oficial_nf != null && (
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-gray-600 px-1">
-          <span>Faturamento oficial da NF no mês (igual ao Painel): <span className="font-semibold text-gray-800 tabular-nums">{brl(T.faturamento_oficial_nf)}</span></span>
-          <span>Soma do valor dos produtos por SKU: <span className="font-semibold text-gray-800 tabular-nums">{brl(T.faturamento)}</span></span>
-          {Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)) >= 0.5 && (
-            <span className="text-amber-600">Diferença de {brl(Math.abs((T.faturamento_oficial_nf || 0) - (T.faturamento || 0)))} = ajustes de rodapé da NF (descontos, frete e impostos), que não são rateados por SKU.</span>
-          )}
+        <div className="flex gap-1 flex-wrap">
+          {meses.map((ym) => (
+            <button key={ym} type="button" onClick={() => escolherMes(ym)} title={`${MESES_LONGO[Number(ym.slice(5))]}/${ym.slice(0, 4)}: dia 1º ao último dia`}
+              className={"text-[11px] font-semibold px-2.5 py-1 rounded-full border " + (mesAtivo === ym ? "bg-emerald-600 border-emerald-600 text-white" : "border-gray-300 text-gray-500 hover:text-gray-800")}>
+              {MESES[Number(ym.slice(5))]}/{ym.slice(2, 4)}
+            </button>
+          ))}
         </div>
-      )}
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 ml-auto" title={INFO.alvo}>
+          <span className="font-semibold">Margem-alvo</span>
+          <input type="number" min={0} max={90} step={1} value={alvoTxt} onChange={(e) => setAlvoTxt(e.target.value)} className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-right" data-testid="pf-alvo" />
+          <span>%</span>
+        </label>
+      </div>
 
-      <p className="text-[11px] text-gray-400">Vendidas e faturamento vêm da <span className="font-medium">NF-e de venda emitida</span> (regra oficial, a mesma do Painel), rateados por SKU pelos itens da nota. Estoque e custo em estoque são o saldo atual (snapshot) dos lotes em uso; produção é do mês selecionado. Custo de produção = garrafas produzidas × custo unitário do lote — <span className="text-amber-600 font-medium">ainda não inclui energia elétrica nem mão de obra</span>. Preço de venda = faturamento ÷ vendidas; margem bruta = (faturamento − custo das vendidas) ÷ faturamento. Trocas/amostras são contabilizadas à parte (garrafas cedidas × custo unitário) e não entram em vendidas nem em faturamento. Passe o mouse sobre o <span className="font-semibold">i</span> de cada coluna para ver a origem do dado. Os dados se atualizam automaticamente na mesma cadência do Painel (a cada 30 min e ao focar a janela).</p>
+      {isLoading ? <div className="text-sm text-gray-500">Carregando custos do período…</div>
+        : error ? <div className="text-sm text-red-600">Erro ao carregar: {String((error as any)?.message || error)}</div>
+        : !data ? null : (<>
+          <Card><CardContent className="p-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <Kpi rot="Faturamento (NF-e)" v={brl0(fatO)} sub={`${nf(data.total?.vendidas)} garrafas vendidas`} />
+              <Kpi rot="Impostos s/ vendas" v={brl0(D.impostos)} sub={`alíquota efetiva ${pct(aliq)}`} />
+              <Kpi rot="Insumos das vendidas" v={brl0(D.insumos_vendidas)} sub={`${pf(D.insumos_vendidas)} do faturamento`} />
+              <Kpi rot="Custos indiretos" v={brl0(D.indiretos)} sub={`${brl(data.rateio?.custo_litro)} por litro ${data.rateio?.base === "produzidos" ? "produzido" : "vendido"}`} />
+              <Kpi rot="Resultado do período" v={brl0(D.resultado)} sub={`${pf(D.resultado)} do faturamento`} cor={Number(D.resultado) < 0 ? "text-rose-600" : "text-emerald-700"} />
+            </div>
+          </CardContent></Card>
+
+          <Card><CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]" style={{ minWidth: 1900 }}>
+                <thead>
+                  <tr className="text-[10px] uppercase tracking-wide text-gray-400">
+                    <th colSpan={6}></th>
+                    <th colSpan={4} className="py-1 bg-orange-50 text-orange-700 font-semibold">Custo direto (insumos) por garrafa</th>
+                    <th colSpan={2} className="py-1 bg-violet-50 text-violet-700 font-semibold">Estrutura rateada</th>
+                    <th colSpan={5} className="py-1 font-semibold text-gray-500">Resultado</th>
+                    <th colSpan={2} className="py-1 bg-sky-50 text-sky-700 font-semibold">Preço de venda</th>
+                    <th colSpan={4} className="py-1 font-semibold text-gray-400">Trocas e estoque</th>
+                  </tr>
+                  <tr className="border-b border-gray-200">
+                    <th className="px-2.5 py-2 text-left text-[10.5px] uppercase tracking-wide text-gray-500 font-semibold sticky left-0 bg-white">Sabor</th>
+                    <th className="px-2.5 py-2 text-left text-[10.5px] uppercase tracking-wide text-gray-500 font-semibold">Emb.</th>
+                    <th className={th}>Produzidas<Info t={INFO.produzidas} /></th>
+                    <th className={th}>Vendidas<Info t={INFO.vendidas} /></th>
+                    <th className={th}>Faturamento<Info t={INFO.faturamento} /></th>
+                    <th className={th}>Preço venda<Info t={INFO.preco} /></th>
+                    <th className={thG("bg-orange-50/60")}>Mat.-prima<Info t={INFO.mp} /></th>
+                    <th className={thG("bg-orange-50/60")}>Embalagem<Info t={INFO.emb} /></th>
+                    <th className={thG("bg-orange-50/60")}>Insumos/un<Info t={INFO.insumos} /></th>
+                    <th className={thG("bg-violet-50/60")}>Indireto/un<Info t={INFO.indireto} /></th>
+                    <th className={thG("bg-violet-50/60")}>Custo pleno<Info t={INFO.pleno} /></th>
+                    <th className={th}>Impostos/un<Info t={INFO.imposto} /></th>
+                    <th className={th}>Lucro/un<Info t={INFO.lucro} /></th>
+                    <th className={th}>Marg. contrib.<Info t={INFO.mc} /></th>
+                    <th className={th}>Marg. líquida<Info t={INFO.ml} /></th>
+                    <th className={th}>Resultado<Info t={INFO.resultado} /></th>
+                    <th className={thG("bg-sky-50/60")}>Equilíbrio<Info t={INFO.equilibrio} /></th>
+                    <th className={thG("bg-sky-50/60 text-sky-700")}>P/ {Math.round(alvo * 100)}%<Info t={INFO.alvo} /></th>
+                    <th className={th}>Trocas/Am.<Info t={INFO.ta} /></th>
+                    <th className={th}>Custo T/A</th>
+                    <th className={th}>Estoque<Info t={INFO.estoque} /></th>
+                    <th className={th}>Custo estoque</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r900.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
+                  <SubRow rot="Subtotal 900 ml" s={data.sub900} />
+                  {r350.map((r) => <DataRow key={r.sabor + r.tam} r={r} />)}
+                  <SubRow rot="Subtotal 350 ml" s={data.sub350} />
+                  <SubRow rot="TOTAL" s={data.total} total />
+                </tbody>
+              </table>
+            </div>
+          </CardContent></Card>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card><CardContent className="p-4 space-y-1.5 text-sm">
+              <div className="font-semibold text-gray-800 mb-1">Resultado gerencial do período</div>
+              {[
+                ["Faturamento (NF-e oficial)", fatO, true],
+                ["(−) Impostos sobre vendas", -D.impostos, false],
+                ["= Receita líquida", D.receita_liquida, true],
+                ["(−) Insumos das garrafas vendidas", -D.insumos_vendidas, false],
+                ["= Margem de contribuição", D.margem_contribuicao, true],
+                ...((data.despesas?.grupos || []).map((g: any) => ["(−) " + g.nome, -g.total, false])),
+                ["= Resultado do período", D.resultado, true],
+              ].map(([rot, v, b]: any, i: number) => (
+                <div key={i} className={"flex justify-between gap-3 " + (b ? "font-semibold border-t border-gray-100 pt-1" : "text-gray-600")}>
+                  <span className="min-w-0">{rot}</span>
+                  <span className={"tabular-nums whitespace-nowrap " + (Number(v) < 0 && b ? "text-rose-600" : "")}>{brl(v)} <span className="text-[11px] text-gray-400 font-normal">{pf(Number(v))}</span></span>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400 pt-2">Todas as despesas do período entram aqui, mesmo as que ficaram nas garrafas ainda em estoque. Trocas/amostras custaram {brl0(D.custo_ta)} no período (já dentro dos custos acima).</p>
+            </CardContent></Card>
+
+            <Card><CardContent className="p-4 text-sm">
+              <div className="font-semibold text-gray-800 mb-1">Custos e despesas indiretos (Contas a Pagar)</div>
+              <p className="text-[11px] text-gray-500 mb-2">Por competência (data de emissão). Rateio: {brl(data.rateio?.custo_litro)} por litro {data.rateio?.base === "produzidos" ? "produzido" : "vendido"} ({nf(Math.round(data.rateio?.litros || 0))} litros).</p>
+              {(data.despesas?.grupos || []).length === 0 && <div className="text-xs text-gray-400">Nenhuma despesa lançada no período.</div>}
+              {(data.despesas?.grupos || []).map((g: any) => (
+                <details key={g.key} className="border-b border-gray-100 py-1">
+                  <summary className="flex justify-between gap-3 cursor-pointer list-none">
+                    <span className="min-w-0 text-gray-700">▸ {g.nome}</span>
+                    <span className="tabular-nums whitespace-nowrap font-semibold">{brl0(g.total)} <span className="text-[11px] text-gray-400 font-normal">{pf(g.total)}</span></span>
+                  </summary>
+                  <div className="pl-4 py-1 space-y-0.5">
+                    {g.contas.map((c: any, i: number) => (
+                      <div key={i} className="flex justify-between gap-3 text-xs text-gray-600">
+                        <span className="min-w-0 truncate" title={c.nome}>{c.nome} <span className="text-gray-400">({c.qtd})</span></span>
+                        <span className="tabular-nums whitespace-nowrap">{brl(c.valor)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ))}
+              <div className="flex justify-between gap-3 pt-1.5 font-semibold"><span>Total indireto</span><span className="tabular-nums">{brl0(data.despesas?.indiretos)}</span></div>
+              <div className="text-[11px] text-gray-400 pt-2 space-y-0.5">
+                <div>Fora do rateio: compras de matéria-prima/embalagem {brl0(data.despesas?.compras_insumos)} (o insumo entra pelo consumo nas OPs, para não contar duas vezes){Number(data.despesas?.fora_dre) ? `; contas marcadas fora da DRE ${brl0(data.despesas.fora_dre)}` : ""}.</div>
+              </div>
+            </CardContent></Card>
+
+            <Card><CardContent className="p-4 text-sm">
+              <div className="font-semibold text-gray-800 mb-1">Matéria-prima consumida nas OPs</div>
+              <p className="text-[11px] text-gray-500 mb-2">Consumo e perdas lançados nas ordens de produção de garrafa no período, pelo custo do movimento.</p>
+              {(data.insumos?.lista || []).length === 0 && <div className="text-xs text-gray-400">Nenhum consumo de insumo lançado em OP no período — o custo por garrafa usa a ficha técnica ou o lote.</div>}
+              <div className="space-y-0.5 max-h-72 overflow-y-auto">
+                {(data.insumos?.lista || []).map((i: any, k: number) => (
+                  <div key={k} className="flex justify-between gap-3 text-xs">
+                    <span className="min-w-0 truncate text-gray-700" title={i.nome}>
+                      <span className={"inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle " + (i.grupo === "mp" ? "bg-orange-400" : i.grupo === "emb" ? "bg-sky-400" : "bg-gray-300")} />
+                      {i.nome} <span className="text-gray-400">{nf(i.quantidade)} {i.unidade}</span>
+                    </span>
+                    <span className="tabular-nums whitespace-nowrap">{brl(i.valor)}{i.perda ? <span className="text-rose-500" title="Perdas"> · perda {brl0(i.perda)}</span> : null}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between gap-3 pt-1.5 font-semibold border-t border-gray-100 mt-1"><span>Total consumido</span><span className="tabular-nums">{brl0(data.insumos?.total)}</span></div>
+              <div className="text-[11px] text-gray-400 pt-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-400 mr-1" />matéria-prima <span className="inline-block w-1.5 h-1.5 rounded-full bg-sky-400 mx-1" />embalagem <span className="inline-block w-1.5 h-1.5 rounded-full bg-gray-300 mx-1" />outros{Number(data.insumos?.consumo_intermediario) ? ` · OPs de polpa/intermediários: ${brl0(data.insumos.consumo_intermediario)} (entram nas garrafas pelo insumo gerado)` : ""}</div>
+            </CardContent></Card>
+          </div>
+
+          <p className="text-[11px] text-gray-400">Método: custeio por absorção. Custo pleno por garrafa = insumos (consumo real nas OPs do período; sem lançamento, ficha técnica; sem ficha, custo do lote) + estrutura (todas as despesas do Contas a Pagar do período, exceto compras de insumos, rateadas por litro {data.rateio?.base === "produzidos" ? "produzido" : "vendido"} — a garrafa de 900 ml absorve 2,6× a de 350 ml). Impostos pela alíquota efetiva do período. Faturamento oficial das NF-e: {brl(fatO)}; soma dos itens por SKU: {brl(D.faturamento_itens)}. Estoque é a foto atual. Passe o mouse no <span className="font-semibold">i</span> de cada coluna para ver a regra.</p>
+        </>)}
     </div>
   );
 }
