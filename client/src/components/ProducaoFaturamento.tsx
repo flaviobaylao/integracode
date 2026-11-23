@@ -37,6 +37,16 @@ const Info = ({ t }: { t: string }) => (
   <span title={t} className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-gray-200 text-gray-500 text-[9px] font-bold cursor-help align-[1px] normal-case tracking-normal">i</span>
 );
 
+// Conceitos de cada grupo de colunas (ícone "i" no cabeçalho de cima).
+const GRUPO = {
+  volume: "VOLUME E RECEITA — o que foi produzido e vendido no período e quanto entrou. Produzidas vem das ordens de produção; vendidas e faturamento vêm das NF-e de venda (regra oficial do Painel). Preço de venda = faturamento ÷ garrafas vendidas.",
+  direto: "CUSTO DIRETO (VARIÁVEL) — o que vai fisicamente dentro de cada garrafa e só existe se a garrafa for produzida: matéria-prima (polpas, concentrados, frutas, açúcar) e embalagem (garrafa, tampa, rótulo). Insumos/un = matéria-prima + embalagem + outros insumos. Origem: consumo real nas OPs do período; sem lançamento, ficha técnica; sem ficha, custo do lote.",
+  estrutura: "ESTRUTURA RATEADA (CUSTOS INDIRETOS / FIXOS) — tudo o que a empresa gasta para funcionar e não vai dentro da garrafa: pessoal e salários, aluguel, energia, manutenção, despesas comerciais, administrativas, gerais e financeiras (Contas a Pagar do período, por competência). Pelo custeio por absorção, esse total é distribuído às garrafas proporcional aos litros (a de 900 ml absorve 2,6× a de 350 ml). Custo pleno = custo direto + estrutura rateada: é o custo total de cada garrafa.",
+  resultado: "RESULTADO — o que sobra depois de pagar impostos e custos. Impostos/un pela alíquota efetiva do período. Lucro/un = preço − impostos − custo pleno. Margem de contribuição = (preço − impostos − insumos) ÷ preço: quanto cada garrafa contribui para pagar a estrutura (se for negativa, cada garrafa vendida aumenta o prejuízo). Margem líquida = lucro ÷ preço, já com toda a estrutura paga. Resultado = lucro/un × garrafas vendidas.",
+  preco: "PREÇO DE VENDA (FORMAÇÃO DE PREÇO / MARKUP) — referências para precificar. Equilíbrio = menor preço sem prejuízo: custo pleno ÷ (1 − alíquota de impostos). P/ X% = preço que entrega a margem líquida-alvo informada no filtro: custo pleno ÷ (1 − impostos − margem-alvo). Compare com o preço de venda praticado.",
+  trocas: "TROCAS E ESTOQUE — garrafas cedidas sem faturamento (trocas e amostras do período), com o custo pleno de cada uma, e a posição atual do estoque (foto do momento) com o valor em estoque.",
+};
+
 const FONTE: Record<string, { rot: string; cls: string; t: string }> = {
   real: { rot: "real", cls: "bg-emerald-50 text-emerald-700", t: "Consumo real de insumos lançado nas ordens de produção do período ÷ garrafas produzidas." },
   ficha: { rot: "ficha", cls: "bg-sky-50 text-sky-700", t: "Sem consumo lançado nas OPs do período: custo padrão pela ficha técnica (receita × custo atual de cada insumo)." },
@@ -303,12 +313,12 @@ export default function ProducaoFaturamento() {
               <table className="w-full text-[13px]" style={{ minWidth: 1900 }}>
                 <thead>
                   <tr className="text-[10px] uppercase tracking-wide text-gray-400">
-                    <th colSpan={6}></th>
-                    <th colSpan={4} className="py-1 bg-orange-50 text-orange-700 font-semibold">Custo direto (insumos) por garrafa</th>
-                    <th colSpan={2} className="py-1 bg-violet-50 text-violet-700 font-semibold">Estrutura rateada</th>
-                    <th colSpan={5} className="py-1 font-semibold text-gray-500">Resultado</th>
-                    <th colSpan={2} className="py-1 bg-sky-50 text-sky-700 font-semibold">Preço de venda</th>
-                    <th colSpan={4} className="py-1 font-semibold text-gray-400">Trocas e estoque</th>
+                    <th colSpan={6} className="py-1 px-2.5 text-left font-semibold text-gray-500 sticky left-0 bg-white">Volume e receita<Info t={GRUPO.volume} /></th>
+                    <th colSpan={3} className="py-1 bg-orange-50 text-orange-700 font-semibold border-l border-white">Custo direto (insumos) por garrafa<Info t={GRUPO.direto} /></th>
+                    <th colSpan={2} className="py-1 bg-violet-50 text-violet-700 font-semibold border-l border-white">Estrutura rateada<Info t={GRUPO.estrutura} /></th>
+                    <th colSpan={5} className="py-1 bg-gray-50 font-semibold text-gray-600 border-l border-white">Resultado<Info t={GRUPO.resultado} /></th>
+                    <th colSpan={2} className="py-1 bg-sky-50 text-sky-700 font-semibold border-l border-white">Preço de venda<Info t={GRUPO.preco} /></th>
+                    <th colSpan={4} className="py-1 bg-gray-50 font-semibold text-gray-500 border-l border-white">Trocas e estoque<Info t={GRUPO.trocas} /></th>
                   </tr>
                   <tr className="border-b border-gray-200">
                     <th className="px-2.5 py-2 text-left text-[10.5px] uppercase tracking-wide text-gray-500 font-semibold sticky left-0 bg-white">Sabor</th>
