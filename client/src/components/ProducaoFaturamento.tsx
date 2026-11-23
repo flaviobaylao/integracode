@@ -189,36 +189,50 @@ export default function ProducaoFaturamento() {
   const Lucro = ({ v, n = 2 }: { v: number | null | undefined; n?: 0 | 2 }) => v == null || !isFinite(v) ? vazio
     : <span className={v < 0 ? "text-rose-600 font-semibold" : "text-emerald-700 font-semibold"}>{n === 0 ? brl0(v) : brl(v)}</span>;
 
+  // Faixas por assunto: cada grupo de colunas tem a sua cor (cabeçalho forte, células claras)
+  // e uma divisória grossa na primeira coluna do grupo, de cima a baixo da tabela.
+  const GC: Record<string, { hd: string; th: string; td: string; b: string; bt: string }> = {
+    vol: { hd: "bg-gray-100 text-gray-700", th: "bg-white text-gray-500", td: "", b: "", bt: "" },
+    dir: { hd: "bg-orange-200 text-orange-900", th: "bg-orange-100 text-orange-800", td: "bg-orange-50", b: "border-l-2 border-l-orange-400", bt: "border-l-2 border-l-white/60" },
+    est: { hd: "bg-violet-200 text-violet-900", th: "bg-violet-100 text-violet-800", td: "bg-violet-50", b: "border-l-2 border-l-violet-400", bt: "border-l-2 border-l-white/60" },
+    res: { hd: "bg-emerald-200 text-emerald-900", th: "bg-emerald-100 text-emerald-800", td: "bg-emerald-50/70", b: "border-l-2 border-l-emerald-500", bt: "border-l-2 border-l-white/60" },
+    pre: { hd: "bg-sky-200 text-sky-900", th: "bg-sky-100 text-sky-800", td: "bg-sky-50", b: "border-l-2 border-l-sky-400", bt: "border-l-2 border-l-white/60" },
+    tro: { hd: "bg-gray-200 text-gray-700", th: "bg-gray-100 text-gray-600", td: "bg-gray-50", b: "border-l-2 border-l-gray-400", bt: "border-l-2 border-l-white/60" },
+  };
+  const COLG = ["vol", "vol", "vol", "vol", "vol", "vol", "dir", "dir", "dir", "est", "est", "res", "res", "res", "res", "res", "pre", "pre", "tro", "tro", "tro", "tro"];
+  const inicioGrupo = (i: number) => i > 0 && COLG[i] !== COLG[i - 1];
+  // Classe da célula i: fundo do grupo (só nas linhas de SKU) + divisória no início do grupo.
+  const cg = (i: number, modo: "td" | "sub" | "tot" = "td") => {
+    const g = GC[COLG[i]];
+    const borda = inicioGrupo(i) ? (modo === "tot" ? g.bt : g.b) : "";
+    return " " + (modo === "td" ? g.td : "") + " " + borda;
+  };
+  const Celulas = ({ itens, modo }: { itens: { c: any; cls?: string; title?: string }[]; modo: "td" | "sub" | "tot" }) => (
+    <>{itens.map((it, i) => <td key={i} title={it.title} className={(it.cls ?? cell) + cg(i, modo)}>{it.c}</td>)}</>
+  );
+
   const DataRow = ({ r }: { r: Row }) => {
     const f = r.fonte_insumos ? FONTE[r.fonte_insumos] : null;
-    return (
-      <tr className="border-b border-gray-100 hover:bg-gray-50/60">
-        <td className="px-2.5 py-2 text-left font-medium whitespace-nowrap sticky left-0 bg-white">{cap(r.sabor)}</td>
-        <td className="px-2.5 py-2 text-left"><span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.tam}ml</span></td>
-        <td className={cell}>{nf(r.produzidas)}</td>
-        <td className={cell}>{nf(r.vendidas)}</td>
-        <td className={cell}>{brl0(r.faturamento)}</td>
-        <td className={cell + " font-semibold"}><M v={r.preco} /></td>
-        <td className={cell + " bg-orange-50/40"}><M v={r.fonte_insumos ? r.mp_un : null} /></td>
-        <td className={cell + " bg-orange-50/40"}><M v={r.fonte_insumos ? r.emb_un : null} /></td>
-        <td className={cell + " bg-orange-50/40"} title={r.outros_un ? "Inclui outros insumos: " + brl(r.outros_un) + "/un" + (r.insumos_padrao_un != null ? " · ficha técnica: " + brl(r.insumos_padrao_un) : "") : (r.insumos_padrao_un != null ? "Ficha técnica: " + brl(r.insumos_padrao_un) : "")}>
-          <M v={r.fonte_insumos ? r.insumos_un : null} />{f && <span title={f.t} className={"ml-1 text-[9px] font-semibold px-1 py-px rounded " + f.cls}>{f.rot}</span>}
-        </td>
-        <td className={cell + " bg-violet-50/40"}><M v={r.indireto_un} /></td>
-        <td className={cell + " bg-violet-50/40 font-semibold"}><M v={r.custo_pleno_un} /></td>
-        <td className={cell}><M v={r.preco != null ? r.imposto_un : null} /></td>
-        <td className={cell}><Lucro v={r.lucro_un} /></td>
-        <td className={cell}><Pc m={r.margem_contrib} /></td>
-        <td className={cell}><Pc m={r.margem_liquida} /></td>
-        <td className={cell}><Lucro v={r.vendidas ? r.resultado : null} n={0} /></td>
-        <td className={cell + " bg-sky-50/50"}><M v={r.custo_pleno_un ? r.preco_equilibrio : null} /></td>
-        <td className={cell + " bg-sky-50/50 font-semibold text-sky-800"}><M v={r.custo_pleno_un ? precoAlvo(r.custo_pleno_un, aliq, alvo) : null} /></td>
-        <td className={cell + " text-gray-500"}>{nf(r.trocas_amostras)}</td>
-        <td className={cell + " text-gray-500"}>{brl0(r.custo_ta)}</td>
-        <td className={cell + " text-gray-500"}>{nf(r.estoque)}</td>
-        <td className={cell + " text-gray-500"}>{brl0(r.custo_estoque)}</td>
-      </tr>
-    );
+    const itens = [
+      { c: cap(r.sabor), cls: "px-2.5 py-2 text-left font-medium whitespace-nowrap sticky left-0 bg-white" },
+      { c: <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">{r.tam}ml</span>, cls: "px-2.5 py-2 text-left" },
+      { c: nf(r.produzidas) }, { c: nf(r.vendidas) }, { c: brl0(r.faturamento) },
+      { c: <M v={r.preco} />, cls: cell + " font-semibold" },
+      { c: <M v={r.fonte_insumos ? r.mp_un : null} /> },
+      { c: <M v={r.fonte_insumos ? r.emb_un : null} /> },
+      { c: <><M v={r.fonte_insumos ? r.insumos_un : null} />{f && <span title={f.t} className={"ml-1 text-[9px] font-semibold px-1 py-px rounded " + f.cls}>{f.rot}</span>}</>, cls: cell + " font-semibold text-orange-900",
+        title: r.outros_un ? "Inclui outros insumos: " + brl(r.outros_un) + "/un" + (r.insumos_padrao_un != null ? " · ficha técnica: " + brl(r.insumos_padrao_un) : "") : (r.insumos_padrao_un != null ? "Ficha técnica: " + brl(r.insumos_padrao_un) : "") },
+      { c: <M v={r.indireto_un} /> },
+      { c: <M v={r.custo_pleno_un} />, cls: cell + " font-bold text-violet-900" },
+      { c: <M v={r.preco != null ? r.imposto_un : null} /> },
+      { c: <Lucro v={r.lucro_un} /> }, { c: <Pc m={r.margem_contrib} /> }, { c: <Pc m={r.margem_liquida} /> },
+      { c: <Lucro v={r.vendidas ? r.resultado : null} n={0} /> },
+      { c: <M v={r.custo_pleno_un ? r.preco_equilibrio : null} /> },
+      { c: <M v={r.custo_pleno_un ? precoAlvo(r.custo_pleno_un, aliq, alvo) : null} />, cls: cell + " font-bold text-sky-800" },
+      { c: nf(r.trocas_amostras), cls: cell + " text-gray-600" }, { c: brl0(r.custo_ta), cls: cell + " text-gray-600" },
+      { c: nf(r.estoque), cls: cell + " text-gray-600" }, { c: brl0(r.custo_estoque), cls: cell + " text-gray-600" },
+    ];
+    return <tr className="border-b border-gray-200/70 hover:brightness-[0.97]"><Celulas itens={itens} modo="td" /></tr>;
   };
   const SubRow = ({ rot, s, total }: { rot: string; s: any; total?: boolean }) => {
     const v = s?.vendidas || 0, fat = s?.faturamento || 0;
@@ -228,24 +242,22 @@ export default function ProducaoFaturamento() {
     const neg = (x: number | null) => (total ? "" : x != null && x < 0 ? " text-rose-600" : "");
     const mc = fat > 0 ? (fat - s.impostos_vendidas - s.insumos_vendidas) / fat : null;
     const ml = fat > 0 ? s.resultado / fat : null;
-    return (
-      <tr className={cls}>
-        <td className={"px-2.5 py-2 text-left whitespace-nowrap sticky left-0 " + sticky}>{total ? "TOTAL" : <span className="border-l-4 border-slate-400 pl-2">{rot}</span>}</td><td></td>
-        <td className={cell}>{nf(s?.produzidas)}</td><td className={cell}>{nf(v)}</td><td className={cell}>{brl0(fat)}</td>
-        <td className={cell}>{un(fat) != null ? brl(un(fat)) : "—"}</td>
-        <td></td><td></td>
-        <td className={cell}>{un(s?.insumos_vendidas) != null ? brl(un(s.insumos_vendidas)) : "—"}</td>
-        <td className={cell}>{un(s?.indireto_vendidas) != null ? brl(un(s.indireto_vendidas)) : "—"}</td>
-        <td className={cell}>{v > 0 ? brl((s.insumos_vendidas + s.indireto_vendidas) / v) : "—"}</td>
-        <td className={cell}>{un(s?.impostos_vendidas) != null ? brl(un(s.impostos_vendidas)) : "—"}</td>
-        <td className={cell + neg(un(s?.resultado))}>{un(s?.resultado) != null ? brl(un(s.resultado)) : "—"}</td>
-        <td className={cell + neg(mc)}>{pct(mc)}</td><td className={cell + neg(ml)}>{pct(ml)}</td>
-        <td className={cell + neg(s?.resultado)}>{brl0(s?.resultado)}</td>
-        <td></td><td></td>
-        <td className={cell}>{nf(s?.trocas_amostras)}</td><td className={cell}>{brl0(s?.custo_ta)}</td>
-        <td className={cell}>{nf(s?.estoque)}</td><td className={cell}>{brl0(s?.custo_estoque)}</td>
-      </tr>
-    );
+    const itens = [
+      { c: total ? "TOTAL" : <span className="border-l-4 border-slate-400 pl-2">{rot}</span>, cls: "px-2.5 py-2 text-left whitespace-nowrap sticky left-0 " + sticky },
+      { c: "", cls: "" },
+      { c: nf(s?.produzidas) }, { c: nf(v) }, { c: brl0(fat) }, { c: un(fat) != null ? brl(un(fat)) : "—" },
+      { c: "", cls: "" }, { c: "", cls: "" },
+      { c: un(s?.insumos_vendidas) != null ? brl(un(s.insumos_vendidas)) : "—" },
+      { c: un(s?.indireto_vendidas) != null ? brl(un(s.indireto_vendidas)) : "—" },
+      { c: v > 0 ? brl((s.insumos_vendidas + s.indireto_vendidas) / v) : "—" },
+      { c: un(s?.impostos_vendidas) != null ? brl(un(s.impostos_vendidas)) : "—" },
+      { c: un(s?.resultado) != null ? brl(un(s.resultado)) : "—", cls: cell + neg(un(s?.resultado)) },
+      { c: pct(mc), cls: cell + neg(mc) }, { c: pct(ml), cls: cell + neg(ml) },
+      { c: brl0(s?.resultado), cls: cell + neg(s?.resultado) },
+      { c: "", cls: "" }, { c: "", cls: "" },
+      { c: nf(s?.trocas_amostras) }, { c: brl0(s?.custo_ta) }, { c: nf(s?.estoque) }, { c: brl0(s?.custo_estoque) },
+    ];
+    return <tr className={cls}><Celulas itens={itens} modo={total ? "tot" : "sub"} /></tr>;
   };
 
   const D = data?.dre || {};
@@ -312,37 +324,19 @@ export default function ProducaoFaturamento() {
             <div className="overflow-x-auto">
               <table className="w-full text-[13px]" style={{ minWidth: 1900 }}>
                 <thead>
-                  <tr className="text-[10px] uppercase tracking-wide text-gray-400">
-                    <th colSpan={6} className="py-1 px-2.5 text-left font-semibold text-gray-500 sticky left-0 bg-white">Volume e receita<Info t={GRUPO.volume} /></th>
-                    <th colSpan={3} className="py-1 bg-orange-50 text-orange-700 font-semibold border-l border-white">Custo direto (insumos) por garrafa<Info t={GRUPO.direto} /></th>
-                    <th colSpan={2} className="py-1 bg-violet-50 text-violet-700 font-semibold border-l border-white">Estrutura rateada<Info t={GRUPO.estrutura} /></th>
-                    <th colSpan={5} className="py-1 bg-gray-50 font-semibold text-gray-600 border-l border-white">Resultado<Info t={GRUPO.resultado} /></th>
-                    <th colSpan={2} className="py-1 bg-sky-50 text-sky-700 font-semibold border-l border-white">Preço de venda<Info t={GRUPO.preco} /></th>
-                    <th colSpan={4} className="py-1 bg-gray-50 font-semibold text-gray-500 border-l border-white">Trocas e estoque<Info t={GRUPO.trocas} /></th>
+                  <tr className="text-[11px] uppercase tracking-wide">
+                    {([["vol", 6, "Volume e receita", GRUPO.volume], ["dir", 3, "Custo direto (insumos) por garrafa", GRUPO.direto], ["est", 2, "Estrutura rateada", GRUPO.estrutura],
+                      ["res", 5, "Resultado", GRUPO.resultado], ["pre", 2, "Preço de venda", GRUPO.preco], ["tro", 4, "Trocas e estoque", GRUPO.trocas]] as const).map(([k, n, rot, t], gi) => (
+                      <th key={k} colSpan={n} className={"py-1.5 px-2.5 font-bold " + GC[k].hd + (gi === 0 ? " text-left sticky left-0" : " text-center " + GC[k].b)}>{rot}<Info t={t} /></th>
+                    ))}
                   </tr>
-                  <tr className="border-b border-gray-200">
-                    <th className="px-2.5 py-2 text-left text-[10.5px] uppercase tracking-wide text-gray-500 font-semibold sticky left-0 bg-white">Sabor</th>
-                    <th className="px-2.5 py-2 text-left text-[10.5px] uppercase tracking-wide text-gray-500 font-semibold">Emb.</th>
-                    <th className={th}>Produzidas<Info t={INFO.produzidas} /></th>
-                    <th className={th}>Vendidas<Info t={INFO.vendidas} /></th>
-                    <th className={th}>Faturamento<Info t={INFO.faturamento} /></th>
-                    <th className={th}>Preço venda<Info t={INFO.preco} /></th>
-                    <th className={thG("bg-orange-50/60")}>Mat.-prima<Info t={INFO.mp} /></th>
-                    <th className={thG("bg-orange-50/60")}>Embalagem<Info t={INFO.emb} /></th>
-                    <th className={thG("bg-orange-50/60")}>Insumos/un<Info t={INFO.insumos} /></th>
-                    <th className={thG("bg-violet-50/60")}>Indireto/un<Info t={INFO.indireto} /></th>
-                    <th className={thG("bg-violet-50/60")}>Custo pleno<Info t={INFO.pleno} /></th>
-                    <th className={th}>Impostos/un<Info t={INFO.imposto} /></th>
-                    <th className={th}>Lucro/un<Info t={INFO.lucro} /></th>
-                    <th className={th}>Marg. contrib.<Info t={INFO.mc} /></th>
-                    <th className={th}>Marg. líquida<Info t={INFO.ml} /></th>
-                    <th className={th}>Resultado<Info t={INFO.resultado} /></th>
-                    <th className={thG("bg-sky-50/60")}>Equilíbrio<Info t={INFO.equilibrio} /></th>
-                    <th className={thG("bg-sky-50/60 text-sky-700")}>P/ {Math.round(alvo * 100)}%<Info t={INFO.alvo} /></th>
-                    <th className={th}>Trocas/Am.<Info t={INFO.ta} /></th>
-                    <th className={th}>Custo T/A</th>
-                    <th className={th}>Estoque<Info t={INFO.estoque} /></th>
-                    <th className={th}>Custo estoque</th>
+                  <tr className="border-b-2 border-gray-300">
+                    {([["Sabor", null], ["Emb.", null], ["Produzidas", INFO.produzidas], ["Vendidas", INFO.vendidas], ["Faturamento", INFO.faturamento], ["Preço venda", INFO.preco],
+                      ["Mat.-prima", INFO.mp], ["Embalagem", INFO.emb], ["Insumos/un", INFO.insumos], ["Indireto/un", INFO.indireto], ["Custo pleno", INFO.pleno],
+                      ["Impostos/un", INFO.imposto], ["Lucro/un", INFO.lucro], ["Marg. contrib.", INFO.mc], ["Marg. líquida", INFO.ml], ["Resultado", INFO.resultado],
+                      ["Equilíbrio", INFO.equilibrio], [`P/ ${Math.round(alvo * 100)}%`, INFO.alvo], ["Trocas/Am.", INFO.ta], ["Custo T/A", null], ["Estoque", INFO.estoque], ["Custo estoque", null]] as [string, string | null][]).map(([rot, t], i) => (
+                      <th key={i} className={(i < 2 ? "px-2.5 py-2 text-left text-[10.5px] uppercase tracking-wide font-semibold " : th + " ") + GC[COLG[i]].th + (i === 0 ? " sticky left-0" : "") + (inicioGrupo(i) ? " " + GC[COLG[i]].b : "")}>{rot}{t && <Info t={t} />}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
