@@ -1320,5 +1320,188 @@ export function registerIndustriaRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
+
+  // ==========================================================================
+  // PRECIFICAÇÃO — base da Calculadora de Margem (Dashboard, aba admin-only).
+  // Puxa de Produção & Faturamento o custo de material por SKU (lotes em uso) e
+  // o volume dos últimos 12 meses; sugere custo de conversão, alíquota efetiva
+  // de imposto e frete a partir do contas a pagar. Comissão, perda/troca,
+  // custo de conversão e markup são premissas do admin (pricing_config).
+  // ==========================================================================
+  const PREC_FLAVORS = ['ACEROLA', 'FRUTAS VERMELHAS', 'LIMONADA', 'MARACUJA', 'MORANGO COM LIMAO', 'MORANGO COM MARACUJA', 'PINK LEMONADE', 'UVA'];
+  // Contas do plano tratadas como custo de fábrica na SUGESTÃO de conversão.
+  const PREC_CONTAS_FABRICA = /sal[aá]rio|fgts|vale.?refei|benef[ií]cio|energia|aluguel|manuten|uso e consumo/i;
+  // Nunca são conversão: administrativo, comercial e logística são despesa.
+  const PREC_CONTAS_FORA = /adm|comerc|log[ií]st|vendedor|marketing/i;
+
+  async function precCarregarConfig() {
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS pricing_config (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      scope varchar NOT NULL DEFAULT 'default',
+      custo_conversao_anual numeric(14,2),
+      volume_anual_override integer,
+      fator_rateio_350 numeric(8,4) NOT NULL DEFAULT 0.6712,
+      fator_rateio_900 numeric(8,4) NOT NULL DEFAULT 1.7259,
+      aliquota_imposto numeric(8,4),
+      comissao_pct numeric(8,4) NOT NULL DEFAULT 0,
+      perda_troca_pct numeric(8,4) NOT NULL DEFAULT 0,
+      frete_pct numeric(8,4),
+      markup_por_sku jsonb,
+      markup_padrao numeric(8,4) NOT NULL DEFAULT 1.70,
+      updated_by varchar,
+      updated_at timestamp DEFAULT now(),
+      created_at timestamp DEFAULT now()
+    )`);
+    const r: any = await db.execute(sql`SELECT * FROM pricing_config WHERE scope = 'default' LIMIT 1`);
+    return (r.rows || [])[0] || null;
+  }
+
+  // Base de cálculo: custo de material por SKU, volume 12 meses e sugestões.
+  app.get('/api/industria/precificacao/base', async (_req, res) => {
+    try {
+      const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+      const parse = (n: any) => {
+        const m = String(n || '').match(/(900|350)\s*ml/i);
+        const fl = norm(n).replace(/^SUCO MISTO DE FRUTA\s*-\s*/, '').replace(/^SUCO\s*-?\s*/, '').replace(/\s*\d+\s*ML.*$/, '').trim();
+        return { fl, size: m ? m[1] : null };
+      };
+
+      // --- custo de material por SKU: lotes em uso (mesma fonte do Produção & Faturamento)
+      const lotsR: any = await db.execute(sql`SELECT product_id, quantity, unit_cost FROM inventory_lots WHERE stock_type = 'in_use'`);
+      const prodR: any = await db.execute(sql`SELECT id, name FROM products`);
+      const pmap: Record<string, any> = {};
+      for (const p of (prodR.rows || [])) pmap[p.id] = parse(p.name);
+      const custo: Record<string, { wsum: number; q: number }> = {};
+      for (const l of (lotsR.rows || [])) {
+        const pm = pmap[l.product_id];
+        if (!pm || !pm.size || l.unit_cost == null) continue;
+        const k = pm.fl + '|' + pm.size;
+        const q = Number(l.quantity) || 0;
+        (custo[k] = custo[k] || { wsum: 0, q: 0 });
+        custo[k].wsum += Number(l.unit_cost) * q;
+        custo[k].q += q;
+      }
+
+      // --- volume e receita dos últimos 12 meses (NF-e de venda, regra oficial)
+      const vendR: any = await db.execute(sql.raw(
+        `SELECT it.product_name AS name, SUM(it.quantity) AS q, SUM(it.total_price) AS v
+         FROM ${nfVendaFrom('fi')}
+         JOIN fiscal_invoice_items it ON it.invoice_id = fi.id
+         WHERE ${nfData('fi')}::date >= (CURRENT_DATE - INTERVAL '12 months')
+         GROUP BY 1`));
+      let vol350 = 0, vol900 = 0, receita = 0;
+      const vendaSku: Record<string, { q: number; v: number }> = {};
+      for (const r of (vendR.rows || [])) {
+        const pm = parse(r.name);
+        if (!pm.size) continue;
+        const q = Number(r.q) || 0, v = Number(r.v) || 0;
+        const k = pm.fl + '|' + pm.size;
+        (vendaSku[k] = vendaSku[k] || { q: 0, v: 0 });
+        vendaSku[k].q += q; vendaSku[k].v += v;
+        receita += v;
+        if (pm.size === '350') vol350 += q; else vol900 += q;
+      }
+      const volumeAnual = vol350 + vol900;
+
+      // --- sugestões a partir do contas a pagar dos últimos 12 meses
+      const payR: any = await db.execute(sql`
+        SELECT COALESCE(ca.name, p.category, 'Sem conta') AS conta, SUM(COALESCE(p.amount_paid, p.amount, 0)) AS v
+        FROM payables p
+        LEFT JOIN chart_of_accounts ca ON ca.id = p.chart_account_id
+        WHERE p.deleted_at IS NULL
+          AND COALESCE(p.status, '') <> 'cancelada'
+          AND COALESCE(p.paid_date, p.due_date) >= (CURRENT_DATE - INTERVAL '12 months')
+        GROUP BY 1`);
+      let sugConversao = 0, sugImposto = 0, sugFrete = 0;
+      const detConversao: { conta: string; valor: number }[] = [];
+      for (const r of (payR.rows || [])) {
+        const conta = String(r.conta || ''), v = Number(r.v) || 0;
+        if (/simples nacional|DAS|imposto/i.test(conta)) sugImposto += v;
+        else if (/^frete$|frete de sa/i.test(conta)) sugFrete += v;
+        else if (PREC_CONTAS_FABRICA.test(conta) && !PREC_CONTAS_FORA.test(conta)) {
+          sugConversao += v; detConversao.push({ conta, valor: v });
+        }
+      }
+      detConversao.sort((a, b) => b.valor - a.valor);
+
+      const cfg = await precCarregarConfig();
+
+      // --- monta linhas por SKU
+      const rows = [] as any[];
+      for (const fl of PREC_FLAVORS) for (const sz of ['350', '900']) {
+        const k = fl + '|' + sz;
+        const c = custo[k];
+        const vs = vendaSku[k];
+        rows.push({
+          sabor: fl, tam: sz,
+          custo_material: c && c.q > 0 ? c.wsum / c.q : null,
+          vendidas_12m: vs ? vs.q : 0,
+          faturamento_12m: vs ? vs.v : 0,
+          preco_medio_12m: vs && vs.q > 0 ? vs.v / vs.q : null,
+        });
+      }
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        volume: { total: volumeAnual, ml350: vol350, ml900: vol900, receita },
+        sugestoes: {
+          custoConversaoAnual: Math.round(sugConversao * 100) / 100,
+          detalheConversao: detConversao.slice(0, 15),
+          aliquotaImposto: receita > 0 ? Math.round((sugImposto / receita) * 10000) / 10000 : null,
+          fretePct: receita > 0 ? Math.round((sugFrete / receita) * 10000) / 10000 : null,
+        },
+        config: cfg,
+        rows,
+      });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Lê as premissas salvas.
+  app.get('/api/industria/precificacao/config', async (_req, res) => {
+    try { res.json({ config: await precCarregarConfig() }); }
+    catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // Grava as premissas (upsert na linha 'default').
+  app.put('/api/industria/precificacao/config', async (req: any, res) => {
+    try {
+      await precCarregarConfig();
+      const b = req.body || {};
+      const by = req.user?.email || req.user?.id || 'admin';
+      const n = (v: any) => (v === '' || v == null ? null : Number(String(v).replace(',', '.')));
+      const up: any = await db.execute(sql`
+        INSERT INTO pricing_config (scope, custo_conversao_anual, volume_anual_override,
+          fator_rateio_350, fator_rateio_900, aliquota_imposto, comissao_pct,
+          perda_troca_pct, frete_pct, markup_por_sku, markup_padrao, updated_by, updated_at)
+        VALUES ('default', ${n(b.custoConversaoAnual)}, ${n(b.volumeAnualOverride)},
+          ${n(b.fatorRateio350) ?? 0.6712}, ${n(b.fatorRateio900) ?? 1.7259}, ${n(b.aliquotaImposto)},
+          ${n(b.comissaoPct) ?? 0}, ${n(b.perdaTrocaPct) ?? 0}, ${n(b.fretePct)},
+          ${JSON.stringify(b.markupPorSku || {})}::jsonb, ${n(b.markupPadrao) ?? 1.7}, ${by}, now())
+        ON CONFLICT DO NOTHING
+        RETURNING *`);
+      let row = (up.rows || [])[0];
+      if (!row) {
+        const upd: any = await db.execute(sql`
+          UPDATE pricing_config SET
+            custo_conversao_anual = ${n(b.custoConversaoAnual)},
+            volume_anual_override = ${n(b.volumeAnualOverride)},
+            fator_rateio_350 = ${n(b.fatorRateio350) ?? 0.6712},
+            fator_rateio_900 = ${n(b.fatorRateio900) ?? 1.7259},
+            aliquota_imposto = ${n(b.aliquotaImposto)},
+            comissao_pct = ${n(b.comissaoPct) ?? 0},
+            perda_troca_pct = ${n(b.perdaTrocaPct) ?? 0},
+            frete_pct = ${n(b.fretePct)},
+            markup_por_sku = ${JSON.stringify(b.markupPorSku || {})}::jsonb,
+            markup_padrao = ${n(b.markupPadrao) ?? 1.7},
+            updated_by = ${by}, updated_at = now()
+          WHERE scope = 'default'
+          RETURNING *`);
+        row = (upd.rows || [])[0];
+      }
+      console.log('💰 [PRECIFICACAO] premissas salvas por', by);
+      res.json({ ok: true, config: row });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
   console.log('✅ Industria routes (modulo completo) registradas');
 }

@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import ProducaoFaturamento from "./ProducaoFaturamento";
+import CalculadoraMargem from "./CalculadoraMargem";
 import DashboardHistory from "./DashboardHistory";
 import DailyHistory from "./DailyHistory";
 import ClientesAtivos from "./ClientesAtivos";
@@ -154,6 +155,7 @@ const TAB_CORES: Record<string, { on: string; off: string }> = {
   clientes: { on: "bg-neutral-700 text-white border-neutral-700 shadow-sm", off: "bg-neutral-100 text-neutral-700 border-neutral-200 hover:bg-neutral-200" },
   campanha: { on: "bg-stone-700 text-white border-stone-700 shadow-sm", off: "bg-stone-200 text-stone-700 border-stone-300 hover:bg-stone-300" },
   producao: { on: "bg-gray-800 text-white border-gray-800 shadow-sm", off: "bg-gray-200 text-gray-800 border-gray-300 hover:bg-gray-300" },
+  precificacao: { on: "bg-emerald-700 text-white border-emerald-700 shadow-sm", off: "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100" },
 };
 const tabCls = (k: string, atual: string) => "px-4 py-2 text-sm font-medium rounded-md border transition-colors " + (atual === k ? TAB_CORES[k].on : TAB_CORES[k].off);
 
@@ -188,7 +190,7 @@ export default function Dashboard() {
   const [modalSearch, setModalSearch] = useState<string>("");
   const [sortKey, setSortKey] = useState<string>("fatMes");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [histView, setHistView] = useState<"painel" | "historico" | "diario" | "clientes" | "campanha" | "producao">("painel");
+  const [histView, setHistView] = useState<"painel" | "historico" | "diario" | "clientes" | "campanha" | "producao" | "precificacao">("painel");
   const { user } = useAuth();
   const isAdmin = (user as any)?.role === "admin";
   const podeVerEntregas = ["admin", "coordinator", "administrative", "industria"].includes(String((user as any)?.role || ""));
@@ -490,8 +492,9 @@ export default function Dashboard() {
             seletor de mês. O caso "campanha" fica no estado só para não quebrar um
             link antigo que abra o painel nesse modo. */}
         {isAdmin && <button type="button" onClick={() => setHistView("producao")} className={tabCls("producao", histView)}>Produção &amp; Faturamento</button>}
+        {isAdmin && <button type="button" onClick={() => setHistView("precificacao")} className={tabCls("precificacao", histView)}>Calculadora de Margem</button>}
       </div>
-      {histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "campanha" ? <CampanhaOutubro /> : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
+      {histView === "precificacao" ? (isAdmin ? <CalculadoraMargem /> : null) : histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "campanha" ? <CampanhaOutubro /> : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Efetivo (Hoje)</CardTitle><InfoDot text="Faturamento efetivo de hoje: NF-e de VENDA autorizadas hoje (nota fiscal real emitida pelo Integra 2.0), ja excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>

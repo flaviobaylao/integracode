@@ -3866,3 +3866,28 @@ export type AgenteConfig = typeof agentesConfig.$inferSelect;
 
 // Modulo Acessos e Delegacoes - tabelas em arquivo separado
 export * from "./delegations-schema";
+
+// ============================================================================
+// PRECIFICAÇÃO — premissas da Calculadora de Margem (Dashboard, admin-only).
+// Linha única (singleton): a chave 'default' guarda as premissas da empresa.
+// ============================================================================
+export const pricingConfig = pgTable("pricing_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  scope: varchar("scope").notNull().default("default"),
+  // Premissas digitadas pelo admin
+  custoConversaoAnual: decimal("custo_conversao_anual", { precision: 14, scale: 2 }),
+  volumeAnualOverride: integer("volume_anual_override"),
+  fatorRateio350: decimal("fator_rateio_350", { precision: 8, scale: 4 }).notNull().default("0.6712"),
+  fatorRateio900: decimal("fator_rateio_900", { precision: 8, scale: 4 }).notNull().default("1.7259"),
+  aliquotaImposto: decimal("aliquota_imposto", { precision: 8, scale: 4 }),
+  comissaoPct: decimal("comissao_pct", { precision: 8, scale: 4 }).notNull().default("0"),
+  perdaTrocaPct: decimal("perda_troca_pct", { precision: 8, scale: 4 }).notNull().default("0"),
+  fretePct: decimal("frete_pct", { precision: 8, scale: 4 }),
+  // Markup por SKU: { "FRUTAS VERMELHAS|350": 1.75, ... }
+  markupPorSku: jsonb("markup_por_sku"),
+  markupPadrao: decimal("markup_padrao", { precision: 8, scale: 4 }).notNull().default("1.70"),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type PricingConfig = typeof pricingConfig.$inferSelect;
