@@ -17,6 +17,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { getProductionOrderTransferLock, getProductionOrderTransferLocks } from "./lot-lock";
 import { nfVendaFrom, nfVendaWhere, nfData } from "./faturamento-oficial";
+import { deltaDe as riDeltaDe, classificar as riClassificar, diaBR as riDiaBR, type MovRow as RiMovRow } from "./relatorio-insumos";
 
 const num = (v: any): number | null => {
   if (v === '' || v == null) return null;
@@ -455,6 +456,286 @@ export function registerIndustriaRoutes(app: Express) {
         return { month: m, rows, sub900: sub((x) => x.tam === '900'), sub350: sub((x) => x.tam === '350'), total: { ...total, faturamento_oficial_nf: fatOficial } };
       });
       res.json({ generatedAt: new Date().toISOString(), months: out });
+    } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
+  });
+
+  // ============================================================================
+  // Produção & Faturamento — CUSTO PLENO por SKU num PERÍODO de datas (Flavio 23/11/2026).
+  // Análise de contador (custeio por absorção), período livre a partir de 01/05/2026:
+  //  • Insumos por garrafa (matéria-prima, embalagens, outros): consumo REAL lançado nas
+  //    OPs de garrafa no período (raw_material_movements: consumo em OP + perda, sem
+  //    estornos) ÷ garrafas produzidas. Sem consumo lançado, usa a FICHA TÉCNICA
+  //    (recipes × custo atual do insumo); sem ficha, o custo unitário do lote.
+  //  • Custos indiretos (pessoal, salários, aluguel, energia, comerciais, administrativos,
+  //    gerais, financeiros...): Contas a Pagar por COMPETÊNCIA (data de emissão), sem
+  //    cancelados/excluídos e sem contas fora da DRE. Compras de matéria-prima/embalagem
+  //    ficam FORA (o insumo já entra pelo consumo) — evita contar duas vezes.
+  //    Rateio por LITROS produzidos: custo indireto por litro × volume da garrafa.
+  //  • Impostos sobre vendas: alíquota efetiva do período = impostos ÷ faturamento oficial.
+  // ============================================================================
+  app.get('/api/industria/dashboard-custo-pleno', async (req: any, res) => {
+    try {
+      const MIN = '2026-05-01';
+      const isoOk = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+      const hojeSP = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      let inicio = isoOk(req.query.inicio) ? String(req.query.inicio) : hojeSP.slice(0, 8) + '01';
+      let fim = isoOk(req.query.fim) ? String(req.query.fim) : hojeSP;
+      if (inicio < MIN) inicio = MIN;
+      if (fim < inicio) fim = inicio;
+      const dentro = (d: string) => !!d && d >= inicio && d <= fim;
+
+      const FLAVORS = ['ACEROLA','FRUTAS VERMELHAS','LIMONADA','MARACUJA','MORANGO COM LIMAO','MORANGO COM MARACUJA','PINK LEMONADE','UVA'];
+      const VOL: Record<string, number> = { '900': 0.9, '350': 0.35 };
+      const norm = (s: any) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+      const parse = (n: any) => {
+        const m = String(n || '').match(/(900|350)\s*ml/i);
+        const size = m ? m[1] : null;
+        const fl = norm(n).replace(/^SUCO MISTO DE FRUTA\s*-\s*/, '').replace(/^SUCO\s*-?\s*/, '').replace(/\s*\d+\s*ML.*$/, '').trim();
+        return { fl, size };
+      };
+      const skuDe = (n: any) => { const p = parse(n); return p.size && FLAVORS.includes(p.fl) ? p.fl + '|' + p.size : null; };
+      // Dia de Brasília de uma data (texto AAAA-MM-DD fica como está; timestamp UTC → SP).
+      const diaSP = (d: any): string => {
+        if (!d) return '';
+        const s = String(d);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const t = d instanceof Date ? d : new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(s) ? s : s.replace(' ', 'T') + 'Z');
+        if (isNaN(t.getTime())) return s.slice(0, 10);
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(t);
+      };
+      const num = (v: any) => { const x = Number(v); return Number.isFinite(x) ? x : 0; };
+      const r2 = (v: number) => Math.round(v * 100) / 100;
+      const r4 = (v: number) => Math.round(v * 10000) / 10000;
+      const grupoInsumo = (cat: any, nome: any): 'mp' | 'emb' | 'outros' => {
+        const c = norm(cat) + ' ' + norm(nome);
+        if (/POLPA|CONCENTRAD|FRUTA|ACUCAR|SUCO/.test(norm(cat))) return 'mp';
+        if (/GARRAFA|TAMPA|ROTULO|EMBALAG|LACRE|CAIXA|FILME/.test(c)) return 'emb';
+        if (/POLPA|CONCENTRAD|FRUTA/.test(c)) return 'mp';
+        return 'outros';
+      };
+
+      type Acc = { prod: number; vend: number; fat: number; ta: number; est: number; ce: number; lw: number; lq: number;
+        real: { mp: number; emb: number; outros: number }; pad: { mp: number; emb: number; outros: number } | null };
+      const A: Record<string, Acc> = {};
+      for (const f of FLAVORS) for (const sz of ['900', '350']) A[f + '|' + sz] = { prod: 0, vend: 0, fat: 0, ta: 0, est: 0, ce: 0, lw: 0, lq: 0, real: { mp: 0, emb: 0, outros: 0 }, pad: null };
+
+      // 1) PRODUÇÃO — OPs de garrafa no período (planejadas e canceladas não contam).
+      const ops = await loadOrders();
+      const opSku = new Map<string, string>();
+      for (const o of (ops as any[])) {
+        const k = skuDe(o.product_name); if (!k) continue;
+        opSku.set(String(o.id), k);
+        const st = String(o.status || '');
+        if (st === 'cancelada' || st === 'planejada') continue;
+        if (!dentro(diaSP(o.production_date || o.end_date || o.created_at))) continue;
+        A[k].prod += num(o.quantity);
+      }
+
+      // 2) VENDAS — itens das NF-e de venda oficiais (regra do Painel) no período.
+      const nfItemsR: any = await db.execute(sql.raw(
+        `SELECT it.product_name AS name, it.quantity AS quantity, it.total_price AS total
+         FROM ${nfVendaFrom('fi')}
+         JOIN fiscal_invoice_items it ON it.invoice_id = fi.id
+         WHERE ${nfData('fi')}::date BETWEEN '${inicio}' AND '${fim}'`));
+      for (const r of (nfItemsR.rows || [])) { const k = skuDe(r.name); if (!k) continue; A[k].vend += num(r.quantity); A[k].fat += num(r.total); }
+      const nfTotR: any = await db.execute(sql.raw(
+        `SELECT COALESCE(SUM(fi.total_invoice), 0) AS tot FROM ${nfVendaFrom('fi')} WHERE ${nfData('fi')}::date BETWEEN '${inicio}' AND '${fim}'`));
+      const fatOficial = num((nfTotR.rows || [])[0]?.tot);
+
+      // 3) TROCAS/AMOSTRAS — pipeline (troca/amostra) + amostras de leads.
+      const pipeR: any = await db.execute(sql`SELECT products, scheduled_billing_date, created_at FROM billing_pipeline WHERE LOWER(COALESCE(operation_type,'')) IN ('troca','amostra')`);
+      for (const r of (pipeR.rows || [])) {
+        if (!dentro(diaSP(r.scheduled_billing_date || r.created_at))) continue;
+        let prods: any = r.products; if (typeof prods === 'string') { try { prods = JSON.parse(prods); } catch { prods = []; } }
+        if (!Array.isArray(prods)) continue;
+        for (const p of prods) { const k = skuDe(p.name); if (k) A[k].ta += num(p.quantity); }
+      }
+      try {
+        const leadR: any = await db.execute(sql`SELECT items, COALESCE(delivered_at, approved_at, created_at) AS d FROM lead_sample_orders WHERE status IN ('aprovado','separado','entregue','degustado')`);
+        for (const r of (leadR.rows || [])) {
+          if (!dentro(diaSP(r.d))) continue;
+          for (const p of (Array.isArray(r.items) ? r.items : [])) { const k = skuDe(p.name); if (k) A[k].ta += num(p.qty); }
+        }
+      } catch (_e) { /* tabela ainda não criada */ }
+
+      // 4) ESTOQUE ATUAL (snapshot) + custo unitário do lote (último recurso de custo).
+      const lotsR: any = await db.execute(sql`SELECT l.quantity, l.unit_cost, l.total_cost, p.name FROM inventory_lots l LEFT JOIN products p ON p.id = l.product_id WHERE l.stock_type = 'in_use'`);
+      for (const l of (lotsR.rows || [])) {
+        const k = skuDe(l.name); if (!k) continue;
+        const q = num(l.quantity); A[k].est += q; A[k].ce += num(l.total_cost);
+        if (num(l.unit_cost)) { A[k].lw += num(l.unit_cost) * q; A[k].lq += q; }
+      }
+
+      // 5) INSUMOS — matérias-primas e consumo real nas OPs do período.
+      const matR: any = await db.execute(sql`SELECT id, name, code, category, unit, unit_cost FROM raw_materials`);
+      const mats = new Map<string, any>();
+      for (const m of (matR.rows || [])) mats.set(String(m.id), { ...m, grupo: grupoInsumo(m.category, m.name) });
+      const iniTs = new Date(Date.parse(inicio + 'T00:00:00Z') - 86400000).toISOString().slice(0, 19).replace('T', ' ');
+      const fimTs = new Date(Date.parse(fim + 'T00:00:00Z') + 2 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+      const mvR: any = await db.execute(sql`
+        SELECT m.id, m.raw_material_id, m.movement_type, m.quantity, m.previous_quantity, m.new_quantity,
+               m.production_order_id, m.notes, m.unit_cost, EXTRACT(EPOCH FROM m.created_at)::float8 AS epoch
+        FROM raw_material_movements m
+        WHERE m.production_order_id IS NOT NULL AND m.created_at >= ${iniTs}::timestamp AND m.created_at < ${fimTs}::timestamp`);
+      const insumosLista = new Map<string, any>();
+      let consumoIntermediario = 0;
+      for (const m of (mvR.rows || []) as RiMovRow[]) {
+        if (!dentro(riDiaBR(num(m.epoch)))) continue;
+        const col = riClassificar(m);
+        if (col !== 'consumoOP' && col !== 'perdas') continue;
+        const q = Math.abs(riDeltaDe(m)); if (!q) continue;
+        const mat = mats.get(String(m.raw_material_id));
+        const custo = num(m.unit_cost ?? mat?.unit_cost);
+        const valor = q * custo;
+        const k = opSku.get(String(m.production_order_id));
+        if (!k) { consumoIntermediario += valor; continue; } // OP de polpa/intermediário: o valor volta pelo insumo gerado
+        const g = (mat?.grupo || 'outros') as 'mp' | 'emb' | 'outros';
+        A[k].real[g] += valor;
+        const ik = String(m.raw_material_id);
+        let it = insumosLista.get(ik);
+        if (!it) { it = { nome: mat?.name || '(insumo excluído)', unidade: mat?.unit || '', grupo: g, quantidade: 0, valor: 0, perda: 0 }; insumosLista.set(ik, it); }
+        it.quantidade += q; it.valor += valor; if (col === 'perdas') it.perda += valor;
+      }
+
+      // 6) FICHA TÉCNICA — custo padrão de insumos por garrafa (receita × custo atual).
+      try {
+        const recR: any = await db.execute(sql`
+          SELECT DISTINCT ON (COALESCE(r.product_id, r.id)) r.id, r.product_name, p.name AS pname
+          FROM recipes r LEFT JOIN products p ON p.id = r.product_id
+          WHERE COALESCE(r.is_active, true) = true
+          ORDER BY COALESCE(r.product_id, r.id), r.updated_at DESC NULLS LAST`);
+        const recSku = new Map<string, string>();
+        for (const r of (recR.rows || [])) { const k = skuDe(r.pname || r.product_name); if (k && !Array.from(recSku.values()).includes(k)) recSku.set(String(r.id), k); }
+        if (recSku.size) {
+          const ids = Array.from(recSku.keys()).map((i) => `'${i.replace(/'/g, "''")}'`).join(',');
+          const itR: any = await db.execute(sql.raw(`SELECT recipe_id, raw_material_id, quantity FROM recipe_items WHERE recipe_id IN (${ids})`));
+          for (const it of (itR.rows || [])) {
+            const k = recSku.get(String(it.recipe_id)); if (!k) continue;
+            const mat = mats.get(String(it.raw_material_id)); if (!mat) continue;
+            const pad = A[k].pad || (A[k].pad = { mp: 0, emb: 0, outros: 0 });
+            pad[mat.grupo as 'mp' | 'emb' | 'outros'] += num(it.quantity) * num(mat.unit_cost);
+          }
+        }
+      } catch (_e) { /* sem fichas técnicas */ }
+
+      // 7) DESPESAS — Contas a Pagar por competência (data de emissão) no período.
+      try { await db.execute(sql`ALTER TABLE chart_of_accounts ADD COLUMN IF NOT EXISTS include_in_dre boolean NOT NULL DEFAULT true`); } catch (_e) {}
+      const payR: any = await db.execute(sql`
+        SELECT p.amount, p.supplier_name, p.description, ca.id AS acc_id, ca.code, ca.name AS acc_name, ca.type AS acc_type,
+               ca.dre_group, COALESCE(ca.include_in_dre, true) AS inc
+        FROM payables p LEFT JOIN chart_of_accounts ca ON ca.id = p.chart_account_id
+        WHERE p.deleted_at IS NULL AND COALESCE(p.status::text, '') <> 'cancelada'
+          AND p.issue_date::date BETWEEN ${inicio}::date AND ${fim}::date`);
+      const GRUPOS: Record<string, string> = {
+        cpv: 'Custos de produção (mão de obra, energia, manutenção...)',
+        despesas_comerciais: 'Despesas comerciais (comissões, logística, veículos...)',
+        despesas_administrativas: 'Despesas administrativas (salários ADM, aluguel, contador...)',
+        despesas_gerais: 'Despesas gerais (seguros, taxas)',
+        outras_receitas_despesas: 'Outras despesas operacionais',
+        depreciacao: 'Depreciação e amortização',
+        despesas_financeiras: 'Despesas financeiras (juros, tarifas)',
+        irpj_csll: 'IRPJ / CSLL',
+        sem_categoria: 'Sem categoria no plano de contas',
+      };
+      const grupos = new Map<string, { key: string; nome: string; total: number; contas: Map<string, any> }>();
+      let impostos = 0, comprasInsumos = 0, foraDre = 0;
+      const comprasContas = new Map<string, number>();
+      for (const p of (payR.rows || [])) {
+        const v = num(p.amount); if (!v) continue;
+        if (p.acc_id && p.inc === false) { foraDre += v; continue; }
+        if (p.acc_type === 'receita') continue;
+        const g = p.acc_id ? String(p.dre_group || 'outras_receitas_despesas') : 'sem_categoria';
+        if (g === 'receita_bruta' || g === 'devolucoes' || g === 'receitas_financeiras') continue;
+        if (g === 'impostos_vendas') { impostos += v; continue; }
+        if (g === 'cpv' && /mat[eé]ria|embalag|insumo|polpa|garrafa|r[oó]tulo|tampa/i.test(String(p.acc_name || ''))) {
+          comprasInsumos += v; comprasContas.set(String(p.acc_name), (comprasContas.get(String(p.acc_name)) || 0) + v); continue;
+        }
+        let G = grupos.get(g);
+        if (!G) { G = { key: g, nome: GRUPOS[g] || g, total: 0, contas: new Map() }; grupos.set(g, G); }
+        G.total += v;
+        const ck = p.acc_id ? String(p.acc_id) : 'sem:' + norm(p.supplier_name || 'sem fornecedor');
+        const cn = p.acc_id ? ((p.code ? p.code + ' ' : '') + (p.acc_name || '')) : (p.supplier_name || 'Sem fornecedor');
+        const c = G.contas.get(ck) || { nome: cn, valor: 0, qtd: 0 };
+        c.valor += v; c.qtd += 1; G.contas.set(ck, c);
+      }
+      const ORDEM = ['cpv', 'despesas_comerciais', 'despesas_administrativas', 'despesas_gerais', 'outras_receitas_despesas', 'depreciacao', 'despesas_financeiras', 'irpj_csll', 'sem_categoria'];
+      const gruposOut = Array.from(grupos.values())
+        .sort((a, b) => (ORDEM.indexOf(a.key) + 100) % 100 - (ORDEM.indexOf(b.key) + 100) % 100)
+        .map((g) => ({ key: g.key, nome: g.nome, total: r2(g.total),
+          contas: Array.from(g.contas.values()).map((c) => ({ ...c, valor: r2(c.valor) })).sort((a, b) => b.valor - a.valor) }));
+      const indiretos = gruposOut.reduce((s, g) => s + g.total, 0);
+
+      // 8) RATEIO por litros produzidos. Antes de set/2026 as OPs de garrafa nao eram todas
+      //    lancadas no sistema: se o produzido registrado for menos da metade do vendido, o
+      //    rateio usa os litros VENDIDOS (senao poucas garrafas absorveriam toda a estrutura).
+      let litrosProd = 0, litrosVend = 0;
+      for (const k in A) { const sz = k.split('|')[1]; litrosProd += A[k].prod * VOL[sz]; litrosVend += A[k].vend * VOL[sz]; }
+      const usaProd = litrosProd > 0 && litrosProd >= 0.5 * litrosVend;
+      const baseRateio = usaProd ? 'produzidos' : 'vendidos';
+      const litrosBase = usaProd ? litrosProd : litrosVend;
+      const custoLitro = litrosBase > 0 ? indiretos / litrosBase : 0;
+      const aliq = fatOficial > 0 ? impostos / fatOficial : 0;
+
+      const rows: any[] = [];
+      for (const f of FLAVORS) for (const sz of ['900', '350']) {
+        const a = A[f + '|' + sz];
+        const realTot = a.real.mp + a.real.emb + a.real.outros;
+        let fonte: 'real' | 'ficha' | 'lote' | null = null;
+        let ins = { mp: 0, emb: 0, outros: 0 };
+        if (realTot > 0 && a.prod > 0) { fonte = 'real'; ins = { mp: a.real.mp / a.prod, emb: a.real.emb / a.prod, outros: a.real.outros / a.prod }; }
+        else if (a.pad && (a.pad.mp + a.pad.emb + a.pad.outros) > 0) { fonte = 'ficha'; ins = { ...a.pad }; }
+        else if (a.lq > 0) { fonte = 'lote'; ins = { mp: 0, emb: 0, outros: a.lw / a.lq }; }
+        const insUn = ins.mp + ins.emb + ins.outros;
+        const indUn = custoLitro * VOL[sz];
+        const pleno = insUn + indUn;
+        const preco = a.vend > 0 ? a.fat / a.vend : null;
+        const impUn = preco != null ? preco * aliq : 0;
+        const lucroUn = preco != null ? preco - impUn - pleno : null;
+        rows.push({
+          sabor: f, tam: sz, produzidas: Math.round(a.prod), vendidas: Math.round(a.vend), faturamento: r2(a.fat),
+          trocas_amostras: Math.round(a.ta), estoque: Math.round(a.est), custo_estoque: r2(a.ce),
+          fonte_insumos: fonte, mp_un: r4(ins.mp), emb_un: r4(ins.emb), outros_un: r4(ins.outros), insumos_un: r4(insUn),
+          insumos_padrao_un: a.pad ? r4(a.pad.mp + a.pad.emb + a.pad.outros) : null,
+          insumos_real_total: r2(realTot),
+          indireto_un: r4(indUn), custo_pleno_un: r4(pleno), imposto_un: r4(impUn),
+          preco, lucro_un: lucroUn != null ? r4(lucroUn) : null,
+          margem_contrib: preco ? (preco - impUn - insUn) / preco : null,
+          margem_liquida: preco && lucroUn != null ? lucroUn / preco : null,
+          resultado: lucroUn != null ? r2(lucroUn * a.vend) : 0,
+          custo_ta: r2(a.ta * pleno),
+          preco_equilibrio: aliq < 1 ? r4(pleno / (1 - aliq)) : null,
+        });
+      }
+      const soma = (lst: any[]) => {
+        const s: any = { produzidas: 0, vendidas: 0, faturamento: 0, trocas_amostras: 0, estoque: 0, custo_estoque: 0, insumos_vendidas: 0, indireto_vendidas: 0, impostos_vendidas: 0, resultado: 0, custo_ta: 0 };
+        for (const r of lst) {
+          s.produzidas += r.produzidas; s.vendidas += r.vendidas; s.faturamento += r.faturamento; s.trocas_amostras += r.trocas_amostras;
+          s.estoque += r.estoque; s.custo_estoque += r.custo_estoque; s.insumos_vendidas += r.insumos_un * r.vendidas;
+          s.indireto_vendidas += r.indireto_un * r.vendidas; s.impostos_vendidas += r.imposto_un * r.vendidas; s.resultado += r.resultado; s.custo_ta += r.custo_ta;
+        }
+        for (const k in s) s[k] = r2(s[k]);
+        return s;
+      };
+      const totalSku = soma(rows);
+      // DRE gerencial do período (todas as despesas do período, absorvidas ou não pelas vendidas).
+      const insumosVendidas = totalSku.insumos_vendidas;
+      const dre = {
+        faturamento_oficial: r2(fatOficial), faturamento_itens: totalSku.faturamento, impostos: r2(impostos),
+        receita_liquida: r2(fatOficial - impostos), insumos_vendidas: insumosVendidas,
+        margem_contribuicao: r2(fatOficial - impostos - insumosVendidas), custo_ta: totalSku.custo_ta,
+        indiretos: r2(indiretos), resultado: r2(fatOficial - impostos - insumosVendidas - indiretos),
+      };
+      const insumos = Array.from(insumosLista.values()).map((i) => ({ ...i, quantidade: Math.round(i.quantidade * 1000) / 1000, valor: r2(i.valor), perda: r2(i.perda) }))
+        .sort((a, b) => b.valor - a.valor);
+      res.json({
+        generatedAt: new Date().toISOString(), inicio, fim, minData: MIN,
+        rows, sub900: soma(rows.filter((r) => r.tam === '900')), sub350: soma(rows.filter((r) => r.tam === '350')), total: totalSku,
+        rateio: { base: baseRateio, litros: r2(litrosBase), custo_litro: r4(custoLitro), aliquota_impostos: r4(aliq) },
+        despesas: { grupos: gruposOut, indiretos: r2(indiretos), impostos: r2(impostos), compras_insumos: r2(comprasInsumos),
+          compras_contas: Array.from(comprasContas.entries()).map(([nome, valor]) => ({ nome, valor: r2(valor) })), fora_dre: r2(foraDre) },
+        insumos: { lista: insumos, total: r2(insumos.reduce((s, i) => s + i.valor, 0)), consumo_intermediario: r2(consumoIntermediario) },
+        dre,
+      });
     } catch (e: any) { res.status(500).json({ error: e?.message || String(e) }); }
   });
 
