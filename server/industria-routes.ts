@@ -1387,7 +1387,8 @@ export function registerIndustriaRoutes(app: Express) {
         `SELECT it.product_name AS name, SUM(it.quantity) AS q, SUM(it.total_price) AS v
          FROM ${nfVendaFrom('fi')}
          JOIN fiscal_invoice_items it ON it.invoice_id = fi.id
-         WHERE ${nfData('fi')}::date >= (CURRENT_DATE - INTERVAL '12 months')
+         WHERE ${nfVendaWhere('fi')}
+           AND ${nfData('fi')}::date >= (CURRENT_DATE - INTERVAL '12 months')
          GROUP BY 1`));
       let vol350 = 0, vol900 = 0, receita = 0;
       const vendaSku: Record<string, { q: number; v: number }> = {};
@@ -1405,12 +1406,12 @@ export function registerIndustriaRoutes(app: Express) {
 
       // --- sugestões a partir do contas a pagar dos últimos 12 meses
       const payR: any = await db.execute(sql`
-        SELECT COALESCE(ca.name, p.category, 'Sem conta') AS conta, SUM(COALESCE(p.amount_paid, p.amount, 0)) AS v
+        SELECT COALESCE(ca.name, 'Sem conta') AS conta, SUM(COALESCE(p.amount_paid, p.amount, 0)) AS v
         FROM payables p
         LEFT JOIN chart_of_accounts ca ON ca.id = p.chart_account_id
         WHERE p.deleted_at IS NULL
-          AND COALESCE(p.status, '') <> 'cancelada'
-          AND COALESCE(p.paid_date, p.due_date) >= (CURRENT_DATE - INTERVAL '12 months')
+          AND COALESCE(p.status::text, '') <> 'cancelada'
+          AND COALESCE(p.issue_date, p.due_date)::date >= (CURRENT_DATE - INTERVAL '12 months')
         GROUP BY 1`);
       let sugConversao = 0, sugImposto = 0, sugFrete = 0;
       const detConversao: { conta: string; valor: number }[] = [];
