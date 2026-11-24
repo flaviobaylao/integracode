@@ -44,6 +44,7 @@ export default function RepescagemRulesInfo({ className = '' }: { className?: st
               <ul className="list-disc pl-5 space-y-1">
                 <li>Clientes <b>ativos</b> (inativos não entram).</li>
                 <li>Carteiras de <b>vendedor externo</b> e de <b>telemarketing</b> (Letícia/Robson). Carteiras de canal/sistema (Honest 1/2/3, HOTSITE, INSTAGRAM) e sem dono ficam de fora.</li>
+                <li><b>Bloqueados pelo Admin:</b> carteiras, redes de clientes e clientes marcados no painel <b>"Bloqueados da repescagem"</b> nunca entram — nem pelo sorteio, nem pelo botão "Repescagem" do Inbox. Rede bloqueada vale também para as unidades que entrarem nela depois.</li>
                 <li><b>Rede de clientes:</b> as unidades da rede entram. A unidade <b>presencial</b> cai <b>só para vendedores externos</b>; a unidade <b>virtual</b> cai para <b>internos e externos</b>, como os demais clientes.</li>
                 <li><b>Quarentena:</b> cliente com início de atendimento em data futura (selo <b>"Atend. a partir de…"</b>) não entra até essa data. Depois dela, só cai se perder uma visita a partir da data prevista.</li>
               </ul>
