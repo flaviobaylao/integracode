@@ -19,6 +19,7 @@ import WhatsAppIconLink from '@/components/WhatsAppIconLink';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import RepescagemRulesInfo from '@/components/RepescagemRulesInfo';
+import RepescagemBloqueios from '@/components/RepescagemBloqueios';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -682,6 +683,9 @@ export default function Repescagem() {
         </CardContent>
         )}
       </Card>
+
+      {/* ⛔ Bloqueados da repescagem (carteira / rede / cliente) — gestão vê, admin edita. */}
+      {(isAdmin || user?.role === 'coordinator' || user?.role === 'administrative') && <RepescagemBloqueios isAdmin={isAdmin} />}
 
       {/* Filtros */}
       <Card>
