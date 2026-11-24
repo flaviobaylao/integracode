@@ -17,6 +17,14 @@ import { sql } from "drizzle-orm";
 
 const rowsOf = (r: any): any[] => (r && r.rows ? r.rows : Array.isArray(r) ? r : []);
 const TIPOS = ["carteira", "rede", "cliente"] as const;
+// Contas de sistema e carteiras de canal: não aparecem para bloquear (já não caem em repescagem).
+const CARTEIRAS_SISTEMA = [
+  "58f7ba0b-dcd1-4d0e-abc2-458cdddb2794", // Honest Admin (Honest 1)
+  "f87166f7-0431-4bd1-8c8c-074d13b2c861", // Honest Fornecedores (Honest 2)
+  "c5868c11-790a-46d1-ba87-2023452c8303", // Honest 3
+  "a0903a77-a217-4989-8e0c-7d9ca2ac36cf", // HOTSITE
+  "bcdda258-90cb-408a-9d40-dfc0ced2d481", // INSTAGRAM
+];
 type Tipo = typeof TIPOS[number];
 
 let ensured = false;
@@ -116,6 +124,10 @@ export function registerRepescagemBloqueios(app: Express, opts: { authenticateUs
                (SELECT COUNT(*)::int FROM customers c WHERE c.seller_id = u.id AND c.is_active IS NOT FALSE) AS clientes
           FROM users u
          WHERE EXISTS (SELECT 1 FROM customers c WHERE c.seller_id = u.id AND c.is_active IS NOT FALSE)
+           -- Só vendedores externos e internos/telemarketing ATIVOS; fora contas de sistema e de canal.
+           AND u.is_active IS NOT FALSE
+           AND u.role::text IN ('vendedor', 'telemarketing')
+           AND u.id NOT IN (${sql.join(CARTEIRAS_SISTEMA.map((x) => sql`${x}`), sql`, `)})
          ORDER BY 2`));
       let redes: any[] = [];
       try {
