@@ -22,6 +22,7 @@ import { whatsappService } from './whatsapp-service';
 import { storage } from './storage';
 import { logCustomerChanges, logCustomerNote } from './customerAudit';
 import { retiradosHoje, retiradosNoCiclo, registerRepescagemRetirar } from './repescagem-retirar';
+import { bloqueiosRepescagem, estaBloqueado, motivoBloqueioCliente, registerRepescagemBloqueios } from './repescagem-bloqueios';
 
 const ALLOWED_ROLES = ['admin', 'gerente', 'supervisor', 'administrative', 'coordinator', 'telemarketing'];
 
@@ -243,8 +244,10 @@ async function computeRedCandidates(opts: { startDate: string; endDate: string }
     const fora = await retiradosHoje();
     // Tirados pelo Admin num ciclo (nov/2026): não voltam enquanto a âncora (visita perdida) for a mesma.
     const ciclo = await retiradosNoCiclo();
-    if (!fora.size && !ciclo.size) return cands;
-    return cands.filter((c: any) => !fora.has(String(c.customerId)) && !ciclo.has(`${c.customerId}|${c.lastRedDate}`));
+    // ⛔ Bloqueios do Admin (carteira, rede de clientes ou cliente): nunca entram (nov/2026).
+    const bloq = await bloqueiosRepescagem();
+    return cands.filter((c: any) => !fora.has(String(c.customerId)) && !ciclo.has(`${c.customerId}|${c.lastRedDate}`)
+      && !estaBloqueado(bloq, String(c.customerId), c.sellerId || null));
   } catch (e) { console.error('[computeRedCandidates] fallback:', (e as any)?.message); return []; }
 }
 
@@ -1435,7 +1438,7 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
   try {
     await ensureRepescagemForcedTable();
     const forced: any = await db.execute(sql`
-      SELECT f.customer_id AS cid
+      SELECT f.customer_id AS cid, c.seller_id AS sid
       FROM repescagem_forced f
       JOIN customers c ON c.id = f.customer_id
       -- Na segunda também entram os forçados que caíram no sábado/domingo (sem sorteio no fim de semana).
@@ -1445,9 +1448,11 @@ async function runDailyDraw(opts: { drawDate: string; force?: boolean }): Promis
         AND COALESCE(c.is_supplier, false) = false`);
     const already = new Set(candidates.map((c: any) => c.customerId));
     const retirados = await retiradosHoje(); // retirado hoje pelo Admin também não é injetado
+    const bloqF = await bloqueiosRepescagem(); // bloqueado (carteira/rede/cliente) também não
     let injected = 0;
     for (const r of ((forced.rows || forced) as any[])) {
       if (!r.cid || already.has(r.cid) || retirados.has(String(r.cid))) continue;
+      if (estaBloqueado(bloqF, String(r.cid), r.sid || null)) continue;
       already.add(r.cid);
       candidates.push({ customerId: r.cid, lastRedDate: drawDate, daysSince: 0, forcedByAdmin: true });
       injected++;
@@ -1943,6 +1948,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
 
   // 🚫 Tirar da repescagem (Admin, pelo Inbox) — só no dia; ver repescagem-retirar.ts.
   try { registerRepescagemRetirar(app, { authenticateUser, requireRole }); } catch (e: any) { console.error('[repescagem-retirar]', e?.message); }
+  // ⛔ Bloqueios (carteira / rede / cliente que nunca entram em repescagem) — ver repescagem-bloqueios.ts.
+  try { registerRepescagemBloqueios(app, { authenticateUser, requireRole }); } catch (e: any) { console.error('[repescagem-bloqueios]', e?.message); }
 
   // Correção de drift (15/jul/2026): a tabela em produção ficou sem o DEFAULT gen_random_uuid()
   // na coluna id, então os INSERTs do sorteio (runDailyDraw) falhavam com "null value in column id"
@@ -2008,6 +2015,8 @@ export function registerRepescagemRoutes(app: Express, opts: {
         .from(customers).where(eq(customers.id, customerId)).limit(1);
       if (cust.length === 0) return res.status(404).json({ message: 'Cliente não encontrado' });
       if (cust[0].isActive === false) return res.status(400).json({ message: 'Cliente inativo não entra em repescagem' });
+      const bloqMotivo = await motivoBloqueioCliente(customerId);
+      if (bloqMotivo) return res.status(400).json({ message: `Não enviado: ${bloqMotivo}. Remova o bloqueio na tela de Repescagem para enviar.` });
 
       // Dia seguinte (horário de Brasília).
       // Próximo DIA ÚTIL (sem repescagem no sábado/domingo): decidido na sexta, cai na segunda.
@@ -2659,8 +2668,10 @@ export function registerRepescagemRoutes(app: Express, opts: {
           redePresencialIds = new Set(((rp.rows || []) as any[]).map((x: any) => String(x.customer_id)));
         }
       } catch (e) { console.warn('[route-overlay][rede]', (e as any)?.message); }
+      const bloqOv = await bloqueiosRepescagem();
       const rows = rawRows
         .filter(r => !redePresencialIds.has(String(r.customer_id)))
+        .filter(r => !estaBloqueado(bloqOv, String(r.customer_id), r.owner_seller_id || null))
         .filter(r => r.assigned_user_id === sellerId || r.owner_seller_id === sellerId || sharedKeep.has(String(r.id)))
         .map(r => ({ id: r.id as string, customerId: r.customer_id as string, assignedUserId: r.assigned_user_id as string, phase: r.phase as string, ownerSellerId: (r.owner_seller_id as string) || null,
           captured: !!r.locked && r.locked_date === today, capturedBy: (!!r.locked && r.locked_date === today) ? (r.locked_by || null) : null }));
