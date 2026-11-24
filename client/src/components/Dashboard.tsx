@@ -15,7 +15,6 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import ProducaoFaturamento from "./ProducaoFaturamento";
-import CalculadoraMargem from "./CalculadoraMargem";
 import DashboardHistory from "./DashboardHistory";
 import DailyHistory from "./DailyHistory";
 import ClientesAtivos from "./ClientesAtivos";
@@ -492,9 +491,10 @@ export default function Dashboard() {
             seletor de mês. O caso "campanha" fica no estado só para não quebrar um
             link antigo que abra o painel nesse modo. */}
         {isAdmin && <button type="button" onClick={() => setHistView("producao")} className={tabCls("producao", histView)}>Produção &amp; Faturamento</button>}
-        {isAdmin && <button type="button" onClick={() => setHistView("precificacao")} className={tabCls("precificacao", histView)}>Calculadora de Margem</button>}
+        {/* Calculadora de Margem retirada do painel em 24/11/2026 (Flavio). O componente
+            CalculadoraMargem.tsx e a rota /api/industria/precificacao continuam no codigo. */}
       </div>
-      {histView === "precificacao" ? (isAdmin ? <CalculadoraMargem /> : null) : histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "campanha" ? <CampanhaOutubro /> : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
+      {histView === "producao" ? (isAdmin ? <ProducaoFaturamento /> : null) : histView === "campanha" ? <CampanhaOutubro /> : histView === "historico" ? <DashboardHistory /> : histView === "diario" ? <DailyHistory /> : histView === "clientes" ? <ClientesAtivos /> : <>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="pb-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-sm font-medium text-gray-500">Faturamento Efetivo (Hoje)</CardTitle><InfoDot text="Faturamento efetivo de hoje: NF-e de VENDA autorizadas hoje (nota fiscal real emitida pelo Integra 2.0), ja excluindo devolucao, troca, transferencia, remessa, bonificacao e amostra. A variacao % compara com o mesmo dia da semana passada." /></div></CardHeader>
