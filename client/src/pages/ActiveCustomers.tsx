@@ -727,9 +727,11 @@ export default function ActiveCustomers() {
     retry: 1,
   });
 
-  // Query para últimos atendimentos virtuais por cliente
-  const { data: lastServiceLogs = {} } = useQuery<Record<string, { date: string; attendant: string; serviceType: string }>>({
-    queryKey: ["/api/service-logs/last/customer"],
+  // nov/2026: ÚLTIMO ATENDIMENTO de qualquer tipo (virtual, presencial, pedido, não venda) e quem fez.
+  const { data: ultimoAtend = {} } = useQuery<Record<string, { data: string; tipo: string; quem: string }>>({
+    queryKey: ["/api/clientes/ultimo-atendimento"],
+    queryFn: () => fetch('/api/clientes/ultimo-atendimento', { credentials: 'include' }).then(r => r.ok ? r.json() : {}),
+    staleTime: 60000,
   });
 
   // Query para vendedores ativos (filtro) - endpoint dedicado server-side
@@ -780,7 +782,7 @@ export default function ActiveCustomers() {
       if (prev === 0 && curr > 0) variacao = '+100%';
       else if (prev > 0) variacao = `${(((curr - prev) / prev) * 100).toFixed(0)}%`;
 
-      const lastLog = ac.customer?.id ? lastServiceLogs[ac.customer.id] : null;
+      const lastLog = ac.customer?.id ? (ultimoAtend as any)[ac.customer.id] : null;
 
       return {
         'Status': ac.matchStatus === 'matched' ? 'Encontrado' : 'Não encontrado',
@@ -815,8 +817,9 @@ export default function ActiveCustomers() {
         'Mês Atual': curr > 0 ? curr.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '0,00',
         'Variação': variacao,
         'Última Compra': ac.customer?.lastActivityDate ? format(new Date(ac.customer.lastActivityDate), 'dd/MM/yyyy', { locale: ptBR }) : '',
-        'Último Atend. Virtual': lastLog ? format(new Date(lastLog.date), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '',
-        'Atendente Virtual': lastLog?.attendant || '',
+        'Último Atendimento': lastLog ? format(new Date(lastLog.data), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '',
+        'Tipo do Atendimento': lastLog?.tipo || '',
+        'Atendido por': lastLog?.quem || '',
         'Próximas Visitas': ac.nextThreeVisits.length > 0 ? ac.nextThreeVisits.sort((a, b) => a.date.localeCompare(b.date)).map(v => { try { const [y, m, d] = v.date.split('-'); return `${d}/${m}`; } catch { return ''; } }).filter(Boolean).join(', ') : '',
       };
     });
@@ -830,7 +833,7 @@ export default function ActiveCustomers() {
       return;
     }
 
-    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Situação do Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Semana do mês', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atend. Virtual', 'Atendente Virtual', 'Próximas Visitas'];
+    const headers = ['Status', 'CPF/CNPJ', 'Nome', 'Endereço', 'Bairro', 'CEP', 'Cidade', 'UF', 'Coordenada', 'Coordenadas (Lat,Long)', 'Telefone', 'Situação do Telefone', 'Vendedor', 'Segmento', 'Tipo', 'Dia da Rota', 'Periodicidade', 'Semana do mês', 'Positivado', 'Mês Anterior', 'Mês Atual', 'Variação', 'Última Compra', 'Último Atendimento', 'Tipo do Atendimento', 'Atendido por', 'Próximas Visitas'];
     const csvContent = [
       headers.join(';'),
       ...dataToExport.map(row =>
@@ -1042,6 +1045,10 @@ export default function ActiveCustomers() {
       return bValue - aValue;
     });
 
+  // nov/2026: soma de Mês Anterior / Mês Atual dos clientes VISÍVEIS (obedece busca e filtros).
+  const somaMesAnterior = filteredCustomers.reduce((t, ac) => t + (Number(ac.previousMonthTotal) || 0), 0);
+  const somaMesAtual = filteredCustomers.reduce((t, ac) => t + (Number(ac.currentMonthTotal) || 0), 0);
+  const fmtSoma = (v: number) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const selectableIds = filteredCustomers.map((ac: any) => ac.customer?.id).filter(Boolean) as string[];
   const allCustomersSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedCustomerIds.has(id));
   const toggleCustomer = (id?: string) => { if (!id) return; setSelectedCustomerIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
@@ -1662,6 +1669,9 @@ export default function ActiveCustomers() {
                             <LinhaInfo>Soma dos pedidos implantados (enviados ao Pipeline de Faturamento) do cliente no <b className="text-foreground">mês passado</b>. Clique no título para ordenar.</LinhaInfo>
                           </InfoColuna>
                           </div>
+                          <div className="text-[11px] font-normal text-muted-foreground text-right whitespace-nowrap" title="Soma dos clientes listados (obedece a busca e os filtros)" data-testid="soma-mes-anterior">
+                            Σ {fmtSoma(somaMesAnterior)}
+                          </div>
                         </TableHead>
                         <TableHead className="text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -1680,6 +1690,9 @@ export default function ActiveCustomers() {
                           <InfoColuna titulo="Mês Atual">
                             <LinhaInfo>Soma dos pedidos implantados (enviados ao Pipeline de Faturamento) do cliente <b className="text-foreground">neste mês</b>, até hoje. Clique no título para ordenar.</LinhaInfo>
                           </InfoColuna>
+                          </div>
+                          <div className="text-[11px] font-normal text-muted-foreground text-right whitespace-nowrap" title="Soma dos clientes listados (obedece a busca e os filtros)" data-testid="soma-mes-atual">
+                            Σ {fmtSoma(somaMesAtual)}
                           </div>
                         </TableHead>
                         <TableHead className="text-right">
@@ -1714,9 +1727,14 @@ export default function ActiveCustomers() {
                           </span>
                         </TableHead>
                         <TableHead className="min-w-[100px]">
-                          <span className="inline-flex items-center gap-1">Último Atend. Virtual
-                            <InfoColuna titulo="Último Atend. Virtual">
-                              <LinhaInfo>Data/hora do último atendimento virtual registrado e quem atendeu. "—" = nenhum atendimento virtual registrado.</LinhaInfo>
+                          <span className="inline-flex items-center gap-1">Último atendimento
+                            <InfoColuna titulo="Último atendimento">
+                              <LinhaInfo>Data/hora do atendimento <b className="text-foreground">mais recente, de qualquer tipo</b>, e <b className="text-foreground">quem fez</b>:</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-[10px] font-semibold px-1 rounded bg-violet-100 text-violet-800">Virtual</span>}>registro de atendimento virtual (WhatsApp/telefone). O contato automático da repescagem por IA não conta.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-[10px] font-semibold px-1 rounded bg-sky-100 text-sky-800">Presencial</span>}>check-in na Rota do Dia.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-[10px] font-semibold px-1 rounded bg-emerald-100 text-emerald-800">Pedido</span>}>pedido implantado (também Troca/Amostra) — mostra quem implantou.</LinhaInfo>
+                              <LinhaInfo marca={<span className="text-[10px] font-semibold px-1 rounded bg-rose-100 text-rose-800">Não venda</span>}>atendimento registrado sem venda.</LinhaInfo>
+                              <LinhaInfo>"—" = nenhum atendimento registrado.</LinhaInfo>
                               {CORES_RECENCIA}
                             </InfoColuna>
                           </span>
@@ -1915,18 +1933,25 @@ export default function ActiveCustomers() {
                               </span>
                             </TableCell>
                             <TableCell>
-                              {ac.customer?.id && lastServiceLogs[ac.customer.id] ? (
-                                <div className={`flex flex-col gap-0.5 text-xs px-2 py-1 rounded ${getDateRecencyClass(lastServiceLogs[ac.customer.id].date)}`}>
-                                  <span className="font-medium">
-                                    {format(new Date(lastServiceLogs[ac.customer.id].date), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
-                                  </span>
-                                  <span className="text-muted-foreground truncate max-w-[100px]" title={lastServiceLogs[ac.customer.id].attendant}>
-                                    {lastServiceLogs[ac.customer.id].attendant}
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
+                              {(() => {
+                                const ua = ac.customer?.id ? (ultimoAtend as any)[ac.customer.id] : null;
+                                if (!ua) return <span className="text-xs text-muted-foreground">—</span>;
+                                const corTipo = /^Virtual/.test(ua.tipo) ? 'bg-violet-100 text-violet-800'
+                                  : ua.tipo === 'Presencial' ? 'bg-sky-100 text-sky-800'
+                                  : ua.tipo === 'Não venda' || /não venda/.test(ua.tipo) ? 'bg-rose-100 text-rose-800'
+                                  : 'bg-emerald-100 text-emerald-800';
+                                return (
+                                  <div className={`flex flex-col gap-0.5 text-xs px-2 py-1 rounded ${getDateRecencyClass(ua.data)}`} data-testid={`ultimo-atendimento-${ac.id}`}>
+                                    <span className="font-medium whitespace-nowrap">
+                                      {format(new Date(ua.data), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                                    </span>
+                                    <span className={`self-start text-[10px] font-semibold px-1 rounded ${corTipo}`}>{ua.tipo}</span>
+                                    <span className="text-muted-foreground truncate max-w-[120px]" title={`Feito por ${ua.quem || '—'}`}>
+                                      por {ua.quem || '—'}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-2">
@@ -2326,6 +2351,7 @@ export default function ActiveCustomers() {
             customerName={serviceLogCustomer.name}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ["/api/service-logs/last/customer"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/clientes/ultimo-atendimento"] });
               queryClient.invalidateQueries({ queryKey: ["/api/service-logs/stats"] });
             }}
           />
