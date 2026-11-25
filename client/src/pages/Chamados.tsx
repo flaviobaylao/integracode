@@ -376,6 +376,13 @@ export default function Chamados() {
   const perfilQ = useQuery<Perfil>({ queryKey: ["/api/chamados/perfil"], queryFn: () => getJson("/api/chamados/perfil") });
   const perfil = perfilQ.data;
   const atendeAlgum = (perfil?.minhasKeys?.length || 0) > 0;
+  // Aba inicial: "Recebidos" para quem atende algum destino; os demais ficam em "Todos os meus".
+  const abaInicialDefinida = useRef(false);
+  useEffect(() => {
+    if (abaInicialDefinida.current || !perfil) return;
+    abaInicialDefinida.current = true;
+    if (atendeAlgum) setCaixa((c) => (c === "tudo" ? "recebidos" : c));
+  }, [perfil, atendeAlgum]);
 
   const escopo = caixa === "todos" ? "todos" : "tudo";
   const listaQ = useQuery<{ chamados: Chamado[] }>({
