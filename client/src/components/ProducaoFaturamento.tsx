@@ -4,7 +4,7 @@
 //  • insumos por garrafa (matéria-prima, embalagens, outros) — consumo real nas OPs do período,
 //    ou ficha técnica, ou custo do lote;
 //  • custos indiretos (pessoal, salários, aluguel, energia, comerciais, administrativos, gerais,
-//    financeiros) do Contas a Pagar por competência, rateados por LITROS produzidos;
+//    financeiros) do Contas a Pagar pela data de emissão do título, rateados por LITROS produzidos;
 //  • impostos sobre vendas pela alíquota efetiva do período.
 import { useMemo, useState } from "react";
 import { useQuery } from "@/lib/queryClient";
@@ -41,7 +41,7 @@ const Info = ({ t }: { t: string }) => (
 const GRUPO = {
   volume: "VOLUME E RECEITA — o que foi produzido e vendido no período e quanto entrou. Produzidas vem das ordens de produção; vendidas e faturamento vêm das NF-e de venda (regra oficial do Painel). Preço de venda = faturamento ÷ garrafas vendidas.",
   direto: "CUSTO DIRETO (VARIÁVEL) — o que vai fisicamente dentro de cada garrafa e só existe se a garrafa for produzida: matéria-prima (polpas, concentrados, frutas, açúcar) e embalagem (garrafa, tampa, rótulo). Insumos/un = matéria-prima + embalagem + outros insumos. Origem: consumo real nas OPs do período; sem lançamento, ficha técnica; sem ficha, custo do lote.",
-  estrutura: "ESTRUTURA RATEADA (CUSTOS INDIRETOS / FIXOS) — tudo o que a empresa gasta para funcionar e não vai dentro da garrafa: pessoal e salários, aluguel, energia, manutenção, despesas comerciais, administrativas, gerais e financeiras (Contas a Pagar do período, por competência). Pelo custeio por absorção, esse total é distribuído às garrafas proporcional aos litros (a de 900 ml absorve 2,6× a de 350 ml). Custo pleno = custo direto + estrutura rateada: é o custo total de cada garrafa.",
+  estrutura: "ESTRUTURA RATEADA (CUSTOS INDIRETOS / FIXOS) — tudo o que a empresa gasta para funcionar e não vai dentro da garrafa: pessoal e salários, aluguel, energia, manutenção, despesas comerciais, administrativas, gerais e financeiras (Contas a Pagar do período, pela data de emissão do título). Pelo custeio por absorção, esse total é distribuído às garrafas proporcional aos litros (a de 900 ml absorve 2,6× a de 350 ml). Custo pleno = custo direto + estrutura rateada: é o custo total de cada garrafa.",
   resultado: "RESULTADO — o que sobra depois de pagar impostos e custos. Impostos/un pela alíquota efetiva do período. Lucro/un = preço − impostos − custo pleno. Margem de contribuição = (preço − impostos − insumos) ÷ preço: quanto cada garrafa contribui para pagar a estrutura (se for negativa, cada garrafa vendida aumenta o prejuízo). Margem líquida = lucro ÷ preço, já com toda a estrutura paga. Resultado = lucro/un × garrafas vendidas.",
   preco: "PREÇO DE VENDA (FORMAÇÃO DE PREÇO / MARKUP) — referências para precificar. Equilíbrio = menor preço sem prejuízo: custo pleno ÷ (1 − alíquota de impostos). P/ X% = preço que entrega a margem líquida-alvo informada no filtro: custo pleno ÷ (1 − impostos − margem-alvo). Compare com o preço de venda praticado.",
   trocas: "TROCAS E ESTOQUE — garrafas cedidas sem faturamento (trocas e amostras do período), com o custo pleno de cada uma, e a posição atual do estoque (foto do momento) com o valor em estoque.",
@@ -158,7 +158,7 @@ export default function ProducaoFaturamento() {
     for (const g of (data.despesas?.grupos || [])) dl("(−) " + g.nome, -g.total);
     dl("= Resultado do período", D.resultado, true);
     linha([]);
-    linha([{ v: "Despesas por conta (Contas a Pagar, competência)", t: "s", s: { font: { bold: true, sz: 11, color: { rgb: "047857" } } } }]);
+    linha([{ v: "Despesas por conta (Contas a Pagar, pela data de emissão do título)", t: "s", s: { font: { bold: true, sz: 11, color: { rgb: "047857" } } } }]);
     for (const g of (data.despesas?.grupos || [])) {
       linha([T(g.nome, { font: { bold: true } }), T(""), T(""), T(""), N(g.total, M2, { font: { bold: true } })]);
       for (const c of g.contas) linha([T("   " + c.nome), T(""), T(""), N(c.qtd, IN), N(c.valor, M2)]);
@@ -372,7 +372,7 @@ export default function ProducaoFaturamento() {
 
             <Card><CardContent className="p-4 text-sm">
               <div className="font-semibold text-gray-800 mb-1">Custos e despesas indiretos (Contas a Pagar)</div>
-              <p className="text-[11px] text-gray-500 mb-2">Por competência (data de emissão). Rateio: {brl(data.rateio?.custo_litro)} por litro {data.rateio?.base === "produzidos" ? "produzido" : "vendido"} ({nf(Math.round(data.rateio?.litros || 0))} litros).</p>
+              <p className="text-[11px] text-gray-500 mb-2">Pela data de emissão do título no Contas a Pagar. Rateio: {brl(data.rateio?.custo_litro)} por litro {data.rateio?.base === "produzidos" ? "produzido" : "vendido"} ({nf(Math.round(data.rateio?.litros || 0))} litros).</p>
               {(data.despesas?.grupos || []).length === 0 && <div className="text-xs text-gray-400">Nenhuma despesa lançada no período.</div>}
               {(data.despesas?.grupos || []).map((g: any) => (
                 <details key={g.key} className="border-b border-gray-100 py-1">
