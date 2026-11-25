@@ -8871,6 +8871,38 @@ export class DatabaseStorage implements IStorage {
         }
       }
     } catch {}
+    // Enriquece com o COMPROVANTE DE ENTREGA (fotos do canhoto assinado que o motorista tira
+    // ao concluir a parada): delivery_route_stops.photos da parada mais recente COM foto do
+    // card (billing_id = id do card). Usado pela coluna "Comprovante" do Fluxo de Entregas.
+    try {
+      const rowsD = rows as any[];
+      const ids = rowsD
+        .filter(r => ['em_rota', 'em_rota_bsb', 'entregue', 'devolvido', 'devolvida'].includes(String(r.stage || '')))
+        .map(r => String(r.id));
+      if (ids.length) {
+        const idList = sql.join(ids.map((i: string) => sql`${i}`), sql`, `);
+        const q: any = await db.execute(sql`
+          SELECT DISTINCT ON (s.billing_id)
+                 s.billing_id AS bid, s.photos AS photos, s.status AS st,
+                 COALESCE(s.completed_at, s.check_out_time)::text AS quando
+          FROM delivery_route_stops s
+          WHERE s.billing_id IN (${idList})
+            AND jsonb_array_length(COALESCE(s.photos, '[]'::jsonb)) > 0
+          ORDER BY s.billing_id, s.updated_at DESC NULLS LAST, s.created_at DESC NULLS LAST`);
+        const byBid = new Map<string, any>();
+        for (const x of (q.rows || q) as any[]) if (x.bid) byBid.set(String(x.bid), x);
+        for (const r of rowsD) {
+          const x = byBid.get(String(r.id));
+          if (!x) continue;
+          const fotos = Array.isArray(x.photos) ? x.photos : (() => { try { return JSON.parse(x.photos || '[]'); } catch { return []; } })();
+          (r as any).deliveryPhotos = fotos.filter((f: any) => typeof f === 'string' && f);
+          (r as any).deliveryStopStatus = x.st || null;
+          (r as any).deliveryCompletedAt = x.quando || null;
+        }
+      }
+    } catch (e: any) {
+      console.warn('[pipeline] comprovante de entrega:', e?.message);
+    }
     // Enriquece com os dados de LOCALIZACAO do cadastro do cliente (usado pelo modulo
     // "Fluxo de Entregas": coluna Coordenadas "latitude, longitude" + endereco/cidade).
     // Fonte unica: customers.latitude/longitude (a mesma do Mapa de Clientes e da

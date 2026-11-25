@@ -44,6 +44,9 @@ interface FluxoItem {
   paidOnline?: boolean;
   deliveryDriverName?: string | null;
   deliveryRouteDate?: string | null;
+  deliveryPhotos?: string[] | null;
+  deliveryStopStatus?: string | null;
+  deliveryCompletedAt?: string | null;
   paymentMethod: string | null;
   operationType: string | null;
   products: Array<{ id: string; name: string; quantity: number; unitPrice: number; totalPrice: number }> | null;
@@ -224,6 +227,7 @@ export default function FluxoEntregas() {
   const [sortKey, setSortKey] = useState<SortKey>('createdAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [detail, setDetail] = useState<FluxoItem | null>(null);
+  const [foto, setFoto] = useState<{ url: string; titulo: string } | null>(null);
 
   const { data: items = [], isLoading, isFetching, refetch } = useQuery<FluxoItem[]>({
     queryKey: ['/api/billing-pipeline'],
@@ -344,7 +348,7 @@ export default function FluxoEntregas() {
       'Etapa', 'Prioridade', 'Pedido', 'NF', 'Cliente', 'CNPJ/CPF', 'Telefone', 'Cidade', 'UF',
       'Bairro', 'Endereço', 'CEP', 'Coordenadas (latitude, longitude)', 'Latitude', 'Longitude',
       'Vendedor', 'Valor', 'Pagamento', 'Operação', 'Status fiscal', 'Origem', 'Pago online',
-      'Instância', 'Entregador', 'Data da rota', 'Agendado para', 'Itens', 'Observações',
+      'Instância', 'Entregador', 'Data da rota', 'Comprovante (fotos)', 'Agendado para', 'Itens', 'Observações',
       'Criado em', 'Atualizado em',
     ];
     const rows = sorted.map((i) => {
@@ -365,6 +369,7 @@ export default function FluxoEntregas() {
         i.source || '', i.paidOnline ? 'Sim' : '',
         i.omieInstanceName || '', i.deliveryDriverName || '',
         fmtDateOnly(i.deliveryRouteDate) === '—' ? '' : fmtDateOnly(i.deliveryRouteDate),
+        (i.deliveryPhotos || []).map((u) => (u.startsWith('/') ? window.location.origin + u : u)).join(' '),
         fmtDateOnly(i.scheduledBillingDate) === '—' ? '' : fmtDateOnly(i.scheduledBillingDate),
         String(i.products?.length || 0),
         (i.notes || '').replace(/[\r\n]+/g, ' '),
@@ -493,6 +498,7 @@ export default function FluxoEntregas() {
                   <Th>Instância</Th>
                   <Th k="deliveryDriverName">Entregador</Th>
                   <Th k="deliveryRouteDate">Data da rota</Th>
+                  <Th>Comprovante</Th>
                   <Th>Agendado</Th>
                   <Th>Itens</Th>
                   <Th k="createdAt">Criado em</Th>
@@ -566,6 +572,25 @@ export default function FluxoEntregas() {
                       <td className="px-2 py-1.5 whitespace-nowrap">{i.omieInstanceName || '—'}</td>
                       <td className="px-2 py-1.5 whitespace-nowrap">{i.deliveryDriverName || '—'}</td>
                       <td className="px-2 py-1.5 whitespace-nowrap">{fmtDateOnly(i.deliveryRouteDate)}</td>
+                      <td className="px-2 py-1 whitespace-nowrap" data-testid={`comprovante-${i.id}`}>
+                        {i.deliveryPhotos?.length ? (
+                          <div className="flex gap-1">
+                            {i.deliveryPhotos.slice(0, 3).map((url, idx) => (
+                              <button
+                                key={idx}
+                                onClick={(e) => { e.stopPropagation(); setFoto({ url, titulo: `${i.customerName}${i.invoiceNumber ? ` · ${i.invoiceNumber}` : ''}` }); }}
+                                className="h-8 w-8 rounded border overflow-hidden hover:ring-2 hover:ring-orange-400"
+                                title="Ver comprovante de entrega"
+                              >
+                                <img src={url} alt="Comprovante" loading="lazy" className="h-full w-full object-cover" />
+                              </button>
+                            ))}
+                            {i.deliveryPhotos.length > 3 && <span className="text-[10px] text-gray-500 self-center">+{i.deliveryPhotos.length - 3}</span>}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
                       <td className="px-2 py-1.5 whitespace-nowrap">{fmtDateOnly(i.scheduledBillingDate)}</td>
                       <td className="px-2 py-1.5 whitespace-nowrap text-center">{i.products?.length || 0}</td>
                       <td className="px-2 py-1.5 whitespace-nowrap text-gray-600 dark:text-gray-300">{fmtDateTime(i.createdAt)}</td>
@@ -608,6 +633,9 @@ export default function FluxoEntregas() {
                 <div><span className="text-gray-500">Valor:</span> {fmtCurrency(detail.saleValue)}</div>
                 <div><span className="text-gray-500">Entregador:</span> {detail.deliveryDriverName || '—'}</div>
                 <div><span className="text-gray-500">Data da rota:</span> {fmtDateOnly(detail.deliveryRouteDate)}</div>
+                {detail.deliveryCompletedAt && (
+                  <div><span className="text-gray-500">Entregue em:</span> {fmtDateTime(detail.deliveryCompletedAt)}</div>
+                )}
                 <div><span className="text-gray-500">Instância:</span> {detail.omieInstanceName || '—'}</div>
                 <div><span className="text-gray-500">Status fiscal:</span> {FISCAL_LABELS[String(detail.fiscalStatus || '')] || detail.fiscalStatus || '—'}</div>
               </div>
@@ -616,6 +644,18 @@ export default function FluxoEntregas() {
               )}
               {detail.notes && (
                 <p className="text-xs text-gray-600 bg-gray-50 dark:bg-gray-700 rounded p-2 whitespace-pre-wrap">{detail.notes}</p>
+              )}
+              {!!detail.deliveryPhotos?.length && (
+                <div>
+                  <p className="font-semibold mb-1">Comprovante de entrega ({detail.deliveryPhotos.length})</p>
+                  <div className="flex flex-wrap gap-2">
+                    {detail.deliveryPhotos.map((url, idx) => (
+                      <button key={idx} onClick={() => setFoto({ url, titulo: detail.customerName })} className="h-24 w-24 rounded border overflow-hidden hover:ring-2 hover:ring-orange-400">
+                        <img src={url} alt="Comprovante" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
               {!!detail.products?.length && (
                 <div>
@@ -637,6 +677,23 @@ export default function FluxoEntregas() {
                   </table>
                 </div>
               )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Foto do comprovante (canhoto assinado) em tamanho grande */}
+      <Dialog open={!!foto} onOpenChange={(o) => { if (!o) setFoto(null); }}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="text-base">Comprovante de entrega — {foto?.titulo}</DialogTitle>
+          </DialogHeader>
+          {foto && (
+            <div className="space-y-2">
+              <img src={foto.url} alt="Comprovante de entrega" className="max-h-[75vh] w-full object-contain rounded" />
+              <a href={foto.url} target="_blank" rel="noreferrer" className="text-sm text-orange-600 hover:underline inline-flex items-center gap-1">
+                <ExternalLink className="h-3.5 w-3.5" /> Abrir em nova aba
+              </a>
             </div>
           )}
         </DialogContent>
