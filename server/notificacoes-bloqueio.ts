@@ -17,6 +17,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser, requireRole } from "./authMiddleware";
 import { analisarTelefoneBR } from "../shared/telefone";
+import { registerUltimoAtendimento } from "./ultimo-atendimento";
 
 const rows = (r: any) => ((r?.rows ?? r ?? []) as any[]);
 
@@ -112,6 +113,8 @@ export async function envioTextoBarrado(phone: any): Promise<boolean> {
 }
 
 export function registerNotificacoesBloqueio(app: Express): void {
+  // Clientes Ativos › "Último atendimento" (nov/2026) — registrado junto, sem mexer no index.ts.
+  try { registerUltimoAtendimento(app); } catch (e: any) { console.error("[ultimo-atendimento]", e?.message); }
   void ensureColunasNotificacao().catch((e) => console.warn("[notificacoes-bloqueio] coluna:", e?.message));
 
   // Situação do cliente (qualquer usuário logado pode ver o selo).
