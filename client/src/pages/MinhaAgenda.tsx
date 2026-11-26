@@ -712,7 +712,11 @@ export default function MinhaAgenda() {
               },
             });
             setModal(null);
-            api()?.gotoDate(d.start);
+            // permanece na visão/período atual; só avisa se o compromisso foi para fora da tela
+            const v = api()?.view; const ini = new Date(d.start);
+            if (v && (ini < v.activeStart || ini >= v.activeEnd)) {
+              toast({ title: modal.mode === "edit" ? "Compromisso reagendado" : "Compromisso criado", description: `Ficou em ${ini.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" })}${d.allDay ? "" : ` às ${hm(ini)}`}.` });
+            }
           }}
         />
       )}
