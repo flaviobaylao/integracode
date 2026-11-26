@@ -239,7 +239,7 @@ export function registerDossieVendedor(app: Express) {
         const conquista = [c.criado, v?.primeira].filter(Boolean).sort()[0] || null;
         const fat = fatPorCust.get(String(c.id)) || (c.doc ? fatPorDoc.get(String(c.doc)) : null);
         const item = {
-          id: c.id, nome: String(c.nome || "(sem nome)"), doc: c.doc || null, cidade: c.city || "",
+          id: c.id, nome: String(c.nome || "(sem nome)"), razao: String(c.razao || ""), doc: c.doc || null, cidade: c.city || "",
           segmento: c.segmento, ativo: c.is_active === true, conquista, cadastro: c.criado, inativado: c.inativado,
           motivo: c.motivo || null,
           ultimoVendedor: ultimoVendedor.get(String(c.id)) || null,
@@ -333,7 +333,17 @@ export function registerDossieVendedor(app: Express) {
       const clientesAno = fatCli.filter((c: any) => (Number(c.total) || 0) > 0).map((c: any) => {
         const cad = c.customerId ? custById.get(String(c.customerId)) : null;
         return {
-          id: c.customerId || c.chave, nome: c.nome, doc: c.doc || null, cidade: c.cidade || "", segmento: c.segmento,
+          // NOME FANTASIA SEMPRE (Flavio, 26/11/2026). A lista vinha da régua do
+          // faturamento, que carrega a razão social; o cadastro é quem tem o
+          // fantasia, e é por ele que as pessoas chamam a loja. `cad.nome` já
+          // vem do COALESCE(fantasy_name, name), então cliente sem fantasia
+          // continua aparecendo pela razão social, e cliente que só existe no
+          // faturamento (sem cadastro) continua com o nome que o faturamento dá.
+          // A razão social vai junto, mas só quando for diferente: repetir o
+          // mesmo nome duas vezes na célula é ruído.
+          id: c.customerId || c.chave, nome: (cad && cad.nome) || c.nome,
+          razao: cad && cad.razao && cad.razao !== cad.nome ? cad.razao : null,
+          doc: c.doc || null, cidade: c.cidade || "", segmento: c.segmento,
           ativo: c.ativo === true, vendedorId: cad ? cad.vendedorId : null, vendedor: c.vendedor || "Sem vendedor",
           rede: c.customerId ? (redePorCliente.get(String(c.customerId)) || "") : "",
           porMes: c.porMes || {}, total: Number(c.total) || 0,
