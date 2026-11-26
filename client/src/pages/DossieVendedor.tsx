@@ -31,6 +31,14 @@ const MESES_ABREV = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Se
 const rotMes = (m: string) => `${MESES_ABREV[Number(m.slice(5, 7)) - 1]}/${m.slice(2, 4)}`;
 const brl = (v: number) => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 const dataBR = (d?: string | null) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : "—");
+/** CNPJ/CPF com a pontuação de sempre. Documento de outro tamanho sai como veio:
+ *  inventar máscara em cima de um número torto esconde o defeito do cadastro. */
+const docBR = (v?: string | null) => {
+  const d = String(v || "").replace(/\D/g, "");
+  if (d.length === 14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  return d;
+};
 const norm = (s: string) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 /** 'YYYY-MM' do mês anterior. */
 const mesAntes = (m: string) => {
@@ -959,7 +967,10 @@ export default function DossieVendedor() {
                   {clientesTabela.slice(0, limite).map((c) => (
                     <tr key={c.id} className="group border-b last:border-0 hover:bg-slate-50">
                       <td className={`py-1 px-3 ${CONGELA.cliente} bg-white group-hover:bg-slate-50 z-10`}>{c.nome}
-                        <div className="text-xs text-muted-foreground">{c.cidade}</div></td>
+                        <div className="text-xs text-muted-foreground">
+                          {c.cidade || "sem cidade"}
+                          {c.doc ? <> · {docBR(c.doc)}</> : ""}
+                        </div></td>
                       {temColunaVendedor ? <td className={`px-2 whitespace-nowrap ${CONGELA.vendedor} bg-white group-hover:bg-slate-50 z-10`}>{c.vendedor}</td> : null}
                       {redes.length > 0 && <td className="px-2 text-xs whitespace-nowrap">{c.rede || <span className="text-slate-300">—</span>}</td>}
                       {/* Situação em coluna própria e sempre escrita: antes só
