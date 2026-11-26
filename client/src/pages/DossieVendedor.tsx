@@ -409,7 +409,7 @@ export default function DossieVendedor() {
     if (tipoSel !== "todos") arr = arr.filter((c) => tipoDoc(c) === tipoSel);
     if (busca.trim()) {
       const b = norm(busca);
-      arr = arr.filter((c) => norm(`${c.nome} ${c.vendedor} ${c.cidade} ${c.segmento} ${c.rede || ""} ${c.doc || ""}`).includes(b));
+      arr = arr.filter((c) => norm(`${c.nome} ${c.razao || ""} ${c.vendedor} ${c.cidade} ${c.segmento} ${c.rede || ""} ${c.doc || ""}`).includes(b));
     }
     const dir = ord.dir === "asc" ? 1 : -1;
     // .trim(): nome com espaco na frente existe no cadastro e, sem isto, ele
@@ -444,7 +444,7 @@ export default function DossieVendedor() {
 
   const exportarTabela = () => {
     exportToExcel(clientesTabela.map((c) => {
-      const row: any = { Cliente: c.nome, "CPF/CNPJ": c.doc || "", Tipo: tipoDoc(c) === "pj" ? "PJ" : tipoDoc(c) === "pf" ? "PF" : "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
+      const row: any = { Cliente: c.nome, "Razão social": c.razao || c.nome, "CPF/CNPJ": c.doc || "", Tipo: tipoDoc(c) === "pj" ? "PJ" : tipoDoc(c) === "pf" ? "PF" : "", Vendedor: c.vendedor, Rede: c.rede || "", Cidade: c.cidade, Segmento: c.segmento, Situação: c.ativo ? "Ativo" : "Inativo" };
       row["Data da conquista"] = c.conquista || "";
       for (const m of meses) row[rotMes(m)] = noMes(c, m);
       row["Total no período"] = c.total;
@@ -968,6 +968,7 @@ export default function DossieVendedor() {
                     <tr key={c.id} className="group border-b last:border-0 hover:bg-slate-50">
                       <td className={`py-1 px-3 ${CONGELA.cliente} bg-white group-hover:bg-slate-50 z-10`}>{c.nome}
                         <div className="text-xs text-muted-foreground">
+                          {c.razao ? <>{c.razao} · </> : ""}
                           {c.cidade || "sem cidade"}
                           {c.doc ? <> · {docBR(c.doc)}</> : ""}
                         </div></td>
