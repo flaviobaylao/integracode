@@ -1,5 +1,6 @@
 import ContactPickerButton from "@/components/ContactPickerButton";
 import { precoParaCliente } from "@/lib/precoCliente";
+import { useDistribuidorCliente, mensagemBloqueioDistribuidor } from "@/hooks/useDistribuidorCliente";
 import { analisarTelefoneBR } from "@shared/telefone";
 import { useState, useEffect, useRef } from "react";
 import { useMutation, useQueryClient, useQuery } from "@/lib/queryClient";
@@ -116,6 +117,8 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   const [customerContact, setCustomerContact] = useState('');
   const [isCapturingLocation, setIsCapturingLocation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // DISTRIBUIDOR (19/nov/2026): cliente da carteira Amorix — so' gestor lanca pedido.
+  const distCliente = useDistribuidorCliente((card as any)?.customerId || (card as any)?.customer?.id);
   // 09/set/2026: cobre TODO o "Finalizar e Enviar p/ Faturamento" (finalizar + espera +
   // envio ao faturamento). O isSubmitting e liberado no finally do handleFinalizeSale e
   // deixava uma janela em que o botao aceitava um 2o clique -> pedido duplicado no funil.
@@ -653,6 +656,10 @@ export default function SaleEditModal({ isOpen, onClose, card }: SaleEditModalPr
   };
 
   const handleSendToFaturamento = async () => {
+    if (!distCliente.podeLancar) {
+      toast({ title: "Pedido não permitido", description: mensagemBloqueioDistribuidor(distCliente.distribuidorNome), variant: "destructive" });
+      return;
+    }
     if (!card?.id) return;
     // Reentrancia: um 2o clique (ou toque duplo no celular) enquanto o 1o envio esta
     // em andamento criava um segundo pedido identico no funil.
@@ -2129,9 +2136,14 @@ O PDF do pedido foi gerado. Por favor, anexe-o manualmente na conversa.`;
                   <>✅ <strong>Finalizar Venda:</strong> Marca como concluído e envia para o faturamento.</>
                 )}
               </p>
+              {!distCliente.podeLancar && (
+                <div className="rounded-md border border-red-300 bg-red-50 text-red-800 text-sm p-2 mb-2" data-testid="aviso-distribuidor">
+                  <strong>Cliente atendido pela {distCliente.distribuidorNome || 'Amorix'}.</strong> Pedidos para esta carteira só pela administração (admin, administrativo ou coordenação).
+                </div>
+              )}
               <Button
                 onClick={handleSendToFaturamento}
-                disabled={isSubmitting || enviando || sendToOmieMutation.isPending || products.length === 0 || (isScheduledOrder && !scheduledOrderDate)}
+                disabled={isSubmitting || enviando || sendToOmieMutation.isPending || products.length === 0 || (isScheduledOrder && !scheduledOrderDate) || !distCliente.podeLancar}
                 className={`w-full ${isScheduledOrder ? 'bg-cyan-600 hover:bg-cyan-700' : 'bg-orange-500 hover:bg-orange-600'}`}
                 data-testid="button-finalize-billing"
               >
