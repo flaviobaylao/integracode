@@ -35,6 +35,7 @@ import GeocodeAllButton from "@/components/GeocodeAllButton";
 import CustomerHistoryBox from "@/components/CustomerHistoryBox";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
+import ClienteDossieModal from "@/components/ClienteDossieModal";
 import type { SalesCardWithRelations, Customer } from "@shared/schema";
 import { AJUDA_SEMANA_ATENDIMENTO, ROTULO_SEMANA, normalizarSemana } from "@shared/visitSchedule";
 import OmieInstanceBadge from "@/components/OmieInstanceBadge";
@@ -68,7 +69,8 @@ import {
   Send,
   RefreshCw,
   History,
-  Info
+  Info,
+  BookUser
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { analisarTelefoneBR } from "@shared/telefone";
@@ -368,6 +370,7 @@ export default function ActiveCustomers() {
   const [showVirtualActionModal, setShowVirtualActionModal] = useState(false);
   const [virtualActionCustomer, setVirtualActionCustomer] = useState<{id: string; name: string} | null>(null);
   const [showActionHistoryModal, setShowActionHistoryModal] = useState(false);
+  const [dossieCustomer, setDossieCustomer] = useState<{ id: string; name: string } | null>(null);
   const [actionHistoryCustomer, setActionHistoryCustomer] = useState<{id: string; name: string} | null>(null);
   const [showInactivateDialog, setShowInactivateDialog] = useState(false);
   const [customerToInactivate, setCustomerToInactivate] = useState<{id: string; name: string; activeCustomerId: string} | null>(null);
@@ -2291,6 +2294,22 @@ export default function ActiveCustomers() {
                 Histórico de Ações do Cliente
               </Button>
 
+              {/* Botão Dossiê do Cliente (conquista, vendedores e relato) */}
+              <Button
+                variant="outline"
+                className="w-full justify-start h-12 text-teal-700 hover:bg-teal-50"
+                onClick={() => {
+                  if (virtualActionCustomer) {
+                    setDossieCustomer({ id: virtualActionCustomer.id, name: virtualActionCustomer.name });
+                    setShowVirtualActionModal(false);
+                  }
+                }}
+                data-testid="action-dossie-cliente"
+              >
+                <BookUser className="h-5 w-5 mr-3" />
+                Dossiê do Cliente
+              </Button>
+
               <div className="grid grid-cols-1 gap-2 mt-2">
                 {/* Botão Editar Cliente (edição de telefone é feita aqui dentro) */}
                 <Button
@@ -2330,6 +2349,14 @@ export default function ActiveCustomers() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Dossiê do Cliente */}
+        <ClienteDossieModal
+          open={!!dossieCustomer}
+          onClose={() => setDossieCustomer(null)}
+          customerId={dossieCustomer?.id || null}
+          customerName={dossieCustomer?.name || null}
+        />
 
         {/* Histórico de Ações do Cliente (registros do Inbox) */}
         <ActionHistoryModal
