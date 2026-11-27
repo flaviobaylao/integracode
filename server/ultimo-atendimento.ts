@@ -15,12 +15,15 @@ import type { Express } from "express";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { authenticateUser } from "./authMiddleware";
+import { registerClienteDossie } from "./cliente-dossie";
 
 const rows = (r: any) => ((r?.rows ?? r ?? []) as any[]);
 
 let cache: { em: number; mapa: Record<string, { data: string; tipo: string; quem: string }> } | null = null;
 
 export function registerUltimoAtendimento(app: Express): void {
+  // Dossiê do Cliente (botão em "Ações do Cliente") — registrado daqui para não mexer no index.
+  try { registerClienteDossie(app); } catch (e: any) { console.error("[cliente-dossie] registro:", e?.message); }
   app.get("/api/clientes/ultimo-atendimento", authenticateUser, async (_req, res) => {
     try {
       if (cache && Date.now() - cache.em < 30_000) return res.json(cache.mapa);
