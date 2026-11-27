@@ -5,10 +5,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { MessageCircle, FileText, ShoppingCart, History, Pencil, UserX, Loader2 } from "lucide-react";
+import { MessageCircle, FileText, ShoppingCart, History, Pencil, UserX, Loader2, BookUser } from "lucide-react";
 import VirtualServiceLogModal from "@/components/VirtualServiceLogModal";
 import CustomerEditModal from "@/components/CustomerEditModal";
 import ActionHistoryModal from "@/components/ActionHistoryModal";
+import ClienteDossieModal from "@/components/ClienteDossieModal";
 import { useMotivoInativacao } from "@/components/useMotivoInativacao";
 
 /**
@@ -20,6 +21,7 @@ import { useMotivoInativacao } from "@/components/useMotivoInativacao";
  *   • Efetuar Pedido / Abrir Card de Vendas  → leva para Clientes Ativos
  *   • Ver Histórico do Último Pedido          → leva para Clientes Ativos
  *   • Histórico de Ações do Cliente           → registros do Inbox (50 últimos)
+ *   • Dossiê do Cliente                       → conquista, vendedores e relato
  *   • Editar Cliente
  *   • Inativar Cliente (só admin)
  * NÃO tem "Editar Telefone" (feito dentro de Editar Cliente).
@@ -45,6 +47,7 @@ export default function ClientActionsModal({
   const [showServiceLog, setShowServiceLog] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showDossie, setShowDossie] = useState(false);
   const [inativando, setInativando] = useState(false);
 
   // Carrega o cadastro (telefone + dados para Editar Cliente) só quando a caixa abre.
@@ -160,6 +163,16 @@ export default function ClientActionsModal({
               Histórico de Ações do Cliente
             </Button>
 
+            <Button
+              variant="outline"
+              className="w-full justify-start h-12 text-teal-700 hover:bg-teal-50"
+              onClick={() => setShowDossie(true)}
+              data-testid="action-dossie-cliente"
+            >
+              <BookUser className="h-5 w-5 mr-3" />
+              Dossiê do Cliente
+            </Button>
+
             <div className="grid grid-cols-1 gap-2 mt-1">
               <Button
                 variant="ghost"
@@ -211,6 +224,13 @@ export default function ClientActionsModal({
       <ActionHistoryModal
         open={showHistory}
         onClose={() => setShowHistory(false)}
+        customerId={customerId}
+        customerName={nome}
+      />
+
+      <ClienteDossieModal
+        open={showDossie}
+        onClose={() => setShowDossie(false)}
         customerId={customerId}
         customerName={nome}
       />
