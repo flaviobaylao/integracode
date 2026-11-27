@@ -2799,6 +2799,9 @@ export default function RotaDoDia() {
                   const hasOffsite = checkInOffsite || checkOutOffsite;
                   // Check-out desligado: a visita fica CONCLUÍDA (verde) já no check-in.
                   const isCompleted = !!checkInCheckpoint;
+                  // Atendimento virtual registrado no card do cliente PRESENCIAL (botão verde) também conta como
+                  // visita efetuada: card e número ficam verdes, como no check-in (regra do Flavio, 27/nov/2026).
+                  const attendedVirtual = !!(visit.customerId && attendedCustomerIds.has(visit.customerId));
                   const hasOrderToday = !!(visit.customerId && customerInfo?.orders?.[visit.customerId]?.length);
                   const isInProgress = false;
                   const isLead = (visit as any).visitType === 'lead';
@@ -2830,7 +2833,7 @@ export default function RotaDoDia() {
                   } else if (hasOffsite) {
                     statusColor = 'text-red-600 dark:text-red-400';
                     borderColor = 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950';
-                  } else if (isCompleted || hasOrderToday) {
+                  } else if (isCompleted || hasOrderToday || attendedVirtual) {
                     statusColor = 'text-green-600 dark:text-green-400';
                     borderColor = 'border-green-200 dark:border-green-800';
                   } else if (isInProgress) {
@@ -2909,7 +2912,7 @@ export default function RotaDoDia() {
                           onClick={crEfetuada ? undefined : () => handleVisitClick(isLead ? (visit.entityId || visit.leadId || visit.customerId) : (visit.customerId || visit.entityId), isLead)}
                         >
                           <div className={`flex-shrink-0 w-7 h-7 rounded-full text-white flex items-center justify-center text-sm font-semibold ${
-                            crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : hasOffsite ? 'bg-red-600' : (isCompleted || leadDone) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
+                            crEfetuada ? 'bg-gray-300 dark:bg-gray-700' : hasOffsite ? 'bg-red-600' : (isCompleted || leadDone || (attendedVirtual && !isLead)) ? 'bg-green-600' : isInProgress ? 'bg-blue-600' : 'bg-gray-400'
                           }`}>
                             {crEfetuada ? '' : (cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : displayCardNumbers[index])}
                           </div>
