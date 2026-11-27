@@ -81,7 +81,9 @@ function computeNaoVisitados(route: any, serviceCounts: any, overlay: any[], ord
       done = !!cid && (attended.has(cid) || hasOrder(cid));
     } else {
       const cid = v?.customerId ? String(v.customerId) : "";
-      done = !!cid && (checkedIn.has(cid) || hasOrder(cid));
+      // Presencial: check-in na rota, pedido OU atendimento virtual registrado no card (botão verde)
+      // contam como visita efetuada — sem justificativa obrigatória (regra do Flavio, 27/nov/2026).
+      done = !!cid && (checkedIn.has(cid) || attended.has(cid) || hasOrder(cid));
     }
     const customerId = isLead ? String(v?.entityId || v?.leadId || v?.customerId || "") : String(v?.customerId || v?.entityId || "");
     if (!customerId) continue;
