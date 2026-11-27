@@ -69,9 +69,14 @@ export default function SalesCards() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [discardDraftCard, setDiscardDraftCard] = useState<SalesCardWithRelations | null>(null);
+  // (27/nov/2026) Filtros novos: periodo (data do card) para todos; vendedor so' para admin.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sellerFilter, setSellerFilter] = useState('all');
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const isAdminUser = (user as any)?.role === 'admin';
 
   // Construir query string para filtros
   const buildQueryString = () => {
@@ -424,9 +429,39 @@ export default function SalesCards() {
     return Math.max(0, Math.floor(diffMs / 86400000));
   };
 
+  // Data do card no calendario local (YYYY-MM-DD) — mesma base de fmtCalendarioBR(scheduledDate).
+  const cardDateISO = (card: any): string => {
+    const raw = card?.scheduledDate || card?.createdAt;
+    if (!raw) return '';
+    const str = String(raw);
+    if (/^\d{4}-\d{2}-\d{2}/.test(str) && str.length <= 10) return str.slice(0, 10);
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  };
+
+  // Vendedores presentes nos cards carregados (so' admin usa o filtro).
+  const sellerOptions = Array.isArray(salesCards)
+    ? Array.from(new Map((salesCards as SalesCardWithRelations[])
+        .filter((c: any) => c?.seller?.id)
+        .map((c: any) => [String(c.seller.id), `${c.seller.firstName || ''} ${c.seller.lastName || ''}`.trim() || c.seller.email || 'Vendedor'])
+      ).entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    : [];
+
   const filteredCards = salesCards?.filter((card: SalesCardWithRelations) => {
     // Filtro por status
     if (statusFilter !== 'all' && card.status !== statusFilter) {
+      return false;
+    }
+    // Periodo (data do card)
+    if (dateFrom || dateTo) {
+      const d = cardDateISO(card);
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+    }
+    // Vendedor (admin)
+    if (isAdminUser && sellerFilter !== 'all' && String((card as any).seller?.id || (card as any).sellerId || '') !== sellerFilter) {
       return false;
     }
     
@@ -471,6 +506,9 @@ export default function SalesCards() {
     setRouteFilter('all');
     setStatusFilter('all');
     setSearchQuery('');
+    setDateFrom('');
+    setDateTo('');
+    setSellerFilter('all');
   };
 
   return (
@@ -544,6 +582,14 @@ export default function SalesCards() {
         onRouteChange={setRouteFilter}
         onStatusChange={setStatusFilter}
         onClearFilters={clearAllFilters}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFromChange={setDateFrom}
+        onDateToChange={setDateTo}
+        showSellerFilter={isAdminUser}
+        sellerId={sellerFilter}
+        sellerOptions={sellerOptions}
+        onSellerChange={setSellerFilter}
       />
 
       {/* Sales Cards Grid */}
