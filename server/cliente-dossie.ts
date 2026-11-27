@@ -76,18 +76,24 @@ async function usuarios(): Promise<Usuario[]> {
     return { id: String(u.id), nome, codigos, email: String(u.email || "") };
   });
 }
-function resolvedor(us: Usuario[]) {
+// Chave de comparação de nomes: "Carlos T." (rótulo antigo do histórico) = "Carlos T".
+const chaveNome = (n: any) => String(n ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+
+function resolvedor(us: Usuario[], nomesOmie: Map<string, string>) {
   const mapa = new Map<string, string>();
   for (const u of us) {
     mapa.set(u.id, u.nome);
     for (const c of u.codigos) { mapa.set(c, u.nome); mapa.set(`omie-vendor-${c}`, u.nome); }
     if (u.email) mapa.set(u.email.toLowerCase(), u.nome);
-    mapa.set(u.nome.toLowerCase(), u.nome);
+    mapa.set(chaveNome(u.nome), u.nome);
   }
   return (v: any, reserva?: any): string => {
     const s = String(v ?? "").trim();
     if (!s || s === "—") return String(reserva ?? "").trim();
-    return mapa.get(s) || mapa.get(s.toLowerCase()) || mapa.get(s.replace(/^omie-vendor-/, "")) || String(reserva ?? "").trim() || s;
+    const cod = s.replace(/^omie-vendor-/, "");
+    return mapa.get(s) || mapa.get(s.toLowerCase()) || mapa.get(cod) || mapa.get(chaveNome(s))
+      || (reserva ? mapa.get(chaveNome(reserva)) || String(reserva).trim() : "")
+      || nomesOmie.get(cod) || s;
   };
 }
 
@@ -119,7 +125,14 @@ export function registerClienteDossie(app: Express): void {
 
       const doc = dig(cad.cnpj) || dig(cad.cpf);
       const us = await usuarios();
-      const nomeDe = resolvedor(us);
+      // Código de vendedor do Omie sem usuário no Integra (vendedor antigo): usa o nome que veio no faturamento.
+      const nomesOmie = new Map<string, string>();
+      try {
+        for (const r of rows(await db.execute(sql`SELECT seller_id, MAX(seller_name) AS nome FROM billings WHERE COALESCE(seller_name,'') <> '' AND seller_id IS NOT NULL GROUP BY seller_id`))) {
+          nomesOmie.set(String(r.seller_id), String(r.nome));
+        }
+      } catch { /* opcional */ }
+      const nomeDe = resolvedor(us, nomesOmie);
       const hoje = hojeIso();
       const vendedorAtual = nomeDe(cad.seller_id) || "Sem vendedor";
 
@@ -150,7 +163,7 @@ export function registerClienteDossie(app: Express): void {
       const porVendedor = new Map<string, { nome: string; primeira: string | null; ultima: string | null; pedidos: number }>();
       const soma = (nome: string, primeira: any, ultima: any, n: number) => {
         if (!nome) return;
-        const k = nome.toLowerCase();
+        const k = chaveNome(nome);
         const a = porVendedor.get(k) || { nome, primeira: null, ultima: null, pedidos: 0 };
         const p = dia(primeira), l = dia(ultima);
         if (p && (!a.primeira || p < a.primeira)) a.primeira = p;
@@ -169,25 +182,25 @@ export function registerClienteDossie(app: Express): void {
          WHERE customer_id = ${id} AND field = 'sellerId'
          ORDER BY created_at`))
         .map((t: any) => ({ de: nomeDe(t.old_value), para: nomeDe(t.new_value), data: dia(t.created_at), quem: t.changed_by_name || null }))
-        .filter((t) => t.de !== t.para);
+        .filter((t) => chaveNome(t.de) !== chaveNome(t.para));
 
       let atual: any = { nome: vendedorAtual, desde: null as string | null, fonte: "" };
       let anterior: any = null;
       const ultTroca = trocas.length ? trocas[trocas.length - 1] : null;
-      if (ultTroca && ultTroca.para.toLowerCase() === vendedorAtual.toLowerCase()) {
+      if (ultTroca && chaveNome(ultTroca.para) === chaveNome(vendedorAtual)) {
         atual = { nome: vendedorAtual, desde: ultTroca.data, fonte: "troca de carteira registrada no cadastro" };
         if (ultTroca.de && ultTroca.de !== "—") {
-          anterior = { nome: ultTroca.de, ate: ultTroca.data, fonte: `troca de carteira registrada${ultTroca.quem ? ` por ${ultTroca.quem}` : ""}`, pedidos: porVendedor.get(ultTroca.de.toLowerCase())?.pedidos ?? null, ultimoPedido: porVendedor.get(ultTroca.de.toLowerCase())?.ultima ?? null };
+          anterior = { nome: ultTroca.de, ate: ultTroca.data, fonte: `troca de carteira registrada${ultTroca.quem ? ` por ${ultTroca.quem}` : ""}`, pedidos: porVendedor.get(chaveNome(ultTroca.de))?.pedidos ?? null, ultimoPedido: porVendedor.get(chaveNome(ultTroca.de))?.ultima ?? null };
         }
       }
       if (!anterior) {
         // Sem troca registrada: o anterior é quem vendeu por último antes do atual.
-        const outros = linhaDoTempo.filter((v) => v.nome.toLowerCase() !== vendedorAtual.toLowerCase());
+        const outros = linhaDoTempo.filter((v) => chaveNome(v.nome) !== chaveNome(vendedorAtual));
         const ult = outros.length ? outros[outros.length - 1] : null;
         if (ult) anterior = { nome: ult.nome, ate: ult.ultima, fonte: "pelos pedidos (último pedido dele)", pedidos: ult.pedidos, ultimoPedido: ult.ultima };
       }
       if (!atual.desde) {
-        const meu = porVendedor.get(vendedorAtual.toLowerCase());
+        const meu = porVendedor.get(chaveNome(vendedorAtual));
         if (anterior?.ate && meu?.primeira) {
           const depois = (meu.primeira > anterior.ate) ? meu.primeira : null;
           atual = { nome: vendedorAtual, desde: depois, fonte: depois ? "pelos pedidos (1º pedido depois do anterior)" : "" };
@@ -197,7 +210,7 @@ export function registerClienteDossie(app: Express): void {
           atual = { nome: vendedorAtual, desde: dia(cad.created_at), fonte: "data do cadastro" };
         }
       }
-      const meuAtual = porVendedor.get(vendedorAtual.toLowerCase());
+      const meuAtual = porVendedor.get(chaveNome(vendedorAtual));
       atual.pedidos = meuAtual?.pedidos ?? 0;
       atual.ultimoPedido = meuAtual?.ultima ?? null;
 
