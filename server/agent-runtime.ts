@@ -614,6 +614,15 @@ async function registrarPedido(input: any, ctx: any): Promise<string> {
         clienteCadastro = await dadosParaPedido(_cidPed);
       }
     } catch {}
+    // DISTRIBUIDOR (19/nov/2026): cliente da carteira Amorix nao recebe pedido pela IA.
+    try {
+      const _cidDist = await resolveCustomerId(ctx, inp.documento);
+      if (_cidDist) {
+        const { infoDistribuidorDoCliente } = await import('./distribuidor');
+        const _d = await infoDistribuidorDoCliente(_cidDist);
+        if (_d.sellout) return `Este cliente é atendido pela distribuidora ${_d.distribuidorNome || 'Amorix'}: NÃO registre pedido por aqui. Explique ao cliente, com simpatia, que os pedidos dele são feitos com a ${_d.distribuidorNome || 'Amorix'} (ou pela administração da Honest) e ofereça encaminhar o contato.`;
+      }
+    } catch {}
     if (clienteCadastro) {
       inp.nome = clienteCadastro.nome || inp.nome;
       if (clienteCadastro.documento) inp.documento = clienteCadastro.documento;

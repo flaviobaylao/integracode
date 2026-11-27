@@ -19,6 +19,7 @@ import { escolherDocumentoFiscal } from './fiscal-doc';
 import { resolveDestinoFiscal, resolvePontoEntrega } from './rede-clientes-routes';
 import { escolherCenarioTransferencia } from './cfop-transferencia';
 import { runSnapshotClasses } from './carteira-routes';
+import { infoDistribuidorDoCliente, ESTAGIOS_PROIBIDOS_SELLOUT, papelPodeLancarParaDistribuidor } from './distribuidor';
 import {
   instanciaSemControleDeEstoque, verificarEstoqueEmUso, baixarEstoqueEmUso, baixaVigenteDoPedido, lotesJaBaixados, ultimoEstornoDoPedido,
   descreverFaltas, textoLotes, distribuirLotes, ehBloqueioEstoque, SemInstanciaEstoqueError,
@@ -61,7 +62,7 @@ async function validateCustomerFiscalData(item: any): Promise<{ valid: boolean; 
 
 // Etapas VÁLIDAS do funil de faturamento (billing_pipeline.stage). NÃO inclui 'bloqueado':
 // bloquear é feito pela tabela blocked_orders via POST /:id/block, não por mudança de stage.
-const BILLING_STAGES = ['agendado', 'pedido', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue', 'lixeira'] as const;
+const BILLING_STAGES = ['agendado', 'pedido', 'amorix', 'a_faturar', 'faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota', 'entregue', 'lixeira'] as const;
 
 // Garante (idempotente, 1x por processo) o valor 'lixeira' no enum do Postgres.
 let __lixeiraStageReady = false;
@@ -690,7 +691,13 @@ export async function autoSendToBillingPipeline(salesCard: any, createdByEmail: 
       }
     }
 
+    // DISTRIBUIDOR (19/nov/2026): cliente final da carteira Amorix = sell-out. O item nasce
+    // marcado; a partir de 'pedido' ele so' pode ir para a raia 'amorix' (nunca a_faturar/NF).
+    const _infoDist = await infoDistribuidorDoCliente(salesCard.customerId);
+    if (_infoDist.sellout) console.log(`🟣 [BILLING-PIPELINE] Pedido SELL-OUT (carteira ${_infoDist.distribuidorNome || 'distribuidor'}) — vai para a raia Amorix, sem NF.`);
+
     const item = await storage.createBillingPipelineItem({
+      amorixSellout: _infoDist.sellout,
       salesCardId: salesCard.id,
       customerId: salesCard.customerId,
       customerName: customer?.fantasyName || customer?.name || 'Cliente desconhecido',
@@ -2317,13 +2324,30 @@ export function registerBillingPipelineRoutes(app: Express) {
   app.patch('/api/billing-pipeline/:id/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       invalidarStockStatus();
-      const { stage, scheduledBillingDate } = req.body;
-      if (!stage || !BILLING_STAGES.includes(stage)) {
+      const { stage: _stagePedido, scheduledBillingDate } = req.body;
+      if (!_stagePedido || !BILLING_STAGES.includes(_stagePedido)) {
         return res.status(400).json({ message: `Stage inválido. Valores aceitos: ${BILLING_STAGES.join(', ')}` });
       }
 
       const item = await storage.getBillingPipelineItem(req.params.id);
       if (!item) return res.status(404).json({ message: 'Item não encontrado' });
+
+      // RAIA AMORIX (19/nov/2026): pedido sell-out (cliente da carteira do distribuidor, sem a
+      // excecao "faturar pela Honest") nao passa pelo faturamento/entrega da Honest.
+      //  - pedir 'a_faturar' => vai para 'amorix' (e' o "Faturar" desse tipo de pedido)
+      //  - demais etapas fiscais/logisticas => recusado
+      // Pedido comum nao entra na raia 'amorix'.
+      let stage: string = String(_stagePedido);
+      {
+        const _sellout = !!(item as any).amorixSellout && !(item as any).faturarHonestPor;
+        if (_sellout && ESTAGIOS_PROIBIDOS_SELLOUT.has(stage)) {
+          if (stage === 'a_faturar') { stage = 'amorix'; }
+          else return res.status(403).json({ code: 'SELLOUT_SEM_FATURAMENTO', message: 'Pedido de cliente da Amorix: não é faturado nem entregue pela Honest. Use a raia Amorix (PDF → Enviado → Entregue pela Amorix) ou "Faturar pela Honest" no card.' });
+        }
+        if (!_sellout && stage === 'amorix') {
+          return res.status(403).json({ code: 'NAO_E_SELLOUT', message: 'Só pedidos de clientes da carteira Amorix entram na raia Amorix.' });
+        }
+      }
 
       const user = req.currentUser || req.user;
       const history = (item.stageHistory as any[]) || [];
@@ -3090,8 +3114,21 @@ export function registerBillingPipelineRoutes(app: Express) {
   app.post('/api/billing-pipeline/batch/stage', authenticateUser, isAdminOnly, async (req: any, res) => {
     try {
       invalidarStockStatus();
-      const { ids, stage } = req.body;
+      const { ids: _idsReq, stage } = req.body;
+      // RAIA AMORIX: em lote, pedidos sell-out (sem excecao) sao ignorados nas etapas fiscais/logisticas
+      // e pedidos comuns nao entram em 'amorix' (devolvidos em `ignorados`).
+      let ids: any = _idsReq;
+      let ignorados: string[] = [];
+      if (Array.isArray(_idsReq) && _idsReq.length && (ESTAGIOS_PROIBIDOS_SELLOUT.has(String(stage)) || stage === 'amorix')) {
+        try {
+          const r: any = await db.execute(sql`SELECT id, amorix_sellout, faturar_honest_por FROM billing_pipeline WHERE id IN (${sql.join(_idsReq.map((i: string) => sql`${String(i)}`), sql`, `)})`);
+          const so = new Set((r.rows || []).filter((x: any) => x.amorix_sellout && !x.faturar_honest_por).map((x: any) => String(x.id)));
+          ids = _idsReq.filter((i: string) => stage === 'amorix' ? so.has(String(i)) : !so.has(String(i)));
+          ignorados = _idsReq.filter((i: string) => !ids.includes(i));
+        } catch {}
+      }
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        if (ignorados.length) return res.status(403).json({ code: 'SELLOUT_SEM_FATURAMENTO', message: 'Pedidos de clientes da Amorix não passam pelo faturamento/entrega da Honest (use a raia Amorix).', ignorados });
         return res.status(400).json({ message: 'ids é obrigatório (array)' });
       }
       if (!stage || !BILLING_STAGES.includes(stage)) {

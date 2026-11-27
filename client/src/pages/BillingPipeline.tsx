@@ -36,6 +36,13 @@ interface BillingPipelineItem {
   salesCardId: string;
   customerId: string;
   customerName: string;
+  // RAIA AMORIX (19/nov/2026): pedido de cliente da carteira do distribuidor (sem NF da Honest)
+  amorixSellout?: boolean;
+  amorixPdfEm?: string | null;
+  amorixEnviadoEm?: string | null;
+  amorixEnviadoPor?: string | null;
+  amorixEntregueEm?: string | null;
+  faturarHonestPor?: string | null;
   customerAltName?: string | null; // nome alternativo (ex.: razão social) — usado só na busca
   customerCity?: string | null; // cidade/município do cadastro do cliente (exibida no card)
   customerDocument: string | null;
@@ -89,6 +96,9 @@ const STAGES = [
   { key: 'bloqueado', label: 'Bloqueados', icon: Power, color: 'bg-red-600', badgeColor: 'bg-red-100 text-red-800' },
   { key: 'agendado', label: 'Agendado', icon: Clock, color: 'bg-cyan-500', badgeColor: 'bg-cyan-100 text-cyan-800' },
   { key: 'pedido', label: 'Pedido', icon: ClipboardList, color: 'bg-blue-500', badgeColor: 'bg-blue-100 text-blue-800' },
+  // RAIA AMORIX (19/nov/2026): pedido de cliente da carteira Amorix. Sai de "Pedido" para ca' (em vez
+  // de A Faturar): PDF do pedido enviado a Amorix, que fatura e entrega. Dali vai direto a Entregue.
+  { key: 'amorix', label: 'Amorix', icon: Package, color: 'bg-indigo-600', badgeColor: 'bg-indigo-100 text-indigo-800' },
   { key: 'a_faturar', label: 'A Faturar', icon: FileText, color: 'bg-yellow-500', badgeColor: 'bg-yellow-100 text-yellow-800' },
   { key: 'faturado', label: 'Faturado', icon: FileText, color: 'bg-orange-500', badgeColor: 'bg-orange-100 text-orange-800' },
   { key: 'impresso', label: 'Impresso', icon: Printer, color: 'bg-purple-500', badgeColor: 'bg-purple-100 text-purple-800' },
@@ -210,6 +220,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 // Selo da operação no card: troca compensada por desconto em boleto (05/11/2026) ganha rótulo
 // próprio — o financeiro aplica o desconto MANUALMENTE; o sistema não altera título nem boleto.
 const TROCA_DESCONTO_BOLETO_LABEL = 'Troca - Desconto em Boleto';
+// RAIA AMORIX: pedido sell-out ativo (sem a excecao "faturar pela Honest").
+const ehSellout = (item: any) => !!item?.amorixSellout && !item?.faturarHonestPor;
+const fmtDtBR = (v: any) => { try { const d = new Date(v); return isNaN(d.getTime()) ? '' : d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 function operationLabel(item: any, cat: string | null): string {
   if (cat === 'troca' && item?.trocaDescontoBoleto) return TROCA_DESCONTO_BOLETO_LABEL;
   return (cat && (CATEGORY_LABELS[cat] || OPERATION_LABELS[cat])) || cat || '';
@@ -663,6 +676,23 @@ export default function BillingPipeline() {
     setAberturaBloqueio({ message: error.message || 'Faturamento bloqueado: Abertura de Estoque do Dia pendente', details: error.details, podeAbrir: !!error.podeAbrir });
     return true;
   };
+
+  // RAIA AMORIX (19/nov/2026)
+  const amorixEnviarMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest('POST', `/api/billing-pipeline/${id}/amorix/enviar`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] }); toast({ title: 'Pedido enviado à Amorix', description: 'PDF enviado pelo WhatsApp e card na raia Amorix.' }); setDetailItem(null); },
+    onError: (e: any) => toast({ title: 'Não foi possível enviar', description: e?.message || 'Erro', variant: 'destructive' }),
+  });
+  const amorixEntregueMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest('POST', `/api/billing-pipeline/${id}/amorix/entregue`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] }); toast({ title: 'Entregue pela Amorix' }); setDetailItem(null); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Erro', variant: 'destructive' }),
+  });
+  const amorixFaturarHonestMutation = useMutation({
+    mutationFn: async (id: string) => apiRequest('POST', `/api/billing-pipeline/${id}/amorix/faturar-honest`, {}),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/billing-pipeline'] }); toast({ title: 'Exceção registrada', description: 'Este pedido passa a seguir o fluxo normal (NF-e pela Honest).' }); setDetailItem(null); },
+    onError: (e: any) => toast({ title: 'Erro', description: e?.message || 'Erro', variant: 'destructive' }),
+  });
 
   const moveStageMutation = useMutation({
     mutationFn: async ({ id, stage, scheduledBillingDate }: { id: string; stage: string; scheduledBillingDate?: string }) => {
@@ -1298,7 +1328,15 @@ export default function BillingPipeline() {
     const currentIdx = STAGES.findIndex(s => s.key === item.stage);
     const nextIdx = direction === 'forward' ? currentIdx + 1 : currentIdx - 1;
     if (nextIdx < 0 || nextIdx >= STAGES.length) return;
-    const targetStage = STAGES[nextIdx].key;
+    let targetStage: string = STAGES[nextIdx].key;
+    // RAIA AMORIX: sell-out pula o faturamento/entrega da Honest.
+    if (ehSellout(item)) {
+      if (direction === 'forward' && item.stage === 'pedido') targetStage = 'amorix';
+      else if (direction === 'forward' && item.stage === 'amorix') { if (window.confirm(`Confirmar que a Amorix entregou o pedido de ${item.customerName}?`)) amorixEntregueMutation.mutate(item.id); return; }
+      else if (direction === 'backward' && item.stage === 'amorix') targetStage = 'pedido';
+    } else if (targetStage === 'amorix') {
+      targetStage = direction === 'forward' ? 'a_faturar' : 'pedido';
+    }
     // Não "cair" na Lixeira ao avançar de Entregue: exclusão é só pelo botão de lixeira.
     if (targetStage === 'lixeira') return;
     // Mover para "Bloqueados" NAO e mudanca de stage: e BLOQUEAR (tabela blocked_orders via /block).
@@ -1335,6 +1373,19 @@ export default function BillingPipeline() {
     }
     // Mover para "Agendado" pede a data de faturamento ("Faturar em") antes de concluir.
     if (stage === 'agendado') { openSchedule(item, stage); return; }
+    // RAIA AMORIX: sell-out nao vai para etapas fiscais/logisticas; "A Faturar" vira "Amorix";
+    // "Entregue" e' a confirmacao de entrega pela Amorix.
+    if (ehSellout(item)) {
+      if (stage === 'a_faturar') stage = 'amorix';
+      else if (stage === 'entregue') { if (window.confirm(`Confirmar que a Amorix entregou o pedido de ${item.customerName}?`)) amorixEntregueMutation.mutate(item.id); return; }
+      else if (['faturado', 'impresso', 'bsb', 'aguardando_rota_bsb', 'em_rota_bsb', 'outras_cidades', 'aguardando_rota', 'em_rota'].includes(stage)) {
+        toast({ title: 'Pedido de cliente da Amorix', description: 'Não é faturado nem entregue pela Honest. Use a raia Amorix ou "Faturar pela Honest" no card.', variant: 'destructive' });
+        return;
+      }
+    } else if (stage === 'amorix') {
+      toast({ title: 'Só clientes da Amorix', description: 'A raia Amorix recebe apenas pedidos de clientes da carteira Amorix.', variant: 'destructive' });
+      return;
+    }
     moveStageMutation.mutate({ id: item.id, stage });
   };
 
@@ -2435,6 +2486,35 @@ export default function BillingPipeline() {
                     {duplicateMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Copy className="h-3 w-3 mr-1" />}
                     Duplicar Pedido
                   </Button>
+                  {detailItem.amorixSellout && canEdit && (
+                    <>
+                      {ehSellout(detailItem) ? (
+                        <>
+                          <Button size="sm" variant="outline" className="text-xs border-indigo-300 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300" asChild data-testid="button-amorix-pdf">
+                            <a href={`/api/billing-pipeline/${detailItem.id}/amorix/pdf`} target="_blank" rel="noreferrer"><FileText className="h-3 w-3 mr-1" />PDF para a Amorix</a>
+                          </Button>
+                          {!['entregue', 'lixeira'].includes(String(detailItem.stage)) && (
+                            <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => amorixEnviarMutation.mutate(detailItem.id)} disabled={amorixEnviarMutation.isPending} data-testid="button-amorix-enviar">
+                              {amorixEnviarMutation.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Package className="h-3 w-3 mr-1" />}
+                              {detailItem.amorixEnviadoEm ? 'Reenviar à Amorix' : 'Enviar à Amorix (WhatsApp)'}
+                            </Button>
+                          )}
+                          {String(detailItem.stage) === 'amorix' && (
+                            <Button size="sm" variant="outline" className="text-xs border-green-400 text-green-700 hover:bg-green-50" onClick={() => window.confirm(`Confirmar que a Amorix entregou o pedido de ${detailItem.customerName}?`) && amorixEntregueMutation.mutate(detailItem.id)} disabled={amorixEntregueMutation.isPending} data-testid="button-amorix-entregue">
+                              <CheckCircle2 className="h-3 w-3 mr-1" />Entregue pela Amorix
+                            </Button>
+                          )}
+                          {['pedido', 'agendado', 'amorix'].includes(String(detailItem.stage)) && (
+                            <Button size="sm" variant="outline" className="text-xs border-amber-400 text-amber-700 hover:bg-amber-50" onClick={() => window.confirm(`Exceção: faturar pela Honest o pedido de ${detailItem.customerName}? Ele passa a seguir o fluxo normal (NF-e, título, estoque).`) && amorixFaturarHonestMutation.mutate(detailItem.id)} disabled={amorixFaturarHonestMutation.isPending} data-testid="button-amorix-faturar-honest">
+                              Faturar pela Honest (exceção)
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <span className="inline-flex items-center text-[11px] px-2 py-1 rounded bg-amber-50 text-amber-800 border border-amber-200">Exceção: faturar pela Honest ({detailItem.faturarHonestPor})</span>
+                      )}
+                    </>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -2913,6 +2993,14 @@ function KanbanCard({
             {stockIssue && (
               <span className="inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 cursor-help whitespace-pre-line" title={stockIssue}>
                 Sem estoque em uso — faturamento bloqueado
+              </span>
+            )}
+            {item.amorixSellout && (
+              <span className={`inline-block mt-0.5 mr-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border ${ehSellout(item) ? 'bg-indigo-100 text-indigo-800 border-indigo-300' : 'bg-amber-50 text-amber-800 border-amber-300'}`}
+                title={ehSellout(item) ? 'Cliente da carteira Amorix: sem NF da Honest — PDF enviado à Amorix' : `Exceção: faturar pela Honest (${item.faturarHonestPor})`}>
+                {ehSellout(item)
+                  ? (item.stage === 'entregue' ? 'via Amorix' : item.amorixEnviadoEm ? `Enviado à Amorix ${fmtDtBR(item.amorixEnviadoEm)}` : 'Amorix · PDF a enviar')
+                  : 'Amorix · faturar pela Honest'}
               </span>
             )}
             {(item.sellerName || item.customerCity) && (

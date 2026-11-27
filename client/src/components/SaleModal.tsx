@@ -36,6 +36,7 @@ interface SaleItem {
 }
 
 import { precoParaCliente } from "@/lib/precoCliente";
+import { useDistribuidorCliente, mensagemBloqueioDistribuidor } from "@/hooks/useDistribuidorCliente";
 
 interface SaleModalProps {
   isOpen: boolean;
@@ -122,6 +123,8 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   const isAdministrative = ['admin', 'coordinator', 'administrative'].includes((currentUser as any)?.role);
 
   const customerId = salesCard?.customerId;
+  // DISTRIBUIDOR (19/nov/2026): cliente da carteira Amorix — so' gestor lanca pedido.
+  const distCliente = useDistribuidorCliente(customerId);
 
   // ── PONTO DE ENTREGA sem CNPJ (rede de clientes) ──────────────────────────
   // Cliente de CNPJ unico que recebe em varios enderecos. A lista so' vem cheia
@@ -670,6 +673,10 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
   };
 
   const handleFinalizeSale = () => {
+    if (!distCliente.podeLancar) {
+      toast({ title: "Pedido não permitido", description: mensagemBloqueioDistribuidor(distCliente.distribuidorNome), variant: "destructive" });
+      return;
+    }
     if (saleItems.length === 0) {
       toast({
         title: "Atenção",
@@ -1735,9 +1742,14 @@ export default function SaleModal({ isOpen, onClose, salesCard }: SaleModalProps
               
                 {/* Botões de Ação */}
                 <div className="flex flex-col gap-2">
+                  {!distCliente.podeLancar && (
+                    <div className="rounded-md border border-red-300 bg-red-50 text-red-800 text-sm p-3" data-testid="aviso-distribuidor">
+                      <strong>Cliente atendido pela {distCliente.distribuidorNome || 'Amorix'}.</strong> Pedidos para esta carteira só pela administração (admin, administrativo ou coordenação).
+                    </div>
+                  )}
                   <Button 
                     onClick={handleFinalizeSale}
-                    disabled={saleItems.length === 0}
+                    disabled={saleItems.length === 0 || !distCliente.podeLancar}
                     className="w-full"
                   >
                     <Receipt className="h-4 w-4 mr-2" />
